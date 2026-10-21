@@ -44,10 +44,10 @@ def draw_result(result: DetectionResult) -> np.ndarray:
         cv2.circle(image, tuple(result.path[-1]), 5, (0, 255, 255), -1)
         if reference.target_x is not None:
             cv2.circle(image, target, 4, (0, 255, 255), -1, cv2.LINE_AA)
-    state = "IMAGE PATH" if result.valid_image_path else "NO PATH"
+    state = "PATH IN MASK" if result.valid_image_path else "NO PATH"
     cv2.rectangle(image, (0, 0), (image.shape[1], 66), (20, 20, 20), -1)
     cv2.putText(image, f"{state}: {result.reason}", (7, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
-    cv2.putText(image, f"{result.backend} | quality {result.quality_score:.2f} (heuristic)", (7, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+    cv2.putText(image, f"{result.backend} | RGB mask is NOT verified traversability", (7, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
     offset = f"dx {reference.lateral_error_px:+.1f}px" if reference.lateral_error_px is not None else "dx n/a"
     legend = f"Yellow=reference  Blue=robot  Red=edges | {offset}"
     scale = min(0.42, max(0.25, image.shape[1] / 1500))

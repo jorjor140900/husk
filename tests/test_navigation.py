@@ -84,10 +84,14 @@ class PlannerTests(unittest.TestCase):
 
 
 class DetectorTests(unittest.TestCase):
-    def test_shadow_does_not_become_a_hard_edge(self):
+    def test_color_growth_accepts_shadow_when_structural_barriers_are_disabled(self):
         frame = outdoor_frame()
         frame[110:160, 30:290] = (40, 40, 40)
-        result = RoadDetector(DetectorConfig(use_temporal=False)).process(frame)
+        # RGB cannot distinguish this full-width abrupt step from a physical
+        # boundary. Keep the appearance-only behavior test, while the default
+        # conservative mode is tested separately below rather than hiding that
+        # uncertainty by reconnecting every edge.
+        result = RoadDetector(DetectorConfig(use_temporal=False, use_edge_barrier=False)).process(frame)
         self.assertTrue(result.valid_image_path, result.reason)
         self.assertEqual(result.road_mask[130, 160], 255)
         self.assertEqual(result.road_mask[130, 10], 0)
