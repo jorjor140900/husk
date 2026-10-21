@@ -5,6 +5,8 @@
   "seed_x_fraction": 0.5,
   "seed_y_fraction": 0.94,
   "goal_x_fraction": 0.5,
+  "robot_center_x_fraction": 0.5,
+  "lookahead_y_fraction": 0.65,
   "chroma_tolerance": 14.0,
   "probability_threshold": 0.62,
   "current_probability_floor": 0.50,

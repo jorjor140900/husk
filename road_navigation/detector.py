@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from .planner import plan_path
+from .reference_geometry import ReferenceGeometry, build_reference_geometry
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,8 @@ class DetectorConfig:
     seed_x_fraction: float = 0.5
     seed_y_fraction: float = 0.94
     goal_x_fraction: float = 0.5
+    robot_center_x_fraction: float = 0.5
+    lookahead_y_fraction: float = 0.65
     chroma_tolerance: float = 14.0
     probability_threshold: float = 0.62
     current_probability_floor: float = 0.50
@@ -46,6 +49,8 @@ class DetectorConfig:
             raise ValueError("require 0 <= horizon_fraction < seed_y_fraction <= 1")
         if not 0 <= self.seed_x_fraction <= 1 or not 0 <= self.goal_x_fraction <= 1:
             raise ValueError("seed_x_fraction and goal_x_fraction must be in [0, 1]")
+        if not 0 <= self.robot_center_x_fraction <= 1 or not 0 <= self.lookahead_y_fraction <= 1:
+            raise ValueError("robot_center_x_fraction and lookahead_y_fraction must be in [0, 1]")
         if self.chroma_tolerance <= 0:
             raise ValueError("chroma_tolerance must be positive")
         if not 0 < self.current_probability_floor <= self.probability_threshold < 1:
@@ -71,6 +76,7 @@ class DetectionResult:
     backend: str
     processing_ms: float
     input_shape: tuple[int, int]
+    reference_geometry: ReferenceGeometry | None = None
 
     @property
     def valid_image_path(self) -> bool:
@@ -87,6 +93,7 @@ class DetectionResult:
             "processed_shape_hw": list(self.frame_bgr.shape[:2]),
             "path_coordinate_system": "processed_image_pixels_xy_near_to_far",
             "path": self.path.tolist(),
+            "reference_geometry": self.reference_geometry.metadata() if self.reference_geometry else None,
         }
 
 
@@ -234,8 +241,14 @@ class RoadDetector:
         self._previous_gray = gray
         self._previous_probability = probability.copy()
         self._previous_path = path_mask
+        reference = build_reference_geometry(
+            road_mask, plan.points,
+            robot_center_x_fraction=cfg.robot_center_x_fraction,
+            lookahead_y_fraction=cfg.lookahead_y_fraction,
+            horizon_fraction=cfg.horizon_fraction,
+        )
         return DetectionResult(
             frame, probability, raw_mask, road_mask, plan.navigable_mask,
             plan.points, quality, plan.reason, backend,
-            (time.perf_counter() - start) * 1000.0, original_shape,
+            (time.perf_counter() - start) * 1000.0, original_shape, reference,
         )
