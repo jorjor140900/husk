@@ -1,0 +1,112 @@
+"""Optional integration checks; run with requirements-segmentation installed."""
+
+import importlib.util
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+import cv2
+import numpy as np
+
+AVAILABLE = all(importlib.util.find_spec(name) is not None for name in ("torch", "transformers", "PIL"))
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@unittest.skipUnless(AVAILABLE, "optional segmentation dependencies are not installed")
+class SegmentationTests(unittest.TestCase):
+    def make_fixture(self, root):
+        import torch
+        from transformers import SegformerConfig, SegformerForSemanticSegmentation, SegformerImageProcessor
+
+        torch.set_num_threads(2)
+        config = SegformerConfig(
+            depths=[1, 1, 1, 1], hidden_sizes=[8, 16, 32, 64],
+            num_attention_heads=[1, 1, 2, 4], sr_ratios=[8, 4, 2, 1],
+            decoder_hidden_size=16, num_labels=3,
+        )
+        initial = root / "initial-fixture"
+        SegformerForSemanticSegmentation(config).save_pretrained(initial)
+        # ADE checkpoints normally reduce labels; this must be overridden.
+        SegformerImageProcessor(do_reduce_labels=True, size={"height": 64, "width": 64}).save_pretrained(initial)
+        data = root / "dataset"
+        (data / "images").mkdir(parents=True)
+        (data / "masks").mkdir()
+        frame = np.full((64, 96, 3), (80, 120, 160), np.uint8)
+        mask = np.zeros((64, 96), np.uint8)
+        mask[:, 48:88] = 1
+        mask[:, 88:] = 255
+        self.assertTrue(cv2.imwrite(str(data / "images/a.png"), frame))
+        self.assertTrue(cv2.imwrite(str(data / "masks/a.png"), mask))
+        (data / "manifest.json").write_text(json.dumps([{
+            "image": "images/a.png", "mask": "masks/a.png", "recording_group": "test-session",
+        }]))
+        return initial, data
+
+    def test_training_export_reload_and_cli_use_the_model_without_edge_barriers(self):
+        from argparse import Namespace
+        import torch
+        from road_navigation.segmentation import SegmentationPredictor
+        from tools.train_segmentation import PairedDataset, train
+        from transformers import SegformerImageProcessor
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            initial, dataset = self.make_fixture(root)
+            processor = SegformerImageProcessor.from_pretrained(initial, do_reduce_labels=False)
+            sample = PairedDataset(dataset, processor, augment=False)[0]
+            self.assertEqual(set(sample["labels"].unique().tolist()), {0, 1, 255})
+            output = root / "model"
+            report = train(Namespace(
+                dataset=dataset, output=output, checkpoint=str(initial), device="cpu",
+                epochs=1, batch_size=1, learning_rate=6e-5, height=64, width=64,
+                seed=42, max_steps=1,
+            ))
+            self.assertEqual(report["optimizer_steps"], 1)
+            self.assertFalse(report["independent_validation_performed"])
+            self.assertTrue(np.isfinite(report["epochs"][0]["mean_training_loss"]))
+            self.assertTrue((output / "model.safetensors").is_file())
+            predictor = SegmentationPredictor(output, "cpu")
+            self.assertFalse(predictor.processor.do_reduce_labels)
+            # Make the exported model prefer ground everywhere. A sharp stripe
+            # would veto the old color/Canny backend; --model must bypass it.
+            with torch.no_grad():
+                predictor.model.decode_head.classifier.weight.zero_()
+                predictor.model.decode_head.classifier.bias.copy_(torch.tensor([-10., 10.]))
+            predictor.model.save_pretrained(output)
+            frame = np.full((120, 160, 3), 120, np.uint8)
+            frame[80:85] = 0
+            probability = SegmentationPredictor(output, "cpu").predict_probability(frame)
+            self.assertEqual(probability.shape, (120, 160))
+            self.assertTrue(np.isfinite(probability).all())
+            self.assertTrue(np.all((probability >= 0) & (probability <= 1)))
+            image = root / "input.png"
+            self.assertTrue(cv2.imwrite(str(image), frame))
+            result_dir = root / "inference"
+            result = subprocess.run([
+                sys.executable, "RoadDetection.py", "--image", str(image),
+                "--model", str(output), "--device", "cpu", "--output", str(result_dir),
+            ], cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            metadata = json.loads((result_dir / "result.json").read_text())
+            self.assertEqual(metadata["backend"], "segformer")
+            saved = cv2.imread(str(result_dir / "mask.png"), cv2.IMREAD_GRAYSCALE)
+            self.assertEqual(saved[60, 80], 255)
+
+    def test_invalid_mask_values_are_rejected_before_training(self):
+        from tools.train_segmentation import PairedDataset
+        from transformers import SegformerImageProcessor
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            initial, dataset = self.make_fixture(root)
+            self.assertTrue(cv2.imwrite(str(dataset / "masks/a.png"), np.full((64, 96), 128, np.uint8)))
+            processor = SegformerImageProcessor.from_pretrained(initial, do_reduce_labels=False)
+            with self.assertRaisesRegex(ValueError, "class IDs"):
+                PairedDataset(dataset, processor)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,4 +1,4 @@
-"""Offline image/video/webcam runner. ROS and model weights are not required."""
+"""Image/video/webcam runner with an optional trained segmentation model."""
 
 import argparse
 from dataclasses import asdict
@@ -36,7 +36,19 @@ def _show(image: np.ndarray) -> bool:
     return cv2.waitKey(1) & 0xFF in (ord("q"), 27)
 
 
-def _run_image(args, detector: RoadDetector, output: Path) -> dict:
+def _detect(detector, frame, predictor=None, probability=None, blocked=None):
+    started = time.perf_counter()
+    if predictor is not None:
+        probability = predictor.predict_probability(frame)
+    result = detector.process(frame, drivable_probability=probability, blocked_mask=blocked)
+    if predictor is not None:
+        result.backend = "segformer"
+        # Include model inference rather than reporting only mask/path latency.
+        result.processing_ms = (time.perf_counter() - started) * 1000
+    return result
+
+
+def _run_image(args, detector: RoadDetector, output: Path, predictor=None) -> dict:
     image = cv2.imread(str(args.image), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError(f"could not read image: {args.image}")
@@ -46,7 +58,7 @@ def _run_image(args, detector: RoadDetector, output: Path) -> dict:
         blocked = cv2.imread(str(args.blocked_mask), cv2.IMREAD_GRAYSCALE)
         if blocked is None:
             raise ValueError(f"could not read blocked mask: {args.blocked_mask}")
-    result = detector.process(image, drivable_probability=probability, blocked_mask=blocked)
+    result = _detect(detector, image, predictor, probability, blocked)
     _new_output(output, detector.config)
     overlay = draw_result(result)
     _write_png(output / "overlay.png", overlay)
@@ -67,7 +79,7 @@ def _even_frame(image: np.ndarray) -> np.ndarray:
     return cv2.copyMakeBorder(image, 0, h % 2, 0, w % 2, cv2.BORDER_CONSTANT)
 
 
-def _run_video(args, detector: RoadDetector, output: Path) -> dict:
+def _run_video(args, detector: RoadDetector, output: Path, predictor=None) -> dict:
     source = args.camera if args.camera is not None else str(args.video)
     capture = cv2.VideoCapture(source)
     writer = None
@@ -89,7 +101,7 @@ def _run_video(args, detector: RoadDetector, output: Path) -> dict:
             (output / "masks").mkdir()
         with (output / "frames.jsonl").open("w", encoding="utf-8") as metadata:
             while ok:
-                result = detector.process(frame)
+                result = _detect(detector, frame, predictor)
                 overlay = _even_frame(draw_result(result))
                 if writer is None:
                     size = (overlay.shape[1], overlay.shape[0])
@@ -148,12 +160,16 @@ def main(argv=None) -> int:
     parser.add_argument("--save-masks", action="store_true", help="save lossless PNG masks for each video frame")
     parser.add_argument("--probability", type=Path, help="image only: external float [0,1] HxW .npy map")
     parser.add_argument("--blocked-mask", type=Path, help="image only: grayscale obstacle mask, nonzero=blocked")
+    parser.add_argument("--model", type=Path, help="extracted trained SegFormer directory; requires optional segmentation dependencies")
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto", help="device for --model; auto uses CUDA when available")
     parser.add_argument("--show", action="store_true", help="optional GUI; requires opencv-python instead of headless")
     args = parser.parse_args(argv)
     if args.max_frames is not None and args.max_frames <= 0:
         parser.error("--max-frames must be positive")
     if (args.probability or args.blocked_mask) and not args.image:
         parser.error("--probability and --blocked-mask are supported with --image only; use the Python API for video models")
+    if args.model and args.probability:
+        parser.error("use either --model or --probability")
     if args.camera is not None and not args.show and args.max_frames is None:
         parser.error("headless webcam capture requires --max-frames")
     if args.show:
@@ -176,15 +192,25 @@ def main(argv=None) -> int:
         except TypeError as exc:
             raise ValueError(f"unknown configuration field: {exc}") from exc
         detector = RoadDetector(config)
+        predictor = None
+        if args.model:
+            try:
+                from .segmentation import SegmentationPredictor
+            except ImportError as exc:
+                raise ValueError("--model needs optional dependencies; install torch, transformers==4.49.0, safetensors and Pillow (see README)") from exc
+            predictor = SegmentationPredictor(args.model, args.device)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         output = args.output or Path("outputs") / stamp
-        summary = _run_image(args, detector, output) if args.image else _run_video(args, detector, output)
+        summary = _run_image(args, detector, output, predictor) if args.image else _run_video(args, detector, output, predictor)
+        if args.model:
+            summary["segmentation_model"] = str(args.model)
+            summary["inference_device"] = str(predictor.device)
         summary["elapsed_seconds"] = time.perf_counter() - started
         summary["output_directory"] = str(output)
         _write_json(output / "summary.json", summary)
         print(json.dumps(summary, indent=2, allow_nan=False))
         return 0
-    except (ValueError, OSError, cv2.error) as exc:
+    except (ValueError, OSError, RuntimeError, cv2.error) as exc:
         print(f"Road detection failed: {exc}", file=sys.stderr)
         return 1
     finally:

@@ -3,6 +3,9 @@
 พัฒนาและทดสอบการตรวจจับพื้นที่กับเส้นนำทางจาก **ภาพ / วิดีโอ / webcam โดยไม่ต้องใช้ ROS หรือหุ่นจริง**
 ยังไม่มีโมเดล AI ที่ฝึกแล้วใน repository นี้ โค้ดส่วนกลางรองรับ probability map จาก segmentation เพื่อเพิ่มโมเดลภายหลัง
 
+ถ้าทำ label ใน CVAT แล้ว ให้เปิด [notebook ฝึก SegFormer ใน Google Colab](https://colab.research.google.com/github/jorjor140900/husk/blob/work/notebooks/train_segformer_colab.ipynb) แล้วรันช่อง 1–5 ตามลำดับ โดย upload ZIP `Segmentation mask` และวิดีโอต้นฉบับ ไม่ต้อง export ภาพจาก CVAT หรือดาวน์โหลดชุดข้อมูลจาก Codex
+Colab มีโหมดใช้ฟรี แต่ GPU ขึ้นกับโควตาและทรัพยากร ถ้าไม่มี GPU notebook จะฝึกต้นแบบสั้น ๆ บน CPU ได้ โมเดล pretrained ต้องดาวน์โหลดจาก Hugging Face ระหว่างรัน ไม่ใช้โมเดลสุ่มแทนเมื่อดาวน์โหลดไม่ได้
+
 ## ติดตั้งและเริ่มใช้งาน
 
 ต้องใช้ Python 3.10 ขึ้นไป ตัวอย่าง Linux/macOS:
@@ -54,7 +57,7 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 - `quality_score` เก็บเฉพาะใน metadata เพื่อวินิจฉัย ไม่แสดงเป็นคะแนนบนจออีก เพราะค่านี้สูงได้แม้ mask ผิด ไม่ใช่ AI confidence หรือความมั่นใจว่าขับผ่านได้
 - `limited_lookahead` หมายถึงเส้นทางหยุดก่อนสุด ROI; `insufficient_lookahead` และ `start_blocked_or_too_narrow` ไม่มีเส้นทางคืนมา
 - `no_smooth_reference` หมายถึงพบเส้นทางแบบจุดใน mask แต่ไม่มีเส้นโค้งในชุดที่ค้นหาซึ่งผ่านการตรวจพื้นที่ทั้งหมด จึงแสดง `NO PATH` และไม่วาดเรฟเดิมค้างไว้ ไม่ได้หมายความว่าพื้นจริงผ่านไม่ได้แน่นอน
-- ค่า `processing_ms` วัดเฉพาะ detector ไม่รวมอ่านไฟล์ เขียนไฟล์ หรือ bridge/network
+- ค่า `processing_ms` วัดการประมวลผล mask/path และรวม inference เมื่อใช้ `--model` ไม่รวมโหลดโมเดล อ่านไฟล์ เขียนไฟล์ หรือ bridge/network
 - ภาพวิดีโอที่มีขนาดคี่จะเติมขอบดำด้านขวา/ล่างหนึ่งพิกเซลสำหรับ codec; พิกัดใน JSON ยังคงอิงภาพก่อนเติมขอบ
 
 ## สิ่งที่เปลี่ยนจากเวอร์ชันเดิม
@@ -176,3 +179,30 @@ python -m tools.prepare_cvat_dataset \
 ผลลัพธ์มี `images/`, `masks/`, `manifest.json`, `summary.json` และภาพ preview สำหรับตรวจงาน Mask สำหรับฝึกเป็น PNG ช่องเดียว: `0=non-drivable`, `1=drivable`, `255=ignore` โดยอ่านสีจาก `labelmap.txt` ไม่แปลงสีเป็น grayscale และไม่ใช้ `SegmentationObject` เป็น class mask พื้นที่ background ที่ยังไม่ label คงเป็น ignore ไม่ถือเป็นสิ่งกีดขวาง
 
 ใช้เฉพาะ `images/` และ `masks/` สำหรับฝึก ไม่ใช้ภาพ preview ไม่หารค่า mask ด้วย 255 และย่อ mask ด้วย nearest-neighbor เท่านั้น ชุดนี้ยังไม่มีโมเดลที่ฝึกแล้ว เครื่องมือไม่แบ่ง train/validation/test อัตโนมัติ ให้ใช้ recording group เดียวกันสำหรับคลิปจากการบันทึกครั้งเดียว และเก็บการบันทึกอีกครั้งสำหรับประเมินผลแยก
+
+## ฝึกโมเดลและใช้กับกล้อง
+
+แนะนำให้เริ่มด้วย notebook Colab ที่ลิงก์ด้านบน: ติดตั้ง → อัปโหลด ZIP/MOV → ตรวจภาพคู่ label → ฝึก → ดาวน์โหลด `husky-segformer.zip` โค้ดฝึกใช้ pretrained SegFormer-B0 แล้วเปลี่ยนหัวเป็นสองคลาส กำหนด `do_reduce_labels=False` เพื่อรักษาคลาส 0 และใช้ 255 เป็น ignore ข้อมูลชุดเดียวใช้ฝึกทั้งหมดโดยรายงาน training loss เท่านั้น ไม่มีคะแนน validation ที่สุ่มจากเฟรมใกล้กัน
+
+สำหรับเครื่องฝึกแบบ headless หรือ venv ใหม่ สามารถรันเองได้:
+
+```bash
+python -m pip install -r requirements-segmentation.txt
+python -m tools.train_segmentation --dataset outputs/part1-labeled --output outputs/husky-segformer --epochs 20
+```
+
+บน Ubuntu ที่ใช้ OpenCV แบบ GUI อยู่แล้ว ให้ติดตั้งเฉพาะ dependency ของโมเดล เพื่อคง GUI build เดิม แก้ path ZIP ให้ตรงกับไฟล์ที่ดาวน์โหลดจาก Colab:
+
+```bash
+source .venv/bin/activate
+python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.6.0'
+python -m pip install 'transformers==4.49.0' 'safetensors>=0.4.3,<1' 'Pillow>=10,<12'
+mkdir -p models
+unzip ~/Downloads/husky-segformer.zip -d models
+python RoadDetection.py --camera 0 --show --config config.example.json --model models/husky-segformer --device cpu
+```
+
+ส่ง `--model` เป็นโฟลเดอร์ที่แตกแล้ว ซึ่งมี config, preprocessor และ weights ครบ ใช้ `--device auto` เพื่อเลือก CUDA หากติดตั้ง PyTorch ที่รองรับ GPU ไว้แล้ว ถ้าไม่ส่ง `--model` ยังใช้ baseline เดิมโดยไม่ import torch/transformers
+เมื่อใช้โมเดล จะข้ามขั้นสี/Canny และส่ง probability เข้าตัวกรองเวลาและตัวสร้าง reference เดิม ค่า processing_ms รวม inference ด้วย การโหลดโมเดลหรือฝึกด้วยโค้ดนี้ไม่ได้ยืนยันความแม่นยำกลางแจ้ง และยังไม่มีการส่งคำสั่งควบคุมหุ่น
+
+ทดสอบส่วนโมเดลด้วย environment ที่ติดตั้ง optional dependencies แล้ว: `python -m unittest discover -s tests -v` การทดสอบใช้ checkpoint ขนาดเล็กที่สร้างใน temporary directory สำหรับตรวจ forward/backward, การรักษา label, save/load และ CLI ไม่ใช่น้ำหนักสำหรับใช้งานจริง การรัน notebook บน Colab และการ fine-tune pretrained model กับข้อมูลจริงต้องตรวจแยกจาก tests เหล่านี้
