@@ -158,3 +158,21 @@ python -m tools.review_videos --manifest clips.json --output outputs/review-01 -
 
 ใช้ `python -m tools.review_probes --help` เพื่อส่งออกร่าง sparse label และวินิจฉัยเกณฑ์สีจากจุดที่ตรวจด้วยสายตา โดย class `255` หมายถึงพื้นที่ยังไม่ label ซึ่งต้อง ignore
 ไฟล์วิดีโอ ผลทดลอง และ label ที่เกี่ยวข้องกับไฟล์แนบเก็บใน `outputs/` ซึ่งถูก ignore ไว้
+
+## ใช้ annotation จาก CVAT โดยไม่ export ภาพ
+
+ส่งออก format `Segmentation mask` แบบไม่รวมภาพ แล้วจับคู่กับวิดีโอต้นฉบับที่ upload เข้า CVAT ได้ โดยไม่ต้องใช้ inference หรือซื้อการ export พร้อมภาพ:
+
+```bash
+python -m tools.prepare_cvat_dataset \
+  --annotations /path/to/part1.zip \
+  --video /path/to/part1.mov \
+  --recording-group front-building-session-01 \
+  --output outputs/part1-labeled
+```
+
+แทน `/path/to/...` ด้วยตำแหน่งไฟล์บนเครื่อง ใช้ output directory ใหม่ในแต่ละครั้ง เครื่องมืออ่านชื่อ `frame_NNNNNN` เป็นเลขเฟรมต้นฉบับเริ่มที่ 0 ไม่เดา offset ไม่ resize เพื่อซ่อนขนาดที่ไม่ตรงกัน ต้องเปิด `contact-sheet.png` หรือ `previews/` ตรวจแนว mask กับภาพจริงก่อนฝึก หาก export เปลี่ยนเลขเฟรมหรือใช้วิดีโอคนละไฟล์ต้องแก้การจับคู่ให้ถูกก่อน
+
+ผลลัพธ์มี `images/`, `masks/`, `manifest.json`, `summary.json` และภาพ preview สำหรับตรวจงาน Mask สำหรับฝึกเป็น PNG ช่องเดียว: `0=non-drivable`, `1=drivable`, `255=ignore` โดยอ่านสีจาก `labelmap.txt` ไม่แปลงสีเป็น grayscale และไม่ใช้ `SegmentationObject` เป็น class mask พื้นที่ background ที่ยังไม่ label คงเป็น ignore ไม่ถือเป็นสิ่งกีดขวาง
+
+ใช้เฉพาะ `images/` และ `masks/` สำหรับฝึก ไม่ใช้ภาพ preview ไม่หารค่า mask ด้วย 255 และย่อ mask ด้วย nearest-neighbor เท่านั้น ชุดนี้ยังไม่มีโมเดลที่ฝึกแล้ว เครื่องมือไม่แบ่ง train/validation/test อัตโนมัติ ให้ใช้ recording group เดียวกันสำหรับคลิปจากการบันทึกครั้งเดียว และเก็บการบันทึกอีกครั้งสำหรับประเมินผลแยก
