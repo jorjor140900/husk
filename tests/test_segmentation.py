@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -86,7 +87,10 @@ class SegmentationTests(unittest.TestCase):
             predictor.model.save_pretrained(output)
             frame = np.full((120, 160, 3), 120, np.uint8)
             frame[80:85] = 0
-            probability = SegmentationPredictor(output, "cpu").predict_probability(frame)
+            resized_predictor = SegmentationPredictor(output, "cpu", input_size=(96, 64))
+            with mock.patch.object(resized_predictor.model, "forward", wraps=resized_predictor.model.forward) as forward:
+                probability = resized_predictor.predict_probability(frame)
+                self.assertEqual(tuple(forward.call_args.kwargs["pixel_values"].shape), (1, 3, 64, 96))
             self.assertEqual(probability.shape, (120, 160))
             self.assertTrue(np.isfinite(probability).all())
             self.assertTrue(np.all((probability >= 0) & (probability <= 1)))
@@ -95,13 +99,22 @@ class SegmentationTests(unittest.TestCase):
             result_dir = root / "inference"
             result = subprocess.run([
                 sys.executable, "RoadDetection.py", "--image", str(image),
-                "--model", str(output), "--device", "cpu", "--output", str(result_dir),
+                "--model", str(output), "--device", "cpu", "--model-size", "96", "64", "--output", str(result_dir),
             ], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             metadata = json.loads((result_dir / "result.json").read_text())
             self.assertEqual(metadata["backend"], "segformer")
+            summary = json.loads((result_dir / "summary.json").read_text())
+            self.assertEqual(summary["model_input_size_wh"], [96, 64])
             saved = cv2.imread(str(result_dir / "mask.png"), cv2.IMREAD_GRAYSCALE)
             self.assertEqual(saved[60, 80], 255)
+
+    def test_invalid_model_input_size_is_rejected(self):
+        from road_navigation.segmentation import SegmentationPredictor
+
+        for size in ((0, 64), (65, 64), (64,), (64, 64, 64)):
+            with self.subTest(size=size), self.assertRaisesRegex(ValueError, "multiples of 32"):
+                SegmentationPredictor("unused", "cpu", input_size=size)
 
     def test_invalid_mask_values_are_rejected_before_training(self):
         from tools.train_segmentation import PairedDataset

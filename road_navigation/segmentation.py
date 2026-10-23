@@ -17,12 +17,18 @@ def choose_device(name="auto"):
 
 
 class SegmentationPredictor:
-    def __init__(self, model_directory, device="auto"):
+    def __init__(self, model_directory, device="auto", input_size=None):
+        if input_size is not None:
+            if len(input_size) != 2 or any(type(v) is not int or v < 32 or v % 32 for v in input_size):
+                raise ValueError("model input width and height must be positive multiples of 32")
         folder = Path(model_directory)
         if not folder.is_dir():
             raise ValueError("--model must point to an extracted model directory, not a ZIP")
         self.device = choose_device(device)
         self.processor = SegformerImageProcessor.from_pretrained(folder, local_files_only=True, do_reduce_labels=False)
+        if input_size is not None:
+            self.processor.size = {"width": input_size[0], "height": input_size[1]}
+        self.input_size = (self.processor.size["width"], self.processor.size["height"])
         self.model = SegformerForSemanticSegmentation.from_pretrained(folder, local_files_only=True)
         labels = {int(k): str(v).lower().replace("-", "_") for k, v in self.model.config.id2label.items()}
         if self.model.config.num_labels != 2 or labels != {0: "non_drivable", 1: "drivable"}:

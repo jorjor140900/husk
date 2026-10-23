@@ -218,4 +218,17 @@ python RoadDetection.py --camera 0 --show --config config.example.json --model m
 ส่ง `--model` เป็นโฟลเดอร์ที่แตกแล้ว ซึ่งมี config, preprocessor และ weights ครบ ใช้ `--device auto` เพื่อเลือก CUDA หากติดตั้ง PyTorch ที่รองรับ GPU ไว้แล้ว ถ้าไม่ส่ง `--model` ยังใช้ baseline เดิมโดยไม่ import torch/transformers
 เมื่อใช้โมเดล จะข้ามขั้นสี/Canny และส่ง probability เข้าตัวกรองเวลาและตัวสร้าง reference เดิม ค่า processing_ms รวม inference ด้วย การโหลดโมเดลหรือฝึกด้วยโค้ดนี้ไม่ได้ยืนยันความแม่นยำกลางแจ้ง และยังไม่มีการส่งคำสั่งควบคุมหุ่น
 
+### ลดความหน่วงเมื่อใช้กล้องกับ CPU
+
+ทดลองลดขนาดภาพที่เข้า AI โดยตรงได้โดยไม่ฝึกใหม่ เช่น:
+
+```bash
+python RoadDetection.py --camera 2 --show --config config.example.json --model models/husky-segformer --device cpu --model-size 448 256
+```
+
+ถ้ายังช้า ลอง `--model-size 320 192` แทน ตัวเลขคือ width height และต้องหาร 32 ลงตัว หากไม่ระบุจะใช้ขนาดที่บันทึกมากับโมเดล `--max-width` หรือย่อหน้าต่างแสดงผลเพียงอย่างเดียวไม่ได้ลดขนาดที่เข้าโมเดล การลดขนาดอาจทำให้เสา/คนขนาดเล็กและขอบถนนหาย จึงต้องเปรียบเทียบภาพจริงด้วย ไม่รับประกันอัตราเร่งบนเครื่องผู้ใช้
+
+กล้อง webcam อ่านต่อเนื่องในอีก thread โดยเก็บไว้เพียงเฟรมล่าสุด ลดการรอประมวลผลเฟรมเก่าค้างสะสม ส่วนไฟล์วิดีโอยังประมวลผลทุกเฟรมตามลำดับ การอ่านแบบล่าสุดไม่ได้ลดเวลา inference ของเฟรมที่กำลังคำนวณ หรือยืนยันว่าจะขจัดความหน่วงภายใน driver/ตัวกล้องได้ทั้งหมด
+จอ webcam เพิ่ม `Compute` เป็นเวลา model+mask/path, `proc FPS` เป็น 1000/Compute ซึ่งไม่รวม I/O และ `host age` เป็นเวลาตั้งแต่อ่านเฟรมนั้นสำเร็จจน model/path เสร็จ ก่อนวาด/เขียนไฟล์ ไม่ใช่เวลาจาก sensor ถึงหน้าจอจริง ใน `frames.jsonl` มี `capture_frame_index`, `camera_frames_skipped`, `host_frame_age_ms` เพิ่มเพื่อดูช่วงเฟรมที่ข้ามเมื่อโปรแกรมช้ากว่ากล้อง
+
 ทดสอบส่วนโมเดลด้วย environment ที่ติดตั้ง optional dependencies แล้ว: `python -m unittest discover -s tests -v` การทดสอบใช้ checkpoint ขนาดเล็กที่สร้างใน temporary directory สำหรับตรวจ forward/backward, การรักษา label, save/load และ CLI ไม่ใช่น้ำหนักสำหรับใช้งานจริง การรัน notebook บน Colab และการ fine-tune pretrained model กับข้อมูลจริงต้องตรวจแยกจาก tests เหล่านี้

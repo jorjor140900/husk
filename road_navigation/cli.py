@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from .detector import DetectorConfig, RoadDetector
+from .capture import LatestFrameCapture
 from .visualization import draw_result
 
 
@@ -82,6 +83,8 @@ def _even_frame(image: np.ndarray) -> np.ndarray:
 def _run_video(args, detector: RoadDetector, output: Path, predictor=None) -> dict:
     source = args.camera if args.camera is not None else str(args.video)
     capture = cv2.VideoCapture(source)
+    if args.camera is not None:
+        capture = LatestFrameCapture(capture)
     writer = None
     processed = valid = 0
     durations = []
@@ -102,7 +105,11 @@ def _run_video(args, detector: RoadDetector, output: Path, predictor=None) -> di
         with (output / "frames.jsonl").open("w", encoding="utf-8") as metadata:
             while ok:
                 result = _detect(detector, frame, predictor)
-                overlay = _even_frame(draw_result(result))
+                host_age_ms = None
+                if args.camera is not None:
+                    host_age_ms = (time.perf_counter() - capture.last_frame_timestamp) * 1000
+                telemetry = {"processing_ms": result.processing_ms, "host_frame_age_ms": host_age_ms} if args.camera is not None else None
+                overlay = _even_frame(draw_result(result, telemetry=telemetry))
                 if writer is None:
                     size = (overlay.shape[1], overlay.shape[0])
                     writer = cv2.VideoWriter(str(output / "overlay.avi"), cv2.VideoWriter_fourcc(*"MJPG"), fps, size)
@@ -115,6 +122,10 @@ def _run_video(args, detector: RoadDetector, output: Path, predictor=None) -> di
                 row = result.metadata()
                 row["frame_index"] = processed
                 row["capture_position_ms"] = float(capture.get(cv2.CAP_PROP_POS_MSEC))
+                if args.camera is not None:
+                    row["capture_frame_index"] = capture.last_frame_index
+                    row["host_frame_age_ms"] = host_age_ms
+                    row["camera_frames_skipped"] = capture.dropped_frames
                 metadata.write(json.dumps(row, allow_nan=False) + "\n")
                 if args.save_masks:
                     _write_png(output / "masks" / f"{processed:06d}.png", result.road_mask)
@@ -137,6 +148,7 @@ def _run_video(args, detector: RoadDetector, output: Path, predictor=None) -> di
             "mean_processing_ms": float(np.mean(durations)),
             "source_fps_or_fallback": fps,
             "stopped_by_user": stopped_by_user,
+            "camera_frames_skipped": capture.dropped_frames if args.camera is not None else 0,
         }
     finally:
         capture.release()
@@ -162,6 +174,7 @@ def main(argv=None) -> int:
     parser.add_argument("--blocked-mask", type=Path, help="image only: grayscale obstacle mask, nonzero=blocked")
     parser.add_argument("--model", type=Path, help="extracted trained SegFormer directory; requires optional segmentation dependencies")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto", help="device for --model; auto uses CUDA when available")
+    parser.add_argument("--model-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"), help="override model input resolution, e.g. 448 256; multiples of 32; no retraining required")
     parser.add_argument("--show", action="store_true", help="optional GUI; requires opencv-python instead of headless")
     args = parser.parse_args(argv)
     if args.max_frames is not None and args.max_frames <= 0:
@@ -170,6 +183,11 @@ def main(argv=None) -> int:
         parser.error("--probability and --blocked-mask are supported with --image only; use the Python API for video models")
     if args.model and args.probability:
         parser.error("use either --model or --probability")
+    if args.model_size is not None:
+        if not args.model:
+            parser.error("--model-size requires --model")
+        if any(v < 32 or v % 32 for v in args.model_size):
+            parser.error("--model-size width/height must be positive multiples of 32")
     if args.camera is not None and not args.show and args.max_frames is None:
         parser.error("headless webcam capture requires --max-frames")
     if args.show:
@@ -198,13 +216,14 @@ def main(argv=None) -> int:
                 from .segmentation import SegmentationPredictor
             except ImportError as exc:
                 raise ValueError("--model needs optional dependencies; install torch, transformers==4.49.0, safetensors and Pillow (see README)") from exc
-            predictor = SegmentationPredictor(args.model, args.device)
+            predictor = SegmentationPredictor(args.model, args.device, input_size=args.model_size)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         output = args.output or Path("outputs") / stamp
         summary = _run_image(args, detector, output, predictor) if args.image else _run_video(args, detector, output, predictor)
         if args.model:
             summary["segmentation_model"] = str(args.model)
             summary["inference_device"] = str(predictor.device)
+            summary["model_input_size_wh"] = list(predictor.input_size)
         summary["elapsed_seconds"] = time.perf_counter() - started
         summary["output_directory"] = str(output)
         _write_json(output / "summary.json", summary)
