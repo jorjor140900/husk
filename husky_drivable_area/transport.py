@@ -48,6 +48,21 @@ def fill_image(message, image, header):
     return message
 
 
+def fill_compressed_image(message, image, header, jpeg_quality=80):
+    """Compress the display overlay only; model input/masks stay lossless."""
+    if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("compressed preview must be uint8 BGR")
+    if type(jpeg_quality) is not int or not 1 <= jpeg_quality <= 100:
+        raise ValueError("jpeg_quality must be an integer from 1 to 100")
+    ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+    if not ok:
+        raise OSError("could not encode overlay JPEG")
+    message.header = header
+    message.format = "bgr8; jpeg compressed bgr8"
+    message.data = array("B", encoded.tobytes())
+    return message
+
+
 @dataclass(frozen=True)
 class InputFrame:
     message: object

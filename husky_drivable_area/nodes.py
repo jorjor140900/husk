@@ -12,13 +12,13 @@ from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point32, PolygonStamped
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Header, String
 
 from road_navigation import DetectorConfig, RoadDetector
 from road_navigation.capture import LatestFrameCapture
 from road_navigation.visualization import draw_result
-from .transport import LatestInput, fill_image, frame_age_seconds, image_to_bgr, status_payload
+from .transport import LatestInput, fill_compressed_image, fill_image, frame_age_seconds, image_to_bgr, status_payload
 
 
 def image_qos():
@@ -32,7 +32,7 @@ class DrivableAreaNode(Node):
         defaults = {
             "image_topic": "/camera/image_raw", "model_path": "", "device": "cpu",
             "model_width": 448, "model_height": 256, "config_file": "",
-            "max_frame_age_sec": 2.0, "cpu_threads": 2,
+            "max_frame_age_sec": 2.0, "cpu_threads": 2, "overlay_jpeg_quality": 80,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -46,6 +46,9 @@ class DrivableAreaNode(Node):
         cpu_threads = value("cpu_threads")
         if type(cpu_threads) is not int or cpu_threads < 1:
             raise ValueError("cpu_threads must be a positive integer")
+        self._jpeg_quality = value("overlay_jpeg_quality")
+        if type(self._jpeg_quality) is not int or not 1 <= self._jpeg_quality <= 100:
+            raise ValueError("overlay_jpeg_quality must be an integer from 1 to 100")
         overrides = json.loads(Path(value("config_file")).expanduser().read_text()) if value("config_file") else {}
         if not isinstance(overrides, dict):
             raise ValueError("config_file must contain a DetectorConfig JSON object")
@@ -65,6 +68,7 @@ class DrivableAreaNode(Node):
         self._last_invalid_at = float("-inf")
         self._last_processed_header = None
         self._overlay_pub = self.create_publisher(Image, "drivable_area/overlay", image_qos())
+        self._compressed_pub = self.create_publisher(CompressedImage, "drivable_area/overlay/compressed", image_qos())
         self._mask_pub = self.create_publisher(Image, "drivable_area/mask", image_qos())
         self._clearance_pub = self.create_publisher(Image, "drivable_area/navigable_mask", image_qos())
         self._reference_pub = self.create_publisher(PolygonStamped, "drivable_area/reference_pixels", 1)
@@ -153,11 +157,20 @@ class DrivableAreaNode(Node):
                 self._invalidate("stale_result", header, age, timings)
                 return
             _, _, skipped = self._latest.state()
-            if self._overlay_pub.get_subscription_count() > 0:
+            raw_subscribers = self._overlay_pub.get_subscription_count()
+            jpeg_subscribers = self._compressed_pub.get_subscription_count()
+            timings["overlay_raw_subscribers"] = raw_subscribers
+            timings["overlay_compressed_subscribers"] = jpeg_subscribers
+            if raw_subscribers > 0 or jpeg_subscribers > 0:
                 overlay = draw_result(result, telemetry={
                     "processing_ms": result.processing_ms, "host_frame_age_ms": age * 1000,
                 })
-                self._overlay_pub.publish(fill_image(Image(), overlay, header))
+                if raw_subscribers > 0:
+                    self._overlay_pub.publish(fill_image(Image(), overlay, header))
+                if jpeg_subscribers > 0:
+                    self._compressed_pub.publish(fill_compressed_image(
+                        CompressedImage(), overlay, header, self._jpeg_quality,
+                    ))
             for publisher, mask in ((self._mask_pub, result.road_mask),
                                     (self._clearance_pub, result.navigable_mask)):
                 if publisher.get_subscription_count() > 0:
@@ -171,6 +184,12 @@ class DrivableAreaNode(Node):
             payload.update(timings)
             self._publish_reference(header, result.path, payload)
             self._last_processed_header = header
+            self.get_logger().info(
+                f"Frame age {age * 1000:.0f}ms | inference {timings['inference_ms']:.0f}ms | "
+                f"detector {timings['detector_ms']:.0f}ms | {result.reason} | "
+                f"preview subscribers raw={raw_subscribers}, compressed={jpeg_subscribers}",
+                throttle_duration_sec=5.0,
+            )
         except Exception as exc:
             self._invalidate("processing_error", header, age, timings)
             self.get_logger().error(f"Frame rejected: {type(exc).__name__}: {exc}")

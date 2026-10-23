@@ -54,7 +54,7 @@ node ไม่ใช้ `cv_bridge`; รองรับ raw `sensor_msgs/Image` 
 ```bash
 source /opt/ros/jazzy/setup.bash
 sudo apt update
-sudo apt install python3-venv python3-colcon-common-extensions ros-jazzy-rqt-image-view
+sudo apt install python3-venv python3-colcon-common-extensions ros-jazzy-rqt-image-view ros-jazzy-compressed-image-transport
 
 /usr/bin/python3 -m venv --system-site-packages /home/jorjeen/drivable_area_ws/.venv
 touch /home/jorjeen/drivable_area_ws/.venv/COLCON_IGNORE
@@ -114,7 +114,8 @@ source /home/jorjeen/drivable_area_ws/install/local_setup.bash
 ros2 run rqt_image_view rqt_image_view
 ```
 
-เลือก `/drivable_area/overlay` จากรายการด้านบนในหน้าต่าง
+เลือก `/drivable_area/overlay/compressed` จากรายการด้านบนในหน้าต่าง
+ใช้ JPEG เฉพาะภาพแสดงผล เพื่อลดขนาดข้อความภาพที่ส่งไป viewer
 สีเขียว/เหลือง/น้ำเงิน/แดงเหมือนโปรแกรมเดิม และมีเวลา processing/frame age เพิ่มด้วย
 ดู mask ได้จาก `/drivable_area/mask` หรือพื้นที่หลังเว้นขอบจาก `/drivable_area/navigable_mask`
 
@@ -152,6 +153,7 @@ ros2 launch husky_drivable_area drivable_area.launch.py \
 |---|---|---|
 | `/camera/image_raw` | `sensor_msgs/Image` | ภาพ BGR กล้องก่อน detector resize |
 | `/drivable_area/overlay` | `sensor_msgs/Image` (`bgr8`) | ภาพผลตรวจพร้อมเส้น สี และสถานะ |
+| `/drivable_area/overlay/compressed` | `sensor_msgs/CompressedImage` | JPEG ของภาพผลตรวจสำหรับ rqt คงขนาดและ header เดิม |
 | `/drivable_area/mask` | `sensor_msgs/Image` (`mono8`) | 255=พื้นที่ที่ detector รับและเชื่อมกับ seed, 0=พื้นที่อื่น |
 | `/drivable_area/navigable_mask` | `sensor_msgs/Image` (`mono8`) | mask หลังเว้นขอบด้วย `clearance_px` |
 | `/drivable_area/reference_pixels` | `geometry_msgs/PolygonStamped` | **ลำดับจุดของเส้นเปิด** จากใกล้ไปไกล, x=u, y=v, z=0 หน่วยพิกเซล ไม่ปิดเส้นกลับจุดแรก |
@@ -196,6 +198,7 @@ subscriber รับภาพได้ระหว่าง inference; ไม่
 tests ทั้ง 62 รายการผ่านในชุด dependencies ROS-specific (Python 3.12, NumPy 1.26.4,
 OpenCV 4.10, torch 2.6 CPU) ครอบคลุม detector/โมเดล, Image/row padding, queue และการล้าง reference เก่า
 การตรวจ callback ใช้ message/Node stand-ins เพื่อทดสอบ logic ไม่ใช่การตรวจ ROS middleware
-cloud นี้ไม่มี ROS Jazzy หรือ webcam จึงยังไม่ได้ยืนยัน launch/DDS/rqt บนเครื่องจริง
+ทดสอบ node/DDS จริงเพิ่มเติมใน official ROS Jazzy container ด้วยกล้องสังเคราะห์แล้ว
+ดู [ผลวัดและวิธีรันซ้ำ](ros2-stream-validation.md); ยังไม่ได้ทดสอบ webcam และการวาด GUI บนเครื่องผู้ใช้
 ขั้น build และเปิดกล้องข้างต้นคือการตรวจ integration บน Ubuntu Jazzy ของคุณ
 เมื่อเปิดได้แล้ว ขั้นถัดไปคือบันทึก rosbag ผลตรวจและวางแผน calibration ก่อนสร้าง controller หรือ bridge คำสั่งหุ่น

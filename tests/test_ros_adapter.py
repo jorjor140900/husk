@@ -10,9 +10,10 @@ import unittest
 from unittest import mock
 
 import numpy as np
+import cv2
 
 from husky_drivable_area.transport import (
-    InputFrame, LatestInput, fill_image, frame_age_seconds, image_to_bgr, status_payload,
+    InputFrame, LatestInput, fill_compressed_image, fill_image, frame_age_seconds, image_to_bgr, status_payload,
 )
 from road_navigation import DetectorConfig, RoadDetector
 
@@ -57,6 +58,24 @@ class TransportTests(unittest.TestCase):
             setattr(message, field, value)
             with self.subTest(field=field), self.assertRaises(ValueError):
                 image_to_bgr(message)
+
+    def test_jpeg_preview_preserves_header_dimensions_and_does_not_change_input(self):
+        frame = np.full((240, 320, 3), (80, 120, 160), np.uint8)
+        original = frame.copy()
+        source_header = header()
+        message = fill_compressed_image(SimpleNamespace(), frame, source_header)
+        self.assertIs(message.header, source_header)
+        self.assertEqual(message.format, "bgr8; jpeg compressed bgr8")
+        self.assertIsInstance(message.data, array)
+        self.assertEqual(message.data.typecode, "B")
+        decoded = cv2.imdecode(np.frombuffer(message.data, np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(decoded.shape, frame.shape)
+        self.assertLess(np.abs(decoded.astype(float) - frame).mean(), 3)
+        self.assertLess(len(message.data), frame.nbytes / 10)
+        np.testing.assert_array_equal(frame, original)
+        for quality in (0, 101, True):
+            with self.subTest(quality=quality), self.assertRaises(ValueError):
+                fill_compressed_image(SimpleNamespace(), frame, source_header, quality)
 
     def test_latest_slot_replaces_waiting_frames_without_repeating_consumed_input(self):
         slot = LatestInput()
@@ -122,7 +141,7 @@ def load_node_callbacks():
         "geometry_msgs": SimpleNamespace(),
         "geometry_msgs.msg": SimpleNamespace(Point32=SimpleNamespace, PolygonStamped=Polygon),
         "sensor_msgs": SimpleNamespace(),
-        "sensor_msgs.msg": SimpleNamespace(Image=SimpleNamespace),
+        "sensor_msgs.msg": SimpleNamespace(Image=SimpleNamespace, CompressedImage=SimpleNamespace),
         "std_msgs": SimpleNamespace(),
         "std_msgs.msg": SimpleNamespace(Header=header, String=SimpleNamespace),
     }
@@ -148,8 +167,10 @@ class CallbackTests(unittest.TestCase):
         self.node._max_age = 2.0
         self.node._last_invalid_at = float("-inf")
         self.node._last_processed_header = None
-        for name in ("_overlay_pub", "_mask_pub", "_clearance_pub", "_reference_pub", "_status_pub"):
+        self.node._jpeg_quality = 80
+        for name in ("_overlay_pub", "_compressed_pub", "_mask_pub", "_clearance_pub", "_reference_pub", "_status_pub"):
             setattr(self.node, name, mock.Mock())
+        self.node._compressed_pub.get_subscription_count.return_value = 0
         for publisher in (self.node._overlay_pub, self.node._mask_pub, self.node._clearance_pub):
             publisher.get_subscription_count.return_value = 1
         now = SimpleNamespace(nanoseconds=10_000_000_000, to_msg=lambda: header().stamp)
@@ -190,6 +211,20 @@ class CallbackTests(unittest.TestCase):
         fill.assert_not_called()
         self.assertTrue(self.status()["valid_image_path"])
         self.node._mask_pub.publish.assert_not_called()
+
+    def test_compressed_only_viewer_receives_preview_when_no_raw_viewer_is_connected(self):
+        self.node._overlay_pub.get_subscription_count.return_value = 0
+        self.node._compressed_pub.get_subscription_count.return_value = 1
+        self.node._latest.put(image_message())
+        self.node._process_latest()
+        self.node._overlay_pub.publish.assert_not_called()
+        self.node._compressed_pub.publish.assert_called_once()
+        message = self.node._compressed_pub.publish.call_args.args[0]
+        decoded = cv2.imdecode(np.frombuffer(message.data, np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(decoded.shape, (240, 320, 3))
+        self.assertTrue(self.status()["valid_image_path"])
+        self.assertEqual(self.status()["overlay_raw_subscribers"], 0)
+        self.assertEqual(self.status()["overlay_compressed_subscribers"], 1)
 
     def test_slow_image_output_cannot_leave_a_valid_reference(self):
         self.node._latest.put(image_message())

@@ -58,7 +58,7 @@ cd ~/husky_vision_ws
 source /opt/ros/jazzy/setup.bash
 
 sudo apt update
-sudo apt install python3-venv python3-colcon-common-extensions ros-jazzy-rqt-image-view
+sudo apt install python3-venv python3-colcon-common-extensions ros-jazzy-rqt-image-view ros-jazzy-compressed-image-transport
 
 /usr/bin/python3 -m venv --system-site-packages .venv
 touch .venv/COLCON_IGNORE
@@ -114,7 +114,10 @@ source ~/husky_vision_ws/install/local_setup.bash
 ros2 run rqt_image_view rqt_image_view
 ```
 
-เลือก **`/drivable_area/overlay`** ในรายการด้านบนของหน้าต่าง
+เลือก **`/drivable_area/overlay/compressed`** ในรายการด้านบนของหน้าต่าง
+ช่องนี้บีบอัดเฉพาะภาพ preview เป็น JPEG เพื่อให้ข้อมูลภาพที่ส่งมีขนาดเล็กลง
+ภาพเข้าโมเดล, mask และพิกัด reference ยังคงใช้ข้อมูลเดิม
+หากเพิ่งติดตั้ง compressed-image-transport ให้ปิด rqt เดิมแล้วเปิดใหม่เพื่อโหลด plugin
 จะเห็น mask สีเขียว, reference สีเหลือง, แกนกลางสีน้ำเงิน และขอบประมาณสีแดง
 ดู mask แยกจาก `/drivable_area/mask` และดู status ด้วย:
 
@@ -206,12 +209,15 @@ ros2 launch husky_vision drivable_area.launch.py \
 แพตช์ ROS ส่งภาพด้วย `array('B')` ซึ่งใช้ fast path ของ generated ROS setter
 การส่งด้วย `bytes` เดิมทำให้ setter ของ Jazzy ตรวจ type/range ของทุกไบต์ใน Python
 และ node จะเตรียม/ส่ง overlay กับ masks เฉพาะ topic ที่มีผู้รับ
+เพิ่มช่อง `/drivable_area/overlay/compressed` สำหรับ rqt เมื่อการส่ง Image ดิบขนาดใหญ่ขาดช่วง
+node วาด overlay ครั้งเดียว แล้วส่ง raw/JPEG ตามผู้รับของแต่ละช่อง
+ปรับ JPEG quality ได้ด้วย `overlay_jpeg_quality:=80` ซึ่งมีผลกับ preview เท่านั้น
 
 เปิด Terminal ที่ source Jazzy และ workspace แล้วตรวจ:
 
 ```bash
 ros2 topic echo /drivable_area/status --once
-ros2 topic delay /drivable_area/overlay --window 10
+ros2 topic delay /drivable_area/overlay/compressed --window 10
 ```
 
 `ros2 topic delay` รายงานหน่วยวินาทีจาก source header ถึง subscriber ของคำสั่งนี้
@@ -235,3 +241,15 @@ viewer อาจยังค้างที่เฟรมสุดท้าย�
 ให้ตรวจ warning `No fresh reference: ...` ใน Terminal ที่ launch และ `reason` ใน status
 โดยเฉพาะ `stale_result`, `stale_input`, `camera_timeout` หรือ `processing_error`
 node ยังคงงด reference ของเฟรมที่เก่าเกินกำหนด พร้อมรายงานเวลา inference ของเฟรมที่ทำเสร็จแล้ว
+ทุกประมาณ 5 วินาทีที่มีการประมวลผลสำเร็จจะมี log `Frame age ... | inference ... | ...`
+เมื่อเลือกช่อง JPEG ใน rqt ควรเห็น `preview subscribers raw=0, compressed=1`
+ถ้ายังเป็น `compressed=0` ให้ตรวจว่าเลือก topic ถูกและติดตั้ง plugin แล้ว
+
+สำหรับ workspace ที่สร้างไว้ก่อนมีช่อง compressed ให้อัปเดตด้วย `--update-code` ตามด้านบน
+และติดตั้ง plugin เพิ่มครั้งเดียวก่อนเปิด rqt ใหม่:
+
+```bash
+sudo apt install ros-jazzy-compressed-image-transport
+```
+
+รายละเอียดการทดสอบด้วย ROS 2 จริงและข้อจำกัดอยู่ใน [บันทึกการตรวจ stream](https://github.com/jorjor140900/husk/blob/work/docs/ros2-stream-validation.md)
