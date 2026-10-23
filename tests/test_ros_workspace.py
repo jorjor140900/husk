@@ -43,6 +43,8 @@ class WorkspaceTests(unittest.TestCase):
             self.assertTrue((package / "docs/ros2-metric-path.md").is_file())
             self.assertIn("husky_vision.ground_node:main", (package / "setup.py").read_text())
             self.assertIn("husky_vision.controller_node:main", (package / "setup.py").read_text())
+            self.assertIn("husky_vision.control_self_test:main", (package / "setup.py").read_text())
+            self.assertTrue((package / "husky_vision/control_report.py").is_file())
             self.assertTrue((package / "launch/control_demo.launch.py").is_file())
             self.assertTrue((package / "docs/ros2-control.md").is_file())
             guide = (destination / "START_HERE.md").read_text()

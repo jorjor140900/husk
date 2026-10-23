@@ -119,6 +119,63 @@ ros2 service call /husky_demo/simulation/reset std_srvs/srv/Trigger '{}'
 reset คงค่า stop และตัวเลือกปิด/เปิด stream เดิมไว้ หากยังหยุดให้ตรวจค่าเหล่านี้
 software stop นี้เป็นการทดสอบโปรแกรม ไม่แทน hardware E-stop
 
+## ทดสอบอัตโนมัติและเก็บผลก่อนปรับ controller
+
+หลังเปิด demo ได้แล้ว ให้หยุด demo เดิมด้วย Ctrl+C เพื่อลดภาระ CPU
+อัปเดต source ด้วย `--update-code` และ build ตามขั้น 1 แล้วเปิด Terminal:
+
+```bash
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+source install/local_setup.bash
+ros2 run husky_vision control_self_test
+```
+
+ไม่ต้องเปิด RViz, webcam หรือ launch อื่น โปรแกรมเปิด controller กับ simulator ให้เอง
+ใน namespace สุ่ม แล้วปิดเมื่อจบ ใช้เวลาประมาณ 10–20 วินาทีด้วย config เริ่มต้น
+อ่านค่าจาก `config/controller.yaml` ที่ติดตั้งไว้ โดยบังคับ topic/frame ให้เป็นของการทดสอบเอง
+และเริ่ม disabled เพื่อทดสอบการเปิด controller
+
+ผลสำเร็จท้าย Terminal จะมี `"result": "passed"` และ `"checks_passed": 15`
+พร้อม `Report: .../outputs/control-check/control-<เวลา>-<รหัส>.json`
+เก็บไฟล์แยกต่อการรัน ไม่เขียนทับผลเก่า และมีรายงานเมื่อการทดสอบล้มเหลวด้วย
+
+| ค่าในรายงาน | ความหมาย |
+| --- | --- |
+| `tracking.rmse_m` | RMS ของระยะคลาดเคลื่อนตลอดช่วงสังเกต รวมช่วงแรกที่เริ่มเยื้องเส้น |
+| `tracking.tail_mean_m` | ค่าเฉลี่ยระยะคลาดเคลื่อนใน 10% สุดท้ายของตัวอย่าง |
+| `tracking.distance_forward_m` | การเปลี่ยน X ของหุ่นจำลองระหว่างวัด ไม่ใช่ระยะสะสมตามทาง |
+| `stop_observations.*.request_to_zero_seconds` | เวลาจากส่งคำขอหยุด/ตัดข้อมูลจนผู้ทดสอบรับคำสั่งศูนย์กับ status |
+| `checks` | เงื่อนไขที่ผ่าน เช่นข้อมูลขาด, TF ณ capture time, goal stop และ disarm |
+| `failed_check`, `error` | ขั้นที่ล้มเหลวและรายละเอียด เมื่อ `result=failed` |
+
+เกณฑ์ demo เริ่มต้นคือมีตัวอย่างอย่างน้อย 20 ตัวอย่าง, เดินหน้าเกิน 0.02 m,
+ค่าเฉลี่ย error ช่วงท้ายไม่เกิน **0.15 m** และไม่ขาดข้อมูลระหว่าง tracking
+เก็บ tracking 8 วินาทีโดยค่าเริ่มต้น ยังไม่ใช่การวิ่งครบเส้น 8 m
+ข้อมูล error มาจาก controller เทียบ reference สังเคราะห์กับ odometry จำลอง
+เวลา request→zero ไม่ใช่ระยะเบรกหรือเวลาที่หุ่นจริงหยุด
+งบเวลาทดสอบกรณีตัดข้อมูลคือ timeout ที่ตั้งไว้ + เผื่อ scheduler อย่างน้อย 0.25 s
+ทั้งหมดเป็นเกณฑ์ตรวจซอฟต์แวร์ใน demo ไม่ใช่เกณฑ์ยืนยันความพร้อมของ Husky จริง
+
+ตัวอย่างผลที่ตรวจใน cloud: 160 ตัวอย่างใน 8 วินาที, RMSE ประมาณ 0.209 m
+โดยเริ่มห่างเส้นประมาณ 0.415 m และ tail mean ประมาณ 0.011 m
+ค่าเริ่มต้นสูงเพราะจงใจเริ่มเยื้องเส้นเพื่อทดสอบการเลี้ยวกลับเข้า reference
+อย่าใช้ตัวเลข simulation นี้อ้างเป็นความแม่นยำของหุ่นจริง
+
+หากปรับ gains ให้เก็บ config ไว้นอก source ที่ updater จะเปลี่ยน แล้วทดสอบเทียบด้วย:
+
+```bash
+cp -n src/husky_vision/config/controller.yaml controller-tuning.yaml
+nano controller-tuning.yaml
+ros2 run husky_vision control_self_test --config "$HOME/husky_vision_ws/controller-tuning.yaml"
+```
+
+ใช้ `--tracking-seconds 45` เพื่อสังเกตนานขึ้นได้ หรือ `--output-dir <โฟลเดอร์>` เพื่อเลือกที่เก็บรายงาน
+เริ่มด้วย config เดิมก่อน ไม่ต้องเพิ่มความเร็วเพื่อให้ error ลดเร็วขึ้น
+หลังการทดสอบผ่าน ขั้นพัฒนาต่อคือ metric footprint/collision gate กับ LiDAR
+และการเชื่อม TF/perception โดยคงการตรวจระยะจริงไว้ก่อนต่อ hardware
+
 ## 4. โค้ดที่เตรียมไว้สำหรับต่อกับหุ่นภายหลัง
 
 | ส่วน | หน้าที่ |
@@ -126,6 +183,7 @@ software stop นี้เป็นการทดสอบโปรแกรม
 | `husky_vision/control.py` | Pure Pursuit + command limits แบบไม่พึ่ง ROS |
 | `husky_vision/controller_node.py` | รับ Path, odometry, TF และ permission heartbeat; ส่ง Twist/สถานะ |
 | `husky_vision/control_simulator.py` | เส้นสังเคราะห์และหุ่นจำลองวงจรปิด |
+| `husky_vision/control_self_test.py` | วัด tracking และทดสอบ stop ผ่าน ROS พร้อมรายงาน JSON |
 | `config/controller.yaml` | lookahead, ความเร็ว, acceleration และ timeout |
 | `launch/control_demo.launch.py` | ทดลองครบชุดใน `/husky_demo/` |
 | `launch/controller.launch.py` | adapter สำหรับหุ่นจริงใน `/husky_control/` เริ่ม disabled |

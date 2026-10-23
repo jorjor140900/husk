@@ -28,5 +28,6 @@ setup(
         "import_camera_calibration = husky_drivable_area.calibration:main",
         "path_controller = husky_drivable_area.controller_node:main",
         "control_simulator = husky_drivable_area.control_simulator:main",
+        "control_self_test = husky_drivable_area.control_self_test:main",
     ]},
 )
