@@ -43,6 +43,9 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 
 ## ใช้กับ ROS 2 Jazzy
 
+เริ่มใหม่ให้เป็นสัดส่วนได้ด้วย [คู่มือสร้าง workspace ใหม่ `husky_vision_ws` และแพ็กเกจ `husky_vision`](docs/ros2-fresh-start.md)
+มีคำสั่งสร้าง source และคัดลอกโมเดลให้ครบ โดยไม่รวม legacy หรือผลทดลอง
+
 มีแพ็กเกจ `husky_drivable_area` สำหรับเปิด webcam และใช้โมเดลเดิมผ่าน ROS topics
 ดู [ขั้นตอนติดตั้งใน drivable_area_ws, build, launch และเปิดภาพ](docs/ros2-jazzy.md)
 ส่ง mask, overlay, reference แบบพิกเซลและ status; ยังไม่มีคำสั่งเคลื่อนที่หรือเส้นทางหน่วยเมตร

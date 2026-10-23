@@ -1,5 +1,8 @@
 # เปิดกล้องและ AI ผ่าน ROS 2 Jazzy
 
+**หากต้องการเริ่มใหม่แยกจากของเก่า ใช้ [คู่มือสร้าง workspace ใหม่ `husky_vision_ws`](ros2-fresh-start.md)**
+คู่มือด้านล่างเป็นวิธีใช้แพ็กเกจจาก repository โดยตรงใน workspace เดิม
+
 แพ็กเกจชื่อ **`husky_drivable_area`** อยู่ที่ root ของ repository นี้
 `/home/jorjeen/drivable_area_ws` เป็น workspace; แพ็กเกจจะอยู่ใน `src/` ของ workspace
 ใช้ detector และโมเดล SegFormer เดิม ไม่ต้อง train ใหม่ และไม่ต้องแก้โปรแกรม standalone
