@@ -58,7 +58,7 @@ cd ~/husky_vision_ws
 source /opt/ros/jazzy/setup.bash
 
 sudo apt update
-sudo apt install python3-venv python3-colcon-common-extensions ros-jazzy-rqt-image-view ros-jazzy-compressed-image-transport
+sudo apt install python3-venv python3-colcon-common-extensions ros-jazzy-image-view ros-jazzy-compressed-image-transport
 
 /usr/bin/python3 -m venv --system-site-packages .venv
 touch .venv/COLCON_IGNORE
@@ -109,17 +109,19 @@ ros2 launch husky_vision drivable_area.launch.py \
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-source ~/husky_vision_ws/.venv/bin/activate
 source ~/husky_vision_ws/install/local_setup.bash
-ros2 run rqt_image_view rqt_image_view
+QT_QPA_PLATFORM=xcb ros2 run image_view image_view --ros-args \
+  -r image:=/drivable_area/overlay \
+  -p image_transport:=compressed
 ```
 
-เลือก **`/drivable_area/overlay/compressed`** ในรายการด้านบนของหน้าต่าง
+หน้าต่างเปิดรับภาพ overlay โดยอัตโนมัติ คำสั่งระบุ **base topic** `/drivable_area/overlay`
+และ transport `compressed` แยกกัน; plugin จะรับ `/drivable_area/overlay/compressed` ให้เอง
 ช่องนี้บีบอัดเฉพาะภาพ preview เป็น JPEG เพื่อให้ข้อมูลภาพที่ส่งมีขนาดเล็กลง
 ภาพเข้าโมเดล, mask และพิกัด reference ยังคงใช้ข้อมูลเดิม
-หากเพิ่งติดตั้ง compressed-image-transport ให้ปิด rqt เดิมแล้วเปิดใหม่เพื่อโหลด plugin
+`QT_QPA_PLATFORM=xcb` เลือก Qt X11 backend สำหรับเครื่องที่ไม่มี Qt wayland plugin
 จะเห็น mask สีเขียว, reference สีเหลือง, แกนกลางสีน้ำเงิน และขอบประมาณสีแดง
-ดู mask แยกจาก `/drivable_area/mask` และดู status ด้วย:
+ดู status ด้วย:
 
 ```bash
 ros2 topic echo /drivable_area/status --once
@@ -171,6 +173,19 @@ ros2 pkg executables husky_vision
 ให้ตรวจบรรทัด source อัตโนมัติใน `~/.bashrc` ด้วย
 หากต้องการสร้าง `install/setup.bash` ใหม่ให้มีเพียง Jazzy เป็น parent
 ต้อง build จาก environment ที่ไม่ได้ source workspace อื่นหรือ workspace ตัวเองอยู่ก่อน
+
+## เมื่อ rqt ล้มด้วย incompatible type หรือ invalid allocator
+
+หากมีข้อความว่า subscribe `/drivable_area/overlay/compressed` โดยตรง ตามด้วย
+`incompatible type sensor_msgs::msg::dds_::CompressedImage_` ตัว viewer กำลังใช้ชนิด Image กับ topic ของ CompressedImage
+`invalid allocator` ที่ตามมาเป็น error ระหว่างสร้าง subscription ไม่ใช่หลักฐานว่าต้องเพิ่ม RAM
+rqt บางรุ่นอาจคืนค่าชื่อที่บันทึกไว้เป็น raw topic ก่อนค้นพบ metadata ของ transport
+คำแนะนำให้เลือกชื่อ compressed ในรายการอย่างเดียวจึงไม่เพียงพอเมื่อเปิด viewer ใหม่
+
+ใช้ `image_view` ด้วย base topic และ transport แยกกันตามขั้นตอน 5
+ติดตั้ง viewer ได้ด้วย `sudo apt install ros-jazzy-image-view ros-jazzy-compressed-image-transport`
+ใช้ node กล้อง/AI ที่กำลังทำงานอยู่ได้ โดยไม่ต้อง build หรือ train ใหม่
+ใน ROS 2 parameter ใช้ `-p image_transport:=compressed`; ข้อความ `_image_transport:=compressed` ใน warning เป็นรูปแบบ ROS 1
 
 ## อัปเดตแพตช์ ROS ใน workspace ที่สร้างไว้แล้ว
 
@@ -242,14 +257,14 @@ viewer อาจยังค้างที่เฟรมสุดท้าย�
 โดยเฉพาะ `stale_result`, `stale_input`, `camera_timeout` หรือ `processing_error`
 node ยังคงงด reference ของเฟรมที่เก่าเกินกำหนด พร้อมรายงานเวลา inference ของเฟรมที่ทำเสร็จแล้ว
 ทุกประมาณ 5 วินาทีที่มีการประมวลผลสำเร็จจะมี log `Frame age ... | inference ... | ...`
-เมื่อเลือกช่อง JPEG ใน rqt ควรเห็น `preview subscribers raw=0, compressed=1`
-ถ้ายังเป็น `compressed=0` ให้ตรวจว่าเลือก topic ถูกและติดตั้ง plugin แล้ว
+เมื่อเปิด viewer ด้วย transport compressed ควรเห็น `preview subscribers raw=0, compressed=1`
+ถ้ายังเป็น `compressed=0` ให้ตรวจ base topic และ plugin
 
 สำหรับ workspace ที่สร้างไว้ก่อนมีช่อง compressed ให้อัปเดตด้วย `--update-code` ตามด้านบน
-และติดตั้ง plugin เพิ่มครั้งเดียวก่อนเปิด rqt ใหม่:
+และติดตั้ง viewer/plugin เพิ่มครั้งเดียว:
 
 ```bash
-sudo apt install ros-jazzy-compressed-image-transport
+sudo apt install ros-jazzy-image-view ros-jazzy-compressed-image-transport
 ```
 
 รายละเอียดการทดสอบด้วย ROS 2 จริงและข้อจำกัดอยู่ใน [บันทึกการตรวจ stream](https://github.com/jorjor140900/husk/blob/work/docs/ros2-stream-validation.md)

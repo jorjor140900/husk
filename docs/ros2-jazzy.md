@@ -54,7 +54,7 @@ node ไม่ใช้ `cv_bridge`; รองรับ raw `sensor_msgs/Image` 
 ```bash
 source /opt/ros/jazzy/setup.bash
 sudo apt update
-sudo apt install python3-venv python3-colcon-common-extensions ros-jazzy-rqt-image-view ros-jazzy-compressed-image-transport
+sudo apt install python3-venv python3-colcon-common-extensions ros-jazzy-image-view ros-jazzy-compressed-image-transport
 
 /usr/bin/python3 -m venv --system-site-packages /home/jorjeen/drivable_area_ws/.venv
 touch /home/jorjeen/drivable_area_ws/.venv/COLCON_IGNORE
@@ -109,12 +109,14 @@ ros2 launch husky_drivable_area drivable_area.launch.py \
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-source /home/jorjeen/drivable_area_ws/.venv/bin/activate
 source /home/jorjeen/drivable_area_ws/install/local_setup.bash
-ros2 run rqt_image_view rqt_image_view
+QT_QPA_PLATFORM=xcb ros2 run image_view image_view --ros-args \
+  -r image:=/drivable_area/overlay \
+  -p image_transport:=compressed
 ```
 
-เลือก `/drivable_area/overlay/compressed` จากรายการด้านบนในหน้าต่าง
+เปิดรับภาพจาก base topic `/drivable_area/overlay` ด้วย transport `compressed` อัตโนมัติ
+การระบุสองค่านี้แยกกันเลี่ยงกรณี rqt คืนค่าชื่อ compressed เป็น raw topic แล้วสร้าง subscription ผิดชนิด
 ใช้ JPEG เฉพาะภาพแสดงผล เพื่อลดขนาดข้อความภาพที่ส่งไป viewer
 สีเขียว/เหลือง/น้ำเงิน/แดงเหมือนโปรแกรมเดิม และมีเวลา processing/frame age เพิ่มด้วย
 ดู mask ได้จาก `/drivable_area/mask` หรือพื้นที่หลังเว้นขอบจาก `/drivable_area/navigable_mask`
@@ -123,12 +125,11 @@ ros2 run rqt_image_view rqt_image_view
 
 ```bash
 ros2 topic list
-ros2 topic hz /drivable_area/overlay --qos-reliability best_effort
+ros2 topic hz /drivable_area/overlay/compressed
 ros2 topic echo /drivable_area/status --once
 ros2 topic echo /drivable_area/reference_pixels --once
 ```
 
-`rqt_image_view` บางเวอร์ชันมีตัวเลือก QoS ให้เลือก **Best effort** เพื่อรับภาพ
 ถ้าจอดำ ให้ตรวจว่ามี `/camera/image_raw` ก่อน และดู error ใน Terminal ที่ launch
 `Ctrl+C` ใน Terminal ที่ launch ใช้หยุดทั้งสอง node
 
@@ -199,6 +200,7 @@ tests ทั้ง 62 รายการผ่านในชุด dependencies
 OpenCV 4.10, torch 2.6 CPU) ครอบคลุม detector/โมเดล, Image/row padding, queue และการล้าง reference เก่า
 การตรวจ callback ใช้ message/Node stand-ins เพื่อทดสอบ logic ไม่ใช่การตรวจ ROS middleware
 ทดสอบ node/DDS จริงเพิ่มเติมใน official ROS Jazzy container ด้วยกล้องสังเคราะห์แล้ว
+ตรวจ `image_view` กับ compressed decoder และ Qt offscreen GUI เพิ่มแล้ว
 ดู [ผลวัดและวิธีรันซ้ำ](ros2-stream-validation.md); ยังไม่ได้ทดสอบ webcam และการวาด GUI บนเครื่องผู้ใช้
 ขั้น build และเปิดกล้องข้างต้นคือการตรวจ integration บน Ubuntu Jazzy ของคุณ
 เมื่อเปิดได้แล้ว ขั้นถัดไปคือบันทึก rosbag ผลตรวจและวางแผน calibration ก่อนสร้าง controller หรือ bridge คำสั่งหุ่น

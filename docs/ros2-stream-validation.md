@@ -31,16 +31,37 @@
 การทดสอบนี้ยังไม่ได้แยกสาเหตุระดับ middleware/transport buffer แต่ยืนยันว่าการลด payload ของ preview
 ช่วยหลีกเลี่ยงภาพที่หายในการทดลองนี้ได้ ไม่ใช่หลักฐานว่าความหน่วงบนคอมพิวเตอร์ทุกเครื่องจะเท่ากัน
 
-## แพตช์และการใช้ rqt
+## แพตช์และการเปิด viewer
 
 node เพิ่ม `/drivable_area/overlay/compressed` เป็น `sensor_msgs/CompressedImage`
 JPEG quality เริ่มที่ 80, คงขนาดภาพและ source header เดิม
 บีบอัดเฉพาะภาพที่วาดสำหรับแสดงผล ไม่เปลี่ยนภาพเข้าโมเดล, probability, mask หรือพิกัด reference
 ทั้ง raw และ compressed ส่งเฉพาะเมื่อมี subscriber และใช้ overlay ที่วาดร่วมกันครั้งเดียว
 
-ติดตั้ง `ros-jazzy-compressed-image-transport` แล้วปิดและเปิด rqt ใหม่
-เลือก `/drivable_area/overlay/compressed` ในรายการ topics
+ติดตั้ง `ros-jazzy-image-view` และ `ros-jazzy-compressed-image-transport`
+แล้วเปิด viewer ด้วย base topic และ transport แยกกัน:
+
+```bash
+QT_QPA_PLATFORM=xcb ros2 run image_view image_view --ros-args \
+  -r image:=/drivable_area/overlay \
+  -p image_transport:=compressed
+```
+
 log ของ detector ควรแสดง `preview subscribers raw=0, compressed=1`
+คำแนะนำเดิมที่ให้เลือกชื่อ compressed ตรง ๆ ใน rqt ไม่ครอบคลุมการ restore topic ของ rqt บางรุ่น
+ซึ่งอาจสร้าง subscriber ชนิด Image บน topic ชนิด CompressedImage แล้วล้มด้วย incompatible type/invalid allocator
+
+## ตรวจ GUI และ C++ decoder เพิ่มเติม
+
+ใช้ official `ros:jazzy-perception` image (digest `sha256:9495f96fd2d14e43c57193a36e80f015ad7ad05b8d4c4fd046bc9dbfbc40c960`)
+เปิด `image_view` ด้วย remap ของ base topic และ parameter `image_transport:=compressed` ตามคำสั่งด้านบน
+ภายใน container ใช้ Qt `offscreen` แทน `xcb` เนื่องจากไม่มีหน้าจอ X11 จริง
+ส่ง JPEG ที่สร้างด้วย `fill_compressed_image` ไปยัง topic และตรวจ Image ที่ viewer republish หลัง decode
+
+รับ 40 เฟรมในเวลาประมาณ 9 วินาที ตรวจขนาด 640×480, BGR และ source header ตรงกัน
+process GUI ทำงานต่อเนื่องโดยไม่เกิด incompatible type หรือ invalid allocator
+นี่ตรวจการเปิด GUI และ compiled image_transport decoder เพิ่มจาก Python subscriber probe
+แต่ยังไม่ใช่การตรวจ desktop/Wayland/XWayland หรือความหน่วง GUI บนเครื่องผู้ใช้
 
 ## รันซ้ำโดยไม่เปิด webcam
 
