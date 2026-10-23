@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 import xml.etree.ElementTree as ET
 
-from tools.create_ros2_workspace import create_workspace
+from tools.create_ros2_workspace import create_workspace, update_workspace_code
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -89,6 +89,45 @@ class WorkspaceTests(unittest.TestCase):
                     create_workspace(destination, model)
             self.assertFalse(destination.exists())
             self.assertEqual(list(root.iterdir()), [model])
+
+    def test_update_backs_up_local_edits_and_preserves_model_and_config(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model = self.make_model_fixture(root)
+            workspace = root / "fresh"
+            create_workspace(workspace, model)
+            package = workspace / "src/husky_vision"
+            target = package / "husky_vision/nodes.py"
+            target.write_text("# local ROS edits\n")
+            config = package / "config.example.json"
+            config.write_text('{"clearance_px": 12}')
+            core = package / "road_navigation/detector.py"
+            core.write_text("# local detector edits\n")
+            result = update_workspace_code(workspace)
+            self.assertEqual((Path(result["source_backup"]) / "husky_vision/nodes.py").read_text(), "# local ROS edits\n")
+            self.assertIn("class DrivableAreaNode", target.read_text())
+            self.assertIn('"cpu_threads"', target.read_text())
+            self.assertNotIn("husky_drivable_area", (package / "launch/drivable_area.launch.py").read_text())
+            self.assertEqual(config.read_text(), '{"clearance_px": 12}')
+            self.assertEqual(core.read_text(), "# local detector edits\n")
+            self.assertEqual((workspace / "models/husky-segformer/model.safetensors").read_bytes(), (model / "model.safetensors").read_bytes())
+
+    def test_update_rejects_an_unrelated_or_incomplete_workspace_before_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with self.assertRaisesRegex(ValueError, "expected an existing"):
+                update_workspace_code(root / "missing")
+            self.assertFalse((root / "missing").exists())
+            model = self.make_model_fixture(root)
+            workspace = root / "fresh"
+            create_workspace(workspace, model)
+            package = workspace / "src/husky_vision"
+            (package / "husky_vision/transport.py").unlink()
+            original = (package / "husky_vision/nodes.py").read_bytes()
+            with self.assertRaisesRegex(ValueError, "expected a regular"):
+                update_workspace_code(workspace)
+            self.assertEqual((package / "husky_vision/nodes.py").read_bytes(), original)
+            self.assertFalse((workspace / ".source-backups").exists())
 
 
 if __name__ == "__main__":

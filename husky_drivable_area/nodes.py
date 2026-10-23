@@ -32,7 +32,7 @@ class DrivableAreaNode(Node):
         defaults = {
             "image_topic": "/camera/image_raw", "model_path": "", "device": "cpu",
             "model_width": 448, "model_height": 256, "config_file": "",
-            "max_frame_age_sec": 2.0,
+            "max_frame_age_sec": 2.0, "cpu_threads": 2,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -43,11 +43,19 @@ class DrivableAreaNode(Node):
         model_path = value("model_path")
         if not model_path:
             raise ValueError("model_path is required: pass the extracted husky-segformer directory")
+        cpu_threads = value("cpu_threads")
+        if type(cpu_threads) is not int or cpu_threads < 1:
+            raise ValueError("cpu_threads must be a positive integer")
         overrides = json.loads(Path(value("config_file")).expanduser().read_text()) if value("config_file") else {}
         if not isinstance(overrides, dict):
             raise ValueError("config_file must contain a DetectorConfig JSON object")
         self._detector = RoadDetector(DetectorConfig(**overrides))
         from road_navigation.segmentation import SegmentationPredictor
+        import torch
+        # Leave CPU time for image transport, the ROS executor, and the viewer.
+        # Large thread pools can be slower than a small pool for this input size.
+        torch.set_num_threads(cpu_threads)
+        cv2.setNumThreads(1)
         self.get_logger().info("Loading local SegFormer model...")
         self._predictor = SegmentationPredictor(
             Path(model_path).expanduser(), value("device"),
@@ -72,7 +80,8 @@ class DrivableAreaNode(Node):
         self._timer = self.create_timer(0.02, self._process_latest, callback_group=self._processing_group)
         self.get_logger().info(
             f"Ready: {value('image_topic')} -> /drivable_area/*; "
-            f"{self._predictor.device}, model input {self._predictor.input_size}. Pixel references only."
+            f"{self._predictor.device}, model input {self._predictor.input_size}, "
+            f"torch threads {torch.get_num_threads()}. Pixel references only."
         )
 
     def _publish_reference(self, header, points, payload):
@@ -87,12 +96,20 @@ class DrivableAreaNode(Node):
         }
         self._status_pub.publish(String(data=json.dumps(payload, allow_nan=False)))
 
-    def _invalidate(self, reason, header=None, age=None):
+    def _invalidate(self, reason, header=None, age=None, timings=None):
         self._detector.reset()
         _, _, skipped = self._latest.state()
-        self._publish_reference(header, [], status_payload(
+        payload = status_payload(
             None, header, age_seconds=age, skipped=skipped, reason=reason,
-        ))
+        )
+        payload.update(timings or {})
+        self._publish_reference(header, [], payload)
+        detail = f", age {age * 1000:.0f}ms" if age is not None else ""
+        if timings and "inference_ms" in timings:
+            detail += f", inference {timings['inference_ms']:.0f}ms"
+        self.get_logger().warning(
+            f"No fresh reference: {reason}{detail}", throttle_duration_sec=2.0,
+        )
         self._last_processed_header = None
         self._last_invalid_at = time.perf_counter()
 
@@ -105,10 +122,13 @@ class DrivableAreaNode(Node):
                 self._invalidate("camera_timeout", header, now - received_at)
             return
         header = pending.message.header
+        timings = {}
+        age = None
         try:
             age = frame_age_seconds(pending, self.get_clock().now().nanoseconds)
+            timings["input_age_ms"] = age * 1000
             if age > self._max_age:
-                self._invalidate("stale_input", header, age)
+                self._invalidate("stale_input", header, age, timings)
                 return
             previous = self._last_processed_header
             # New camera/frame or backward replay timestamps start new history.
@@ -120,26 +140,39 @@ class DrivableAreaNode(Node):
             frame = image_to_bgr(pending.message)
             started = time.perf_counter()
             probability = self._predictor.predict_probability(frame)
+            inference_finished = time.perf_counter()
+            timings["inference_ms"] = (inference_finished - started) * 1000
             result = self._detector.process(frame, drivable_probability=probability)
             result.backend = "segformer"
-            result.processing_ms = (time.perf_counter() - started) * 1000
+            processed_at = time.perf_counter()
+            result.processing_ms = (processed_at - started) * 1000
+            timings["detector_ms"] = (processed_at - inference_finished) * 1000
+            timings["processing_ms"] = result.processing_ms
             age = frame_age_seconds(pending, self.get_clock().now().nanoseconds)
             if age > self._max_age:
-                self._invalidate("stale_result", header, age)
+                self._invalidate("stale_result", header, age, timings)
                 return
             _, _, skipped = self._latest.state()
-            overlay = draw_result(result, telemetry={
-                "processing_ms": result.processing_ms, "host_frame_age_ms": age * 1000,
-            })
-            self._overlay_pub.publish(fill_image(Image(), overlay, header))
-            self._mask_pub.publish(fill_image(Image(), result.road_mask, header))
-            self._clearance_pub.publish(fill_image(Image(), result.navigable_mask, header))
-            self._publish_reference(header, result.path, status_payload(
-                result, header, age_seconds=age, skipped=skipped,
-            ))
+            if self._overlay_pub.get_subscription_count() > 0:
+                overlay = draw_result(result, telemetry={
+                    "processing_ms": result.processing_ms, "host_frame_age_ms": age * 1000,
+                })
+                self._overlay_pub.publish(fill_image(Image(), overlay, header))
+            for publisher, mask in ((self._mask_pub, result.road_mask),
+                                    (self._clearance_pub, result.navigable_mask)):
+                if publisher.get_subscription_count() > 0:
+                    publisher.publish(fill_image(Image(), mask, header))
+            timings["image_output_ms"] = (time.perf_counter() - processed_at) * 1000
+            age = frame_age_seconds(pending, self.get_clock().now().nanoseconds)
+            if age > self._max_age:
+                self._invalidate("stale_output", header, age, timings)
+                return
+            payload = status_payload(result, header, age_seconds=age, skipped=skipped)
+            payload.update(timings)
+            self._publish_reference(header, result.path, payload)
             self._last_processed_header = header
         except Exception as exc:
-            self._invalidate("processing_error", header)
+            self._invalidate("processing_error", header, age, timings)
             self.get_logger().error(f"Frame rejected: {type(exc).__name__}: {exc}")
 
 
@@ -155,6 +188,7 @@ class WebcamNode(Node):
         fps = float(value("fps"))
         if not 0 < fps <= 120 or value("width") < 16 or value("height") < 16 or value("camera_index") < 0:
             raise ValueError("camera index >= 0, dimensions >= 16, and 0 < fps <= 120 are required")
+        cv2.setNumThreads(1)
         camera = cv2.VideoCapture(value("camera_index"), cv2.CAP_V4L2)
         if not camera.isOpened():
             camera.release()

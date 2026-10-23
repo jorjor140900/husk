@@ -18,6 +18,7 @@ def generate_launch_description():
         "device": ("cpu", "cpu, cuda or auto"),
         "model_width": ("448", "Model input width, multiple of 32"),
         "model_height": ("256", "Model input height, multiple of 32"),
+        "cpu_threads": ("2", "PyTorch CPU worker threads; try 2 or 4 on CPU"),
         "config_file": (str(share / "config/config.example.json"), "Detector JSON configuration"),
         "use_webcam": ("true", "False when another ROS node already publishes camera images"),
         "camera_index": ("2", "Webcam /dev/video index"),
@@ -48,6 +49,7 @@ def generate_launch_description():
             parameters=[{
                 "model_path": param("model_path", str), "device": param("device", str),
                 "model_width": param("model_width", int), "model_height": param("model_height", int),
+                "cpu_threads": param("cpu_threads", int),
                 "config_file": param("config_file", str), "image_topic": param("image_topic", str),
                 "max_frame_age_sec": param("max_frame_age_sec", float),
             }],

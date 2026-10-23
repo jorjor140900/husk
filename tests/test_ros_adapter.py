@@ -1,6 +1,7 @@
 """Transport and callback unit tests; ROS middleware is not simulated here."""
 
 import importlib.util
+from array import array
 import json
 from pathlib import Path
 import time
@@ -44,6 +45,8 @@ class TransportTests(unittest.TestCase):
         message = fill_image(SimpleNamespace(), mono, header())
         self.assertEqual(message.encoding, "mono8")
         self.assertEqual(message.step, 32)
+        self.assertIsInstance(message.data, array)
+        self.assertEqual(message.data.typecode, "B")
         decoded = image_to_bgr(message)
         for channel in range(3):
             np.testing.assert_array_equal(decoded[:, :, channel], mono)
@@ -147,6 +150,8 @@ class CallbackTests(unittest.TestCase):
         self.node._last_processed_header = None
         for name in ("_overlay_pub", "_mask_pub", "_clearance_pub", "_reference_pub", "_status_pub"):
             setattr(self.node, name, mock.Mock())
+        for publisher in (self.node._overlay_pub, self.node._mask_pub, self.node._clearance_pub):
+            publisher.get_subscription_count.return_value = 1
         now = SimpleNamespace(nanoseconds=10_000_000_000, to_msg=lambda: header().stamp)
         self.node.get_clock = lambda: SimpleNamespace(now=lambda: now)
         self.node.get_logger = mock.Mock()
@@ -163,14 +168,36 @@ class CallbackTests(unittest.TestCase):
         self.assertIs(reference.header, message.header)
         self.assertTrue(reference.polygon.points)
         self.assertEqual(self.status()["backend"], "segformer")
+        for field in ("input_age_ms", "inference_ms", "detector_ms", "image_output_ms"):
+            self.assertGreaterEqual(self.status()[field], 0)
         self.node._overlay_pub.reset_mock()
         self.node._latest.put(message)
         with mock.patch.object(self.module, "frame_age_seconds", side_effect=[0.1, 3.0]):
             self.node._process_latest()
         self.assertEqual(self.status()["reason"], "stale_result")
+        self.assertGreaterEqual(self.status()["inference_ms"], 0)
         self.assertFalse(self.status()["valid_image_path"])
         self.assertEqual(self.node._reference_pub.publish.call_args.args[0].polygon.points, [])
         self.node._overlay_pub.publish.assert_not_called()
+
+    def test_no_image_subscriber_skips_rendering_and_conversion_but_keeps_reference(self):
+        for publisher in (self.node._overlay_pub, self.node._mask_pub, self.node._clearance_pub):
+            publisher.get_subscription_count.return_value = 0
+        self.node._latest.put(image_message())
+        with mock.patch.object(self.module, "draw_result") as draw, mock.patch.object(self.module, "fill_image") as fill:
+            self.node._process_latest()
+        draw.assert_not_called()
+        fill.assert_not_called()
+        self.assertTrue(self.status()["valid_image_path"])
+        self.node._mask_pub.publish.assert_not_called()
+
+    def test_slow_image_output_cannot_leave_a_valid_reference(self):
+        self.node._latest.put(image_message())
+        with mock.patch.object(self.module, "frame_age_seconds", side_effect=[0.1, 0.5, 3.0]):
+            self.node._process_latest()
+        self.assertEqual(self.status()["reason"], "stale_output")
+        self.assertFalse(self.status()["valid_image_path"])
+        self.assertEqual(self.node._reference_pub.publish.call_args.args[0].polygon.points, [])
 
     def test_camera_silence_invalidates_reference_and_resets_history(self):
         self.node._latest.put(image_message())

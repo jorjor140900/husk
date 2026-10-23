@@ -4,6 +4,7 @@ Only byte-based Image encodings are accepted; no cv_bridge/NumPy ABI dependency.
 The functions use sensor_msgs/Image attributes without importing ROS at import.
 """
 
+from array import array
 from dataclasses import dataclass
 import threading
 import time
@@ -41,7 +42,9 @@ def fill_image(message, image, header):
     message.encoding = "mono8" if image.ndim == 2 else "bgr8"
     message.is_bigendian = 0
     message.step = image.shape[1] * (1 if image.ndim == 2 else 3)
-    message.data = contiguous.tobytes()
+    # Generated ROS setters recognize array('B') directly. Assigning bytes runs
+    # Python type/range assertions for every pixel byte (also on camera output).
+    message.data = array("B", contiguous.tobytes())
     return message
 
 

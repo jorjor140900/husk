@@ -44,6 +44,7 @@ husky_vision_ws/
 
 ต่อจากนี้ทำงานใน `~/husky_vision_ws` ทั้งหมด ไม่ต้องเข้า `drivable_area_ws` เดิม
 โค้ดและโมเดลเป็นสำเนาแยกจาก repository เดิม การ pull repository ในอนาคตจะไม่เปลี่ยนสำเนานี้อัตโนมัติ
+ถ้ามีแพตช์สำหรับ ROS adapters ให้ใช้ `--update-code` ตามขั้นตอนท้ายคู่มือนี้
 ถ้าต้องการบันทึกการเปลี่ยนแปลงของ workspace ใหม่ลง Git ให้สร้าง repository แยกภายหลัง
 ไฟล์ `.gitignore` เตรียมให้แล้ว โดยไม่รวมโมเดล, venv และไฟล์ build
 
@@ -100,6 +101,8 @@ ros2 launch husky_vision drivable_area.launch.py \
 หากเปลี่ยนชื่อ workspace ให้แก้ `model_path` ตามนั้น
 ถ้าต้องการลดความละเอียด inference เพิ่ม ลอง `model_width:=320 model_height:=192`
 ค่าเริ่มต้นขอภาพ webcam 640×480, 15 fps; ผลจริงขึ้นกับกล้อง
+ค่าเริ่มต้น `cpu_threads:=2` จำกัด worker ของ PyTorch เพื่อเหลือ CPU ให้ ROS และ viewer
+หากต้องการเทียบความเร็ว ลอง 2 กับ 4 บนเครื่องจริงโดยคงความละเอียดเดิมไว้
 หยุดทั้งสอง node ด้วย `Ctrl+C`
 
 ## 5. ดูภาพ (Terminal ที่สอง)
@@ -165,3 +168,70 @@ ros2 pkg executables husky_vision
 ให้ตรวจบรรทัด source อัตโนมัติใน `~/.bashrc` ด้วย
 หากต้องการสร้าง `install/setup.bash` ใหม่ให้มีเพียง Jazzy เป็น parent
 ต้อง build จาก environment ที่ไม่ได้ source workspace อื่นหรือ workspace ตัวเองอยู่ก่อน
+
+## อัปเดตแพตช์ ROS ใน workspace ที่สร้างไว้แล้ว
+
+หยุด launch ด้วย `Ctrl+C` ก่อน เปิด Terminal ในโฟลเดอร์ Git เดิมที่มี `RoadDetection.py` แล้วรัน:
+
+```bash
+git pull --ff-only origin work
+python3 tools/create_ros2_workspace.py --workspace ~/husky_vision_ws --update-code
+```
+
+คำสั่งนี้อัปเดตเฉพาะ `husky_vision/nodes.py`, `husky_vision/transport.py` และ launch
+ไฟล์เดิมรวม local edits จะสำรองไว้ใน `.source-backups/<เวลา>/` ของ workspace
+โมเดล, detector หลัก, config และ dependencies ที่ติดตั้งแล้วไม่ถูกเขียนทับ
+หลังจากนั้น build ใน Terminal ใหม่ที่ source เฉพาะ Jazzy:
+
+```bash
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+python /usr/bin/colcon build --symlink-install --packages-select husky_vision
+source install/local_setup.bash
+
+ros2 launch husky_vision drivable_area.launch.py \
+  camera_index:=2 \
+  model_path:="$HOME/husky_vision_ws/models/husky-segformer" \
+  device:=cpu model_width:=448 model_height:=256 cpu_threads:=2
+```
+
+## แยกความหน่วงของโมเดล การส่งภาพ และ rqt
+
+หาก `/camera/image_raw` ใน rqt ตอบสนองไว แต่ overlay หน่วง ให้ตรวจเส้นทางหลังรับภาพ
+ค่า `host age` ที่ฝังบน overlay วัดถึงตอนเตรียมภาพ ไม่ได้วัดอายุภาพตอนวาดบนหน้าจอ rqt
+ภาพที่รอแสดงอยู่นานจะยังแสดงตัวเลข host age เดิมที่ฝังไว้ตอนส่ง
+ทั้ง timestamp กล้องและ age นี้เริ่มจาก host อ่านภาพเสร็จ ไม่รวมเวลารับแสง/คิวภายใน webcam
+
+แพตช์ ROS ส่งภาพด้วย `array('B')` ซึ่งใช้ fast path ของ generated ROS setter
+การส่งด้วย `bytes` เดิมทำให้ setter ของ Jazzy ตรวจ type/range ของทุกไบต์ใน Python
+และ node จะเตรียม/ส่ง overlay กับ masks เฉพาะ topic ที่มีผู้รับ
+
+เปิด Terminal ที่ source Jazzy และ workspace แล้วตรวจ:
+
+```bash
+ros2 topic echo /drivable_area/status --once
+ros2 topic delay /drivable_area/overlay --window 10
+```
+
+`ros2 topic delay` รายงานหน่วยวินาทีจาก source header ถึง subscriber ของคำสั่งนี้
+ไม่ใช่เวลาวาดภาพบนหน้าจอ และ timestamp กล้องยังเป็นเวลา host read completion โดยประมาณ
+ถ้า delay ต่ำกว่าความหน่วงที่เห็นใน rqt มาก ค่อยแยกตรวจการแสดงผล/ภาระ CPU ของ rqt ต่อ
+ถ้า delay สูงด้วย ให้ดู status:
+
+- `input_age_ms`: อายุภาพก่อน inference
+- `inference_ms`: เวลาของโมเดลรวม processor/resize probability
+- `detector_ms`: mask, temporal filtering และการสร้าง reference
+- `image_output_ms`: การวาด แปลง และ publish images
+- `frame_age_ms`: อายุภาพหลังส่ง images ก่อนส่ง status/reference
+
+ทั้งหมดเป็นมิลลิวินาที และไม่ได้รวม GUI rendering
+เหตุผล `stale_result`/`stale_output` จะมีเวลาของขั้นที่ทำเสร็จแล้วให้ตรวจ แม้ถูกงด reference
+หากผลเก่าเกิน `max_frame_age_sec` ค่าเริ่มต้น 2 วินาที reference จะถูกล้างเหมือนเดิม
+ควรวัดด้วย resolution เดิมก่อนลดเป็น 320×192 เพราะขนาดที่ลดอาจทำให้รายละเอียดสิ่งกีดขวางเล็ก ๆ หายไป
+
+ค่า delay ต่ำไม่ได้แปลว่าภาพอัปเดตต่อเนื่องเสมอไป หากคำสั่งขึ้น `no new messages` หลายวินาที
+viewer อาจยังค้างที่เฟรมสุดท้ายซึ่งฝังตัวเลข host age ต่ำเอาไว้
+ให้ตรวจ warning `No fresh reference: ...` ใน Terminal ที่ launch และ `reason` ใน status
+โดยเฉพาะ `stale_result`, `stale_input`, `camera_timeout` หรือ `processing_error`
+node ยังคงงด reference ของเฟรมที่เก่าเกินกำหนด พร้อมรายงานเวลา inference ของเฟรมที่ทำเสร็จแล้ว
