@@ -50,7 +50,9 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 ดู [ขั้นตอนติดตั้งใน drivable_area_ws, build, launch และเปิดภาพ](docs/ros2-jazzy.md)
 ส่ง mask, overlay, reference แบบพิกเซลและ status
 ขั้นถัดไปใช้ [คู่มือคาลิเบรตกล้องและแสดงเส้นหน่วยเมตรใน RViz](docs/ros2-metric-path.md)
-มี node แปลงพิกัดบนพื้นราบเมื่อมี calibration และ mount ที่วัดจริง ยังไม่มีคำสั่งเคลื่อนที่
+มี node แปลงพิกัดบนพื้นราบเมื่อมี calibration และ mount ที่วัดจริง โดย node นี้ไม่ส่งคำสั่งเคลื่อนที่
+เริ่มทำ control ต่อได้ด้วย [ชุด Pure Pursuit + หุ่นจำลองใน RViz](docs/ros2-control.md)
+ทดลองวงจรปิดและการหยุดเมื่อข้อมูลขาดใน `/husky_demo/` โดยไม่ต้องเปิดกล้องหรือเชื่อมหุ่น
 
 ## ผลลัพธ์
 
@@ -149,7 +151,8 @@ RGB baseline ยังสับสนผนังสีเดียวกับ�
 Optical flow อาจผิดบนพื้นไร้ texture; temporal filtering จึงไม่ใช่ตัวรับประกันความถูกต้อง
 เส้นทางจาก `RoadDetection.py` เป็น reference สำหรับทดลองในภาพ
 ส่วน ROS มี projection หน่วยเมตรแยกต่างหากที่ต้องคาลิเบรตกล้องและวัด mount ก่อนใช้
-ยังไม่มี footprint หน่วยเมตร, vehicle dynamics หรือคำสั่งควบคุมหุ่น
+ยังไม่มี footprint หน่วยเมตรหรือ vehicle dynamics สำหรับหุ่นจริง
+controller ทดลองอยู่ในชุด ROS แยกต่างหาก เริ่มจาก simulation ตามคู่มือด้านบน
 
 โค้ด ROS 2 เดิมเก็บไว้ที่ `legacy/RoadDetection_ros2.py` เพื่ออ้างอิงและเปรียบเทียบ ยังมีพฤติกรรมเดิมและ dependency ROS เดิม ไม่ได้ใช้ใน runner ใหม่นี้
 

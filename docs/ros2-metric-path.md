@@ -2,7 +2,8 @@
 
 ใช้ workspace เดิม `~/husky_vision_ws` และโมเดลเดิม ขั้นนี้เพิ่ม
 `/drivable_area/reference_ground` ชนิด `nav_msgs/Path` สำหรับตรวจระยะบนพื้นราบ
-ยังไม่มี controller, footprint ของ Husky, odometry, costmap หรือคำสั่ง `/cmd_vel`
+ชุด perception/projection นี้ไม่ส่งคำสั่งเคลื่อนที่และยังไม่ตรวจ footprint ของ Husky
+หากยังตรวจระยะจริงไม่ได้ สามารถพักขั้นนี้แล้วทำ [controller ใน simulation](ros2-control.md) ต่อได้
 ภาพและเส้น overlay เดิมใช้งานเหมือนเดิม
 
 ทำตามลำดับ: **อัปเดต → คาลิเบรตเลนส์ → วัดการติดตั้ง → ตรวจเส้นหน่วยเมตร**
@@ -210,8 +211,9 @@ print(points, reason)  # X ต้องใกล้ระยะเทปจร�
 
 นี่เป็นมุมมองด้านบนของเส้นทาง ไม่ได้สร้าง occupancy grid หรือ BEV ของทั้งภาพ
 RGB ที่ทายเสาผิดจะยังฉายเสานั้นลงพื้นผิดได้ พื้นลาด/ต่างระดับและการสั่นของหุ่นต้องมีข้อมูลท่าทาง/ความลึกเพิ่ม
-เมื่อระยะผ่านการตรวจแล้ว ขั้นต่อไปคือ metric drivable/obstacle map + footprint,
-odometry/TF และ controller ใน simulation พร้อมเงื่อนไขหยุด ก่อนต่อ bridge ไปหุ่นจริง
+ทำ [controller ใน simulation](ros2-control.md) ควบคู่กันได้โดยไม่ต้องรอระยะภาคสนาม
+ก่อนต่อหุ่นจริงยังต้องมี metric drivable/obstacle map + footprint,
+odometry/TF และเงื่อนไขหยุด ก่อนต่อ bridge ไปหุ่นจริง
 
 ## Topic และ frame
 

@@ -42,6 +42,9 @@ class WorkspaceTests(unittest.TestCase):
             self.assertTrue((package / "config/checkerboard-9x6-25mm.pdf").read_bytes().startswith(b"%PDF"))
             self.assertTrue((package / "docs/ros2-metric-path.md").is_file())
             self.assertIn("husky_vision.ground_node:main", (package / "setup.py").read_text())
+            self.assertIn("husky_vision.controller_node:main", (package / "setup.py").read_text())
+            self.assertTrue((package / "launch/control_demo.launch.py").is_file())
+            self.assertTrue((package / "docs/ros2-control.md").is_file())
             guide = (destination / "START_HERE.md").read_text()
             self.assertNotIn("~/husky_vision_ws", guide)
             self.assertNotIn("$HOME/husky_vision_ws", guide)
@@ -133,6 +136,27 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual((backup / "setup.py").read_text(), "# old package metadata with local edits\n")
             self.assertEqual(set(json.loads((backup / "created_files.json").read_text())), set(added))
             self.assertIn("ground_path_node", (package / "setup.py").read_text())
+
+    def test_upgrade_adds_control_and_preserves_user_calibration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            workspace = root / "fresh"
+            create_workspace(workspace, self.make_model_fixture(root))
+            package = workspace / "src/husky_vision"
+            added = ["husky_vision/control.py", "husky_vision/controller_node.py", "husky_vision/control_simulator.py",
+                     "launch/control_demo.launch.py", "launch/controller.launch.py", "config/controller.yaml",
+                     "config/control_demo.rviz", "docs/ros2-control.md"]
+            for relative in added:
+                (package / relative).unlink()
+            calibration = workspace / "camera_calibration"
+            calibration.mkdir()
+            (calibration / "camera-v2.yaml").write_text("user's calibrated intrinsics")
+            (calibration / "mount.json").write_text("user's measured camera mount")
+            result = update_workspace_code(workspace)
+            self.assertEqual(set(json.loads((Path(result["source_backup"]) / "created_files.json").read_text())), set(added))
+            self.assertTrue(all((package / relative).is_file() for relative in added))
+            self.assertEqual((calibration / "camera-v2.yaml").read_text(), "user's calibrated intrinsics")
+            self.assertEqual((calibration / "mount.json").read_text(), "user's measured camera mount")
 
     def test_update_rejects_an_unrelated_or_incomplete_workspace_before_writing(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -2,7 +2,7 @@
 
 Run this with any Python >=3.10; no ROS, torch or OpenCV imports are needed.
 Creation requires a destination that does not exist and reads the model source
-without changing it. --update-code updates ROS adapters, packaging and projection
+without changing it. --update-code updates ROS adapters, packaging and experiment
 assets after backing them up. It preserves models, detector code and user camera
 calibration. The generated workspace is self-contained.
 """
@@ -27,7 +27,7 @@ def ros_files():
     files.update({f"{PACKAGE}/{path.name}": path for path in (ROOT / SOURCE_PACKAGE).glob("*.py")
                   if path.name != "__init__.py"})
     files.update({str(path.relative_to(ROOT)): path for directory, pattern in (
-        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"),
+        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"),
     ) for path in (ROOT / directory).glob(pattern) if path.is_file()})
     return files
 
@@ -148,7 +148,8 @@ def create_workspace(destination, model_source):
             "Topics: /camera/image_raw, /drivable_area/overlay, /drivable_area/mask, "
             "/drivable_area/navigable_mask, /drivable_area/reference_pixels, /drivable_area/status.\n"
             "Pixel references use processed-image pixels. To add a calibrated metric projection, "
-            "follow src/husky_vision/docs/ros2-metric-path.md. No motor commands are published.\n",
+            "follow src/husky_vision/docs/ros2-metric-path.md. Perception does not publish motor commands.\n"
+            "For an isolated controller simulation, follow src/husky_vision/docs/ros2-control.md.\n",
             encoding="utf-8",
         )
         guide = (ROOT / "docs/ros2-fresh-start.md").read_text(encoding="utf-8")
@@ -175,7 +176,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, required=True, help="workspace path; must be NEW unless --update-code is used")
     parser.add_argument("--model-source", type=Path, help="existing extracted trained SegFormer directory; required when creating")
-    parser.add_argument("--update-code", action="store_true", help="update ROS adapters, packaging and projection assets after backing up existing files")
+    parser.add_argument("--update-code", action="store_true", help="update ROS adapters, packaging and experiment assets after backing up existing files")
     args = parser.parse_args(argv)
     if not args.update_code and args.model_source is None:
         parser.error("--model-source is required when creating a workspace")
