@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(AVAILABLE, "optional segmentation dependencies are not installed")
 class SegmentationTests(unittest.TestCase):
-    def make_fixture(self, root):
+    def make_fixture(self, root, clip_count=1):
         import torch
         from transformers import SegformerConfig, SegformerForSemanticSegmentation, SegformerImageProcessor
 
@@ -40,9 +40,14 @@ class SegmentationTests(unittest.TestCase):
         mask[:, 88:] = 255
         self.assertTrue(cv2.imwrite(str(data / "images/a.png"), frame))
         self.assertTrue(cv2.imwrite(str(data / "masks/a.png"), mask))
-        (data / "manifest.json").write_text(json.dumps([{
-            "image": "images/a.png", "mask": "masks/a.png", "recording_group": "test-session",
-        }]))
+        rows = [{"image": "images/a.png", "mask": "masks/a.png", "recording_group": "test-session", "source_clip": "part1.mov"}]
+        if clip_count == 2:
+            (data / "clip2/images").mkdir(parents=True)
+            (data / "clip2/masks").mkdir()
+            self.assertTrue(cv2.imwrite(str(data / "clip2/images/a.png"), frame))
+            self.assertTrue(cv2.imwrite(str(data / "clip2/masks/a.png"), mask))
+            rows.append({"image": "clip2/images/a.png", "mask": "clip2/masks/a.png", "recording_group": "test-session", "source_clip": "part2.mov"})
+        (data / "manifest.json").write_text(json.dumps(rows))
         return initial, data
 
     def test_training_export_reload_and_cli_use_the_model_without_edge_barriers(self):
@@ -54,17 +59,20 @@ class SegmentationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            initial, dataset = self.make_fixture(root)
+            initial, dataset = self.make_fixture(root, clip_count=2)
             processor = SegformerImageProcessor.from_pretrained(initial, do_reduce_labels=False)
             sample = PairedDataset(dataset, processor, augment=False)[0]
             self.assertEqual(set(sample["labels"].unique().tolist()), {0, 1, 255})
             output = root / "model"
             report = train(Namespace(
                 dataset=dataset, output=output, checkpoint=str(initial), device="cpu",
-                epochs=1, batch_size=1, learning_rate=6e-5, height=64, width=64,
+                epochs=1, batch_size=2, learning_rate=6e-5, height=64, width=64,
                 seed=42, max_steps=1,
             ))
             self.assertEqual(report["optimizer_steps"], 1)
+            self.assertEqual(report["samples"], 2)
+            self.assertEqual(report["samples_by_clip"], {"part1.mov": 1, "part2.mov": 1})
+            self.assertEqual(len(list((output / "training_previews").glob("*.jpg"))), 2)
             self.assertFalse(report["independent_validation_performed"])
             self.assertTrue(np.isfinite(report["epochs"][0]["mean_training_loss"]))
             self.assertTrue((output / "model.safetensors").is_file())

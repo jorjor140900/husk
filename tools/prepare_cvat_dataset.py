@@ -87,6 +87,93 @@ def read_cvat_masks(annotations):
         return masks, palette
 
 
+def match_clip_pairs(paths):
+    """Match partN.zip with partN.mov/mp4/avi, rejecting missing/ambiguous pairs."""
+    archives, videos = {}, {}
+    for value in paths:
+        path = Path(value)
+        suffix = path.suffix.lower()
+        if suffix not in (".zip", ".mov", ".mp4", ".avi"):
+            continue
+        target = archives if suffix == ".zip" else videos
+        key = path.stem.casefold()
+        if key in target:
+            raise ValueError(f"ambiguous files for {path.stem}: {target[key].name}, {path.name}")
+        target[key] = path
+    if not archives and not videos:
+        raise ValueError("upload annotation ZIPs and original videos, for example part1.zip + part1.mov")
+    missing_videos = sorted(set(archives) - set(videos))
+    missing_archives = sorted(set(videos) - set(archives))
+    if missing_videos or missing_archives:
+        raise ValueError(f"filenames must match by stem; missing videos: {missing_videos}; missing annotation ZIPs: {missing_archives}")
+    return [(archives[name], videos[name]) for name in sorted(archives)]
+
+
+def prepare_collection(pairs, output, recording_group):
+    """Combine clips into one manifest while keeping equal frame names separate."""
+    pairs, output = list(pairs), Path(output)
+    if not pairs:
+        raise ValueError("at least one annotation/video pair is required")
+    if output.exists():
+        raise FileExistsError(f"output already exists: {output}")
+    stems = [Path(video).stem.casefold() for _, video in pairs]
+    if len(stems) != len(set(stems)):
+        raise ValueError("each source clip must have a unique name")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".cvat-collection-", dir=output.parent) as folder:
+        staging = Path(folder) / "dataset"
+        staging.mkdir()
+        manifest, clips, thumbnails = [], [], []
+        totals = {"non_drivable": 0, "drivable": 0, "ignore": 0}
+        for clip_index, (annotations, video) in enumerate(pairs, 1):
+            prefix = Path("clips") / f"clip_{clip_index:02d}"
+            child = staging / prefix
+            summary = prepare_dataset(annotations, video, child, recording_group)
+            rows = json.loads((child / "manifest.json").read_text())
+            for row in rows:
+                row["image"] = (prefix / row["image"]).as_posix()
+                row["mask"] = (prefix / row["mask"]).as_posix()
+            manifest.extend(rows)
+            clips.append({"directory": prefix.as_posix(), **summary})
+            for key in totals:
+                totals[key] += summary["pixel_counts"][key]
+            for index in sorted({0, len(rows) // 2, len(rows) - 1}):
+                row = rows[index]
+                preview = cv2.imread(str(child / "previews" / Path(row["image"]).name))
+                if preview is None:
+                    raise ValueError("missing prepared preview")
+                thumbnail = np.zeros((298, 480, 3), np.uint8)
+                thumbnail[28:] = cv2.resize(preview, (480, 270), interpolation=cv2.INTER_AREA)
+                caption = f"{Path(video).name} | frame {row['source_frame_index']}"
+                cv2.putText(thumbnail, caption, (5, 18), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 255, 255), 1)
+                thumbnails.append(thumbnail)
+        while len(thumbnails) % 3:
+            thumbnails.append(np.zeros_like(thumbnails[0]))
+        _png(staging / "contact-sheet.png", np.vstack([np.hstack(thumbnails[i:i + 3]) for i in range(0, len(thumbnails), 3)]))
+        result = {
+            "samples": len(manifest), "clip_count": len(clips), "clips": clips,
+            "recording_group": recording_group, "splits_created": False,
+            "training_ids": {"non_drivable": 0, "drivable": 1, "ignore": 255},
+            "pixel_counts": totals, "trained_model": False,
+            "pairing_requires_visual_review": True,
+        }
+        _json(staging / "manifest.json", manifest)
+        _json(staging / "summary.json", result)
+        (staging / "README.md").write_text(
+            "# Combined segmentation dataset\n\n"
+            "manifest.json combines all clips for ONE training run and ONE final model.\n"
+            "Image/mask paths include clip subdirectories so equal frame numbers never overwrite each other.\n"
+            "Masks are uint8 IDs: 0=non-drivable, 1=drivable, 255=ignore.\n"
+            "Per-clip summaries and full previews remain in clips/clip_NN/. Review their alignment before training.\n"
+            "Clips from one recording session keep the same recording group; no random validation split is created.\n",
+            encoding="utf-8",
+        )
+        if output.exists():
+            raise FileExistsError(f"output already exists: {output}")
+        staging.rename(output)
+        return result
+
+
 def prepare_dataset(annotations, video, output, recording_group):
     annotations, video, output = Path(annotations), Path(video), Path(output)
     if output.exists():
@@ -182,13 +269,22 @@ def prepare_dataset(annotations, video, output, recording_group):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--annotations", type=Path, required=True, help="CVAT Segmentation mask ZIP without images")
-    parser.add_argument("--video", type=Path, required=True, help="the exact original video uploaded to CVAT")
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--annotations", type=Path, help="one CVAT Segmentation mask ZIP without images")
+    inputs.add_argument("--inputs", type=Path, nargs="+", help="multiple matching ZIP/video pairs, e.g. part1.zip part1.mov part2.zip part2.mov")
+    parser.add_argument("--video", type=Path, help="the exact original video for --annotations")
     parser.add_argument("--output", type=Path, required=True, help="a new dataset directory")
     parser.add_argument("--recording-group", required=True, help="same name for clips from the same recording session")
     args = parser.parse_args()
+    if args.annotations is not None and args.video is None:
+        parser.error("--annotations requires --video")
+    if args.inputs is not None and args.video is not None:
+        parser.error("include all videos in --inputs instead of --video")
     try:
-        result = prepare_dataset(args.annotations, args.video, args.output, args.recording_group)
+        if args.inputs is not None:
+            result = prepare_collection(match_clip_pairs(args.inputs), args.output, args.recording_group)
+        else:
+            result = prepare_dataset(args.annotations, args.video, args.output, args.recording_group)
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         parser.exit(1, f"Dataset preparation failed: {exc}\n")
     print(json.dumps({"output": str(args.output), **result}, indent=2))

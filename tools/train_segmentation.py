@@ -5,6 +5,7 @@ loss, never validation accuracy; collect an independent recording to evaluate.
 """
 
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -92,6 +93,7 @@ def train(args):
         "started_utc": datetime.now(timezone.utc).isoformat(),
         "base_checkpoint": str(args.checkpoint), "samples": len(dataset),
         "recording_groups": sorted({row.get("recording_group", "unassigned") for row in dataset.rows}),
+        "samples_by_clip": dict(Counter(row.get("source_clip", "unspecified") for row in dataset.rows)),
         "device": str(device), "seed": args.seed, "training_size_hw": [args.height, args.width],
         "class_ids": LABELS, "ignore_index": 255,
         "independent_validation_performed": False,
@@ -136,7 +138,17 @@ def train(args):
     predictor = SegmentationPredictor(args.output, str(device))
     previews = args.output / "training_previews"
     previews.mkdir()
-    for row in dataset.rows[:3]:
+    preview_rows, seen = [], set()
+    for row in dataset.rows:
+        clip = row.get("source_clip", "unspecified")
+        if clip not in seen:
+            preview_rows.append(row)
+            seen.add(clip)
+        if len(preview_rows) >= 6:
+            break
+    if len(preview_rows) == 1:
+        preview_rows = dataset.rows[:3]
+    for index, row in enumerate(preview_rows):
         image = cv2.imread(str(dataset.folder / row["image"]))
         probability = predictor.predict_probability(image)
         predicted = image.copy()
@@ -144,7 +156,7 @@ def train(args):
         predicted[selected] = (.65 * image[selected] + .35 * np.array([0, 210, 0])).astype(np.uint8)
         comparison = np.hstack([image, predicted])
         cv2.putText(comparison, "TRAINING SAMPLE | left=input right=model; not validation", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 2)
-        destination = previews / (Path(row["image"]).stem + ".jpg")
+        destination = previews / (f"{index:02d}-" + Path(row["image"]).stem + ".jpg")
         if not cv2.imwrite(str(destination), comparison):
             raise OSError(f"cannot write {destination}")
     print(f"Model saved to {args.output}. Download the complete folder, including preprocessor_config.json.", flush=True)

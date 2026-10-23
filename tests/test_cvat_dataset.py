@@ -7,7 +7,7 @@ import zipfile
 import cv2
 import numpy as np
 
-from tools.prepare_cvat_dataset import prepare_dataset
+from tools.prepare_cvat_dataset import match_clip_pairs, prepare_collection, prepare_dataset
 
 
 class CvatDatasetTests(unittest.TestCase):
@@ -96,6 +96,59 @@ class CvatDatasetTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 prepare_dataset(annotations, video, out, "session-01")
             self.assertEqual(sentinel.read_text(), "existing experiment")
+
+    def make_named_pair(self, root, name, **kwargs):
+        folder = root / name
+        folder.mkdir()
+        annotations, video = self.make_inputs(folder, **kwargs)
+        named_zip, named_video = folder / f"{name}.zip", folder / f"{name}.avi"
+        annotations.rename(named_zip)
+        video.rename(named_video)
+        return named_zip, named_video
+
+    def test_collection_preserves_same_frame_numbers_and_per_clip_color_maps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            pair1 = self.make_named_pair(root, "part1")
+            pair2 = self.make_named_pair(root, "part2")
+            color = np.zeros((48, 64, 3), np.uint8)
+            color[:, :20] = (100, 50, 200)  # Blocked in clip 2, unlike clip 1.
+            color[:, 20:40] = (80, 30, 10)
+            ok, png = cv2.imencode(".png", color)
+            self.assertTrue(ok)
+            with zipfile.ZipFile(pair2[0], "w") as z:
+                z.writestr("labelmap.txt", "background:0,0,0::\ndrivable:10,30,80::\nnon-drivable:200,50,100::\n")
+                z.writestr("SegmentationClass/frame_000001.png", png.tobytes())
+            pairs = match_clip_pairs([pair2[1], pair1[0], pair2[0], pair1[1]])
+            output = root / "combined"
+            summary = prepare_collection(pairs, output, "one-recording")
+            self.assertEqual(summary["clip_count"], 2)
+            self.assertEqual(summary["samples"], 2)
+            rows = json.loads((output / "manifest.json").read_text())
+            self.assertEqual({r["source_frame_index"] for r in rows}, {1})
+            self.assertEqual(len({r["image"] for r in rows}), 2)
+            self.assertEqual({r["recording_group"] for r in rows}, {"one-recording"})
+            self.assertEqual({r["split"] for r in rows}, {"unassigned"})
+            for index, row in enumerate(rows):
+                self.assertTrue((output / row["image"]).is_file())
+                mask = cv2.imread(str(output / row["mask"]), cv2.IMREAD_UNCHANGED)
+                self.assertTrue(np.all(mask[:, :20] == (1 if index == 0 else 0)))
+                self.assertTrue(np.all(mask[:, 40:] == 255))
+
+    def test_collection_failure_does_not_publish_a_partial_dataset(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            pairs = [self.make_named_pair(root, "part1"), self.make_named_pair(root, "part2", frame_number=5)]
+            with self.assertRaisesRegex(ValueError, "ends before"):
+                prepare_collection(pairs, root / "combined", "session-01")
+            self.assertFalse((root / "combined").exists())
+
+    def test_pair_matching_rejects_missing_or_ambiguous_files(self):
+        for paths in (["part1.zip", "part2.mov"], ["part1.zip", "part1.mov", "PART1.mp4"]):
+            with self.subTest(paths=paths), self.assertRaises(ValueError):
+                match_clip_pairs(paths)
+        pairs = match_clip_pairs(["part1.zip", "PART1.MOV", "part2.zip", "part2.mp4"])
+        self.assertEqual([(a.name, v.name) for a, v in pairs], [("part1.zip", "PART1.MOV"), ("part2.zip", "part2.mp4")])
 
 
 if __name__ == "__main__":

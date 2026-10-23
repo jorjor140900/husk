@@ -3,7 +3,7 @@
 พัฒนาและทดสอบการตรวจจับพื้นที่กับเส้นนำทางจาก **ภาพ / วิดีโอ / webcam โดยไม่ต้องใช้ ROS หรือหุ่นจริง**
 ยังไม่มีโมเดล AI ที่ฝึกแล้วใน repository นี้ โค้ดส่วนกลางรองรับ probability map จาก segmentation เพื่อเพิ่มโมเดลภายหลัง
 
-ถ้าทำ label ใน CVAT แล้ว ให้เปิด [notebook ฝึก SegFormer ใน Google Colab](https://colab.research.google.com/github/jorjor140900/husk/blob/work/notebooks/train_segformer_colab.ipynb) แล้วรันช่อง 1–5 ตามลำดับ โดย upload ZIP `Segmentation mask` และวิดีโอต้นฉบับ ไม่ต้อง export ภาพจาก CVAT หรือดาวน์โหลดชุดข้อมูลจาก Codex
+ถ้าทำ label ใน CVAT แล้ว ให้เปิด [notebook ฝึก SegFormer ใน Google Colab](https://colab.research.google.com/github/jorjor140900/husk/blob/work/notebooks/train_segformer_colab.ipynb) แล้วรันช่อง 1–5 ตามลำดับ โดย upload ZIP `Segmentation mask` และวิดีโอต้นฉบับ รองรับหลายคลิปในครั้งเดียว เช่น `part1.zip` + `part1.mov` จนถึง part4 รวม 8 ไฟล์ แล้วฝึกรวมเป็นโมเดลเดียว ไม่ต้อง export ภาพจาก CVAT หรือดาวน์โหลดชุดข้อมูลจาก Codex
 Colab มีโหมดใช้ฟรี แต่ GPU ขึ้นกับโควตาและทรัพยากร ถ้าไม่มี GPU notebook จะฝึกต้นแบบสั้น ๆ บน CPU ได้ โมเดล pretrained ต้องดาวน์โหลดจาก Hugging Face ระหว่างรัน ไม่ใช้โมเดลสุ่มแทนเมื่อดาวน์โหลดไม่ได้
 
 ## ติดตั้งและเริ่มใช้งาน
@@ -176,6 +176,17 @@ python -m tools.prepare_cvat_dataset \
 
 แทน `/path/to/...` ด้วยตำแหน่งไฟล์บนเครื่อง ใช้ output directory ใหม่ในแต่ละครั้ง เครื่องมืออ่านชื่อ `frame_NNNNNN` เป็นเลขเฟรมต้นฉบับเริ่มที่ 0 ไม่เดา offset ไม่ resize เพื่อซ่อนขนาดที่ไม่ตรงกัน ต้องเปิด `contact-sheet.png` หรือ `previews/` ตรวจแนว mask กับภาพจริงก่อนฝึก หาก export เปลี่ยนเลขเฟรมหรือใช้วิดีโอคนละไฟล์ต้องแก้การจับคู่ให้ถูกก่อน
 
+ถ้ารวมหลายคลิป ให้ตั้งชื่อ ZIP ด้านนอกให้มีชื่อหลักตรงกับวิดีโอ เช่น `part2.zip` คู่กับ `part2.mov` แล้วใช้ `--inputs` แทน `--annotations`/`--video`:
+
+```bash
+python -m tools.prepare_cvat_dataset \
+  --inputs /path/to/part1.zip /path/to/part1.mov /path/to/part2.zip /path/to/part2.mov /path/to/part3.zip /path/to/part3.mov /path/to/part4.zip /path/to/part4.mov \
+  --recording-group front-building-session-01 \
+  --output outputs/parts1-4-labeled
+```
+
+ภาพและ mask จะแยกโฟลเดอร์ตามคลิปเพื่อไม่ให้เลขเฟรมซ้ำทับกัน ส่วน `manifest.json` ที่รากรวมทุกภาพไว้สำหรับฝึกครั้งเดียว เปลี่ยนสี label ในแต่ละ Task ได้เพราะตัวแปลงอ่าน `labelmap.txt` ของแต่ละคลิปเอง แต่ใช้ชื่อ `drivable` และ `non-drivable`/`non_drivable` ให้ตรงกัน
+
 ผลลัพธ์มี `images/`, `masks/`, `manifest.json`, `summary.json` และภาพ preview สำหรับตรวจงาน Mask สำหรับฝึกเป็น PNG ช่องเดียว: `0=non-drivable`, `1=drivable`, `255=ignore` โดยอ่านสีจาก `labelmap.txt` ไม่แปลงสีเป็น grayscale และไม่ใช้ `SegmentationObject` เป็น class mask พื้นที่ background ที่ยังไม่ label คงเป็น ignore ไม่ถือเป็นสิ่งกีดขวาง
 
 ใช้เฉพาะ `images/` และ `masks/` สำหรับฝึก ไม่ใช้ภาพ preview ไม่หารค่า mask ด้วย 255 และย่อ mask ด้วย nearest-neighbor เท่านั้น ชุดนี้ยังไม่มีโมเดลที่ฝึกแล้ว เครื่องมือไม่แบ่ง train/validation/test อัตโนมัติ ให้ใช้ recording group เดียวกันสำหรับคลิปจากการบันทึกครั้งเดียว และเก็บการบันทึกอีกครั้งสำหรับประเมินผลแยก
@@ -183,6 +194,8 @@ python -m tools.prepare_cvat_dataset \
 ## ฝึกโมเดลและใช้กับกล้อง
 
 แนะนำให้เริ่มด้วย notebook Colab ที่ลิงก์ด้านบน: ติดตั้ง → อัปโหลด ZIP/MOV → ตรวจภาพคู่ label → ฝึก → ดาวน์โหลด `husky-segformer.zip` โค้ดฝึกใช้ pretrained SegFormer-B0 แล้วเปลี่ยนหัวเป็นสองคลาส กำหนด `do_reduce_labels=False` เพื่อรักษาคลาส 0 และใช้ 255 เป็น ignore ข้อมูลชุดเดียวใช้ฝึกทั้งหมดโดยรายงาน training loss เท่านั้น ไม่มีคะแนน validation ที่สุ่มจากเฟรมใกล้กัน
+
+ทำ label/export แยก Task ใน CVAT ได้ แต่ตอนฝึกแนะนำรวม part1–4 เป็น dataset เดียว แล้วได้โมเดลรุ่นใหม่ตัวเดียว ถ้าเคยฝึก part1 แล้ว เก็บรุ่นเก่าไว้เป็นสำรองและฝึกรอบใหม่จาก pretrained ด้วยข้อมูลรวม notebook ไม่ resume รุ่นเก่าอัตโนมัติ และไม่สร้างโมเดลหนึ่งตัวต่อคลิป ในรายงานการฝึกมี `samples_by_clip` ให้ตรวจว่ารอบนั้นใช้ข้อมูลคลิปใดบ้าง
 
 สำหรับเครื่องฝึกแบบ headless หรือ venv ใหม่ สามารถรันเองได้:
 
