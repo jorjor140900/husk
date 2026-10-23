@@ -79,7 +79,7 @@ python -c "import rclpy, cv2, torch, transformers; print('ROS + AI imports OK')"
 ```bash
 cd ~/husky_vision_ws
 python /usr/bin/colcon build --symlink-install --packages-select husky_vision
-source install/setup.bash
+source install/local_setup.bash
 ros2 pkg executables husky_vision
 ```
 
@@ -107,7 +107,7 @@ ros2 launch husky_vision drivable_area.launch.py \
 ```bash
 source /opt/ros/jazzy/setup.bash
 source ~/husky_vision_ws/.venv/bin/activate
-source ~/husky_vision_ws/install/setup.bash
+source ~/husky_vision_ws/install/local_setup.bash
 ros2 run rqt_image_view rqt_image_view
 ```
 
@@ -134,7 +134,7 @@ header ของผลตรวจคง timestamp ของภาพต้น�
 cd ~/husky_vision_ws
 source /opt/ros/jazzy/setup.bash
 source .venv/bin/activate
-source install/setup.bash
+source install/local_setup.bash
 
 ros2 launch husky_vision drivable_area.launch.py \
   camera_index:=2 \
@@ -145,3 +145,23 @@ ros2 launch husky_vision drivable_area.launch.py \
 หากจะใช้ภาพจาก ROS camera driver หรือ ROS1 bridge ภายหลัง ให้เพิ่ม
 `use_webcam:=false image_topic:=/ชื่อ_topic_ภาพ` โดย input ต้องเป็น raw `sensor_msgs/Image`
 encoding `bgr8`, `rgb8` หรือ `mono8`
+
+## เมื่อ source แล้วขึ้น `not found` ของ workspace เก่า
+
+`install/setup.bash` จะเรียก parent workspaces ที่ถูกบันทึกตอน build ด้วย
+เช่น `660610834_final/install/local_setup.bash` แม้ตอนนี้เปิด Terminal ใหม่แล้ว
+การ source `/opt/ros/jazzy/setup.bash` ไม่ได้ลบรายการ parent ที่บันทึกในไฟล์นั้น
+แพ็กเกจนี้ใช้ Jazzy เป็นฐานโดยตรง จึงใช้ `install/local_setup.bash` หลัง source Jazzy ได้:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/husky_vision_ws/install/local_setup.bash
+ros2 pkg executables husky_vision
+```
+
+ใช้รูปแบบนี้ทุกครั้งที่เปิด Terminal สำหรับ workspace นี้
+`local_setup.bash` เพิ่มแพ็กเกจใน workspace ปัจจุบัน โดยไม่เรียก parent chain จากตอน build
+ถ้าข้อความของ workspace เก่าขึ้นทันทีที่เปิด Terminal ก่อนพิมพ์คำสั่ง
+ให้ตรวจบรรทัด source อัตโนมัติใน `~/.bashrc` ด้วย
+หากต้องการสร้าง `install/setup.bash` ใหม่ให้มีเพียง Jazzy เป็น parent
+ต้อง build จาก environment ที่ไม่ได้ source workspace อื่นหรือ workspace ตัวเองอยู่ก่อน

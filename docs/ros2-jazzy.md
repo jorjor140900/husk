@@ -76,7 +76,7 @@ node นี้ไม่ได้ใช้สองแพ็กเกจนั้
 ```bash
 cd /home/jorjeen/drivable_area_ws
 python /usr/bin/colcon build --symlink-install --packages-select husky_drivable_area
-source install/setup.bash
+source install/local_setup.bash
 ros2 pkg executables husky_drivable_area
 ```
 
@@ -110,7 +110,7 @@ ros2 launch husky_drivable_area drivable_area.launch.py \
 ```bash
 source /opt/ros/jazzy/setup.bash
 source /home/jorjeen/drivable_area_ws/.venv/bin/activate
-source /home/jorjeen/drivable_area_ws/install/setup.bash
+source /home/jorjeen/drivable_area_ws/install/local_setup.bash
 ros2 run rqt_image_view rqt_image_view
 ```
 
