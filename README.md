@@ -48,7 +48,9 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 
 มีแพ็กเกจ `husky_drivable_area` สำหรับเปิด webcam และใช้โมเดลเดิมผ่าน ROS topics
 ดู [ขั้นตอนติดตั้งใน drivable_area_ws, build, launch และเปิดภาพ](docs/ros2-jazzy.md)
-ส่ง mask, overlay, reference แบบพิกเซลและ status; ยังไม่มีคำสั่งเคลื่อนที่หรือเส้นทางหน่วยเมตร
+ส่ง mask, overlay, reference แบบพิกเซลและ status
+ขั้นถัดไปใช้ [คู่มือคาลิเบรตกล้องและแสดงเส้นหน่วยเมตรใน RViz](docs/ros2-metric-path.md)
+มี node แปลงพิกัดบนพื้นราบเมื่อมี calibration และ mount ที่วัดจริง ยังไม่มีคำสั่งเคลื่อนที่
 
 ## ผลลัพธ์
 
@@ -145,7 +147,9 @@ Tests สังเคราะห์ยืนยันพฤติกรรม�
 RGB baseline ยังสับสนผนังสีเดียวกับพื้น หญ้าหรือพื้นวัสดุใหม่ และไม่วัดความสูง/ความชัน/ความลึกหลุม
 นโยบายงานนี้คือพื้นทางเดินสีขาวใต้ตึกผ่านได้ ส่วนพรมทุกสีห้ามผ่าน แต่ baseline ยังไม่จำแนกชนิดวัตถุหรือพรมได้อย่างน่าเชื่อถือ ควรใช้ label ตามนโยบายนี้เมื่อเพิ่มโมเดล segmentation
 Optical flow อาจผิดบนพื้นไร้ texture; temporal filtering จึงไม่ใช่ตัวรับประกันความถูกต้อง
-เส้นทางนี้เป็น reference สำหรับทดลองในภาพ ยังไม่มี camera calibration, footprint หน่วยเมตร, vehicle dynamics หรือคำสั่งควบคุมหุ่น
+เส้นทางจาก `RoadDetection.py` เป็น reference สำหรับทดลองในภาพ
+ส่วน ROS มี projection หน่วยเมตรแยกต่างหากที่ต้องคาลิเบรตกล้องและวัด mount ก่อนใช้
+ยังไม่มี footprint หน่วยเมตร, vehicle dynamics หรือคำสั่งควบคุมหุ่น
 
 โค้ด ROS 2 เดิมเก็บไว้ที่ `legacy/RoadDetection_ros2.py` เพื่ออ้างอิงและเปรียบเทียบ ยังมีพฤติกรรมเดิมและ dependency ROS เดิม ไม่ได้ใช้ใน runner ใหม่นี้
 

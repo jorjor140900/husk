@@ -1,0 +1,57 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: vision_ground
+    Background Color: 35; 35; 35
+    Frame Rate: 15
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid (0.5 m)
+      Enabled: true
+      Cell Size: 0.5
+      Plane Cell Count: 24
+      Color: 100; 100; 100
+      Plane: XY
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/Axes
+      Name: Ground axes (X forward red, Y left green)
+      Enabled: true
+      Length: 0.6
+      Radius: 0.02
+      Reference Frame: vision_ground
+    - Class: rviz_default_plugins/TF
+      Name: Camera mount TF
+      Enabled: true
+      Frame Timeout: 15
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+    - Class: rviz_default_plugins/Path
+      Name: Projected reference (meters)
+      Enabled: true
+      Topic:
+        Value: /drivable_area/reference_ground
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Buffer Length: 1
+      Color: 255; 230; 0
+      Line Style: Lines
+      Line Width: 0.03
+      Pose Style: None
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Target Frame: vision_ground
+      Scale: 90
+      X: 2.0
+      Y: 0.0
+      Angle: 0.0
+Window Geometry:
+  Width: 1280
+  Height: 800

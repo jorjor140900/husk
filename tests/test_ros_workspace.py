@@ -34,11 +34,14 @@ class WorkspaceTests(unittest.TestCase):
             self.assertFalse(any(destination.rglob(".git")))
             self.assertFalse(any(path.is_symlink() for path in destination.rglob("*")))
             self.assertEqual([p.name for p in (destination / "src").iterdir()], ["husky_vision"])
-            for name in ("setup.py", "setup.cfg", "package.xml", "launch/drivable_area.launch.py"):
+            for name in ("setup.py", "setup.cfg", "package.xml", "launch/drivable_area.launch.py", "launch/ground_path.launch.py"):
                 text = (package / name).read_text()
                 self.assertIn("husky_vision", text)
                 self.assertNotIn("husky_drivable_area", text)
             self.assertTrue((package / "road_navigation/segmentation.py").is_file())
+            self.assertTrue((package / "config/checkerboard-9x6-25mm.pdf").read_bytes().startswith(b"%PDF"))
+            self.assertTrue((package / "docs/ros2-metric-path.md").is_file())
+            self.assertIn("husky_vision.ground_node:main", (package / "setup.py").read_text())
             guide = (destination / "START_HERE.md").read_text()
             self.assertNotIn("~/husky_vision_ws", guide)
             self.assertNotIn("$HOME/husky_vision_ws", guide)
@@ -111,6 +114,25 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(config.read_text(), '{"clearance_px": 12}')
             self.assertEqual(core.read_text(), "# local detector edits\n")
             self.assertEqual((workspace / "models/husky-segformer/model.safetensors").read_bytes(), (model / "model.safetensors").read_bytes())
+
+    def test_upgrade_adds_projection_to_an_older_export(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            workspace = root / "fresh"
+            create_workspace(workspace, self.make_model_fixture(root))
+            package = workspace / "src/husky_vision"
+            added = ["husky_vision/ground_node.py", "husky_vision/ground_geometry.py", "husky_vision/calibration.py",
+                     "launch/ground_path.launch.py", "config/ground_path.rviz", "config/camera_mount.example.json",
+                     "config/checkerboard-9x6-25mm.pdf", "docs/ros2-metric-path.md"]
+            for relative in added:
+                (package / relative).unlink()
+            (package / "setup.py").write_text("# old package metadata with local edits\n")
+            result = update_workspace_code(workspace)
+            self.assertTrue(all((package / relative).is_file() for relative in added))
+            backup = Path(result["source_backup"])
+            self.assertEqual((backup / "setup.py").read_text(), "# old package metadata with local edits\n")
+            self.assertEqual(set(json.loads((backup / "created_files.json").read_text())), set(added))
+            self.assertIn("ground_path_node", (package / "setup.py").read_text())
 
     def test_update_rejects_an_unrelated_or_incomplete_workspace_before_writing(self):
         with tempfile.TemporaryDirectory() as folder:

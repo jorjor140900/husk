@@ -196,9 +196,11 @@ git pull --ff-only origin work
 python3 tools/create_ros2_workspace.py --workspace ~/husky_vision_ws --update-code
 ```
 
-คำสั่งนี้อัปเดตเฉพาะ `husky_vision/nodes.py`, `husky_vision/transport.py` และ launch
+คำสั่งนี้อัปเดต ROS adapters, launch, metadata ของแพ็กเกจ และไฟล์ประกอบ projection
 ไฟล์เดิมรวม local edits จะสำรองไว้ใน `.source-backups/<เวลา>/` ของ workspace
 โมเดล, detector หลัก, config และ dependencies ที่ติดตั้งแล้วไม่ถูกเขียนทับ
+ถ้าจะเริ่มใช้เส้นหน่วยเมตร ให้ติดตั้ง dependencies เพิ่มและทำตาม
+[คู่มือคาลิเบรตกล้องและ RViz](ros2-metric-path.md)
 หลังจากนั้น build ใน Terminal ใหม่ที่ source เฉพาะ Jazzy:
 
 ```bash
