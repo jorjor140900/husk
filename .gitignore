@@ -4,4 +4,8 @@ __pycache__/
 *.py[cod]
 outputs/
 models/
+build/
+install/
+log/
+*.egg-info/
 

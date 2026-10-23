@@ -41,6 +41,12 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 
 อย่าติดตั้ง OpenCV headless และ GUI พร้อมกันใน venv เดียว เครื่อง Linux ต้องมี desktop/display และ system libraries ที่ GUI build ต้องการด้วย
 
+## ใช้กับ ROS 2 Jazzy
+
+มีแพ็กเกจ `husky_drivable_area` สำหรับเปิด webcam และใช้โมเดลเดิมผ่าน ROS topics
+ดู [ขั้นตอนติดตั้งใน drivable_area_ws, build, launch และเปิดภาพ](docs/ros2-jazzy.md)
+ส่ง mask, overlay, reference แบบพิกเซลและ status; ยังไม่มีคำสั่งเคลื่อนที่หรือเส้นทางหน่วยเมตร
+
 ## ผลลัพธ์
 
 - ภาพ: `overlay.png`, `raw_mask.png`, `mask.png`, `navigable_mask.png`, `probability.npy`, `result.json`
