@@ -176,6 +176,89 @@ ros2 run husky_vision control_self_test --config "$HOME/husky_vision_ws/controll
 หลังการทดสอบผ่าน ขั้นพัฒนาต่อคือ metric footprint/collision gate กับ LiDAR
 และการเชื่อม TF/perception โดยคงการตรวจระยะจริงไว้ก่อนต่อ hardware
 
+## หลังผ่าน 15 checks: ทดลอง LiDAR กับพื้นที่กวาดผ่านของตัวหุ่น
+
+ชุดใหม่นี้เปิด **controller → requested Twist → LaserScan filter → actual Twist → หุ่นจำลอง**
+ตัวกรองอ่าน scan และ odometry; ไม่อ่านตำแหน่งทรงกระบอกจาก simulator เพื่อสั่งหยุด
+simulation ยังใช้ ray/circle intersections สร้าง scan จากวัตถุที่รู้ตำแหน่งตามปกติของ sensor simulator
+ชุด `control_demo`/`control_self_test` เดิมยังใช้เป็น baseline ได้ตามเดิม
+
+อัปเดต source ด้วย `--update-code` แล้ว build ตามขั้น 1 หยุด demo เก่าก่อนเปิด:
+
+```bash
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+source install/local_setup.bash
+QT_QPA_PLATFORM=xcb ros2 launch husky_vision lidar_demo.launch.py
+```
+
+RViz ใช้ Fixed Frame `husky_lidar_demo/odom` พร้อมกล่องน้ำเงิน, เส้นเหลือง,
+ทรงกระบอกแดงและจุดจาก LiDAR จำลอง กรอบเขียวคือพื้นที่ตามแบบจำลองที่จะตรวจ
+เมื่อพบจุด scan ภายในพื้นที่นั้น กรอบเป็นแดงและหุ่นหยุดก่อนถึงทรงกระบอก
+แสดง scan เก่าค้างไว้ไม่เกินประมาณ 0.3 s
+
+Terminal อีกหน้า:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/husky_vision_ws/install/local_setup.bash
+ros2 topic echo /husky_lidar_demo/safety/status --once
+```
+
+`clear` หมายถึงคำสั่งผ่านตัวกรองตามโมเดลนี้; `obstacle_in_sweep` หมายถึงมี return ในพื้นที่ที่ตรวจ
+`control/requested_cmd_vel` คือคำสั่งก่อนกรอง ส่วน `control/cmd_vel` คือคำสั่งที่ส่งเข้าหุ่นจำลองจริง
+ทั้งสองอยู่ใต้ `/husky_lidar_demo/` ไม่มีการส่งไป `/cmd_vel` ของหุ่นจริง
+
+ทดสอบเอาวัตถุออก โดยหุ่นจะเคลื่อนที่ต่อเมื่อ scan ใหม่ผ่านและข้อมูลครบ:
+
+```bash
+ros2 param set /husky_lidar_demo/control_simulator obstacle_enabled false
+```
+
+ทดสอบ scan หาย:
+
+```bash
+ros2 param set /husky_lidar_demo/control_simulator publish_scan false
+```
+
+ภายในประมาณ 0.3 s + หนึ่งรอบ filter ต้องเห็น `stale_scan` และความเร็วศูนย์
+เปิดกลับด้วย `publish_scan true` และใส่วัตถุกลับด้วย `obstacle_enabled true`
+ตัวกรองไม่ latch การหยุด: เมื่อข้อมูลใหม่ผ่านต่อเนื่อง 0.5 s และอนุญาตจะกลับมาวิ่งเอง
+ระหว่างรอจะเป็น `waiting_for_clear` จากนั้นเพิ่มความเร็วแบบจำกัด acceleration
+เหตุผลหยุดหรือ request ที่เป็นศูนย์ยังส่งศูนย์ทันที ไม่รอ ramp
+ใช้ software stop/reset เดิมโดยเปลี่ยน prefix เป็น `/husky_lidar_demo/`
+ทดลองไม่มีวัตถุด้วย `scenario:=curve` หรือ `scenario:=straight` ได้ โดยเปิดทีละ launch
+
+### ตัวกรองตรวจอะไร
+
+- ใช้ rectangle ที่มี front/rear/half-width + margin จาก `config/laser_safety.yaml`
+  ค่า 0.45/0.45/0.30 m เป็น **ขนาดกล่อง demo** ต้องวัด Husky พร้อม payload ก่อนใช้จริง
+- ตรวจ motion ที่ร้องขอ, motion หลังจำกัด acceleration และ motion ที่วัดได้จาก odometry แม้คำสั่งใหม่เป็นศูนย์
+  ทำนายแต่ละแนวหยุดด้วยความโค้งคงที่ ช่วง reaction และการลด v/omega ลงพร้อมกัน
+- เพิ่มอายุ scan/odometry ในเวลาตอบสนองที่ใช้คำนวณ ขยับกรอบทีละไม่เกิน 0.01 m
+  ตามขอบเขตความเร็วของจุดบนตัวหุ่น และ inflate กรอบด้วยระยะ sampling อีกชั้น
+- แปลง scan ไป odom ด้วย TF ณ scan timestamp แล้วแปลงกลับเข้ากรอบตัวหุ่นด้วย odometry ล่าสุด
+  หาก TF ไม่มี, ข้อมูลเก่า, หาย หรือไม่ถูกต้อง จะส่งศูนย์
+- ต้องเห็น scan รอบตัวครบ 360° มี angular increment ไม่เกิน 0.02 rad
+  `+inf` หมายถึง no-return ถึง range_max ตามสัญญาของ sensor; NaN, -inf, ระยะผิดช่วงเป็น unknown และหยุด
+- ต้องให้กรอบที่ตรวจทั้งกรอบอยู่ใน range_max ของ sensor และรับเฉพาะ scan instantaneous/deskewed
+  `time_increment != 0` จะหยุดด้วย `scan_requires_deskew` ต้องทำ deskew ก่อนต่อ LiDAR จริงที่หมุนเก็บข้อมูล
+
+นี่เป็น **ต้นแบบหยุดจาก planar scan** ไม่ใช่ collision avoidance planner หรือระบบ safety ที่รับรองแล้ว
+ยังไม่ตรวจ metric drivable mask, หลุม/ขอบตก, ของที่อยู่เหนือ/ใต้ระนาบสแกน หรือวัตถุที่ LiDAR ไม่เห็น
+แนวหยุดที่ตรวจไม่ครอบคลุมการเปลี่ยนความโค้งทุกแบบของหุ่นจริง; การลื่นไถล การเบรกและ actuator lag ต้องวัดและปรับโมเดล
+ต้องรวม drivable map/footprint, deskew, ขอบเขตการรับรู้, TF, hardware watchdog และ E-stop ก่อนต่อฐานหุ่น
+ค่า `physical_robot_validated` ใน status จึงยังเป็น false
+
+ตรวจใน official ROS Jazzy container แล้ว: unit tests รวม 100 รายการ,
+ข้อมูล LaserScan/odometry/request/permission ขาดหรือผิดผ่านการทดสอบด้วย ROS messages จริง,
+และเปิด launch ครบสาม process แบบไม่มี GUI ทั้งฉาก obstacle กับ curve
+ฉาก obstacle หยุดนิ่งที่ X ประมาณ 1.967 m ก่อนวัตถุ X=3 m โดย requested command ยังเป็นบวกแต่ filtered command เป็นศูนย์
+การเอาวัตถุออก, scan หาย/กลับมา และ curve tracking ผ่านตัวกรองทำงานได้
+ชุด `control_self_test` เดิมยังผ่าน 15 checks ค่าเหล่านี้เป็นผล simulation
+ไม่ได้ทดสอบหน้าต่าง RViz บน desktop หรืออุปกรณ์ LiDAR/หุ่นจริง
+
 ## 4. โค้ดที่เตรียมไว้สำหรับต่อกับหุ่นภายหลัง
 
 | ส่วน | หน้าที่ |

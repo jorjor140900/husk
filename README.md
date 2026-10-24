@@ -53,6 +53,8 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 มี node แปลงพิกัดบนพื้นราบเมื่อมี calibration และ mount ที่วัดจริง โดย node นี้ไม่ส่งคำสั่งเคลื่อนที่
 เริ่มทำ control ต่อได้ด้วย [ชุด Pure Pursuit + หุ่นจำลองใน RViz](docs/ros2-control.md)
 ทดลองวงจรปิดและการหยุดเมื่อข้อมูลขาดใน `/husky_demo/` โดยไม่ต้องเปิดกล้องหรือเชื่อมหุ่น
+หลังผ่านชุด controller มี `lidar_demo.launch.py` สำหรับทดลองกรองคำสั่งด้วย LaserScan จำลอง
+และ rectangle ที่กวาดผ่านระหว่างเคลื่อนที่/เลี้ยว ดูขั้นต่อในคู่มือเดียวกัน
 
 ## ผลลัพธ์
 
