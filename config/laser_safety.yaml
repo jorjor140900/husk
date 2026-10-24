@@ -1,0 +1,20 @@
+/**:
+  ros__parameters:
+    # Demo dimensions only. Measure the real robot including payload/overhangs.
+    front_m: 0.45
+    rear_m: 0.45
+    half_width_m: 0.30
+    margin_m: 0.15
+    reaction_sec: 0.30
+    braking_deceleration_mps2: 0.4
+    braking_angular_deceleration_rps2: 0.8
+    max_linear_mps: 0.25
+    max_angular_rps: 0.6
+    sweep_step_m: 0.01
+    scan_timeout_sec: 0.3
+    odom_timeout_sec: 0.3
+    request_timeout_sec: 0.3
+    permission_timeout_sec: 0.3
+    release_hold_sec: 0.5
+    output_acceleration_mps2: 0.25
+    output_angular_acceleration_rps2: 0.8

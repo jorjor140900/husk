@@ -1,0 +1,22 @@
+{
+  "max_width": 640,
+  "analysis_width": 320,
+  "horizon_fraction": 0.30,
+  "seed_x_fraction": 0.5,
+  "seed_y_fraction": 0.94,
+  "goal_x_fraction": 0.5,
+  "robot_center_x_fraction": 0.5,
+  "lookahead_y_fraction": 0.65,
+  "chroma_tolerance": 14.0,
+  "use_edge_barrier": true,
+  "edge_low_threshold": 35,
+  "edge_high_threshold": 80,
+  "region_step": 6,
+  "probability_threshold": 0.62,
+  "current_probability_floor": 0.50,
+  "temporal_alpha": 0.65,
+  "use_temporal": true,
+  "clearance_px": 8,
+  "max_lateral_step": 2,
+  "min_path_height_fraction": 0.25
+}

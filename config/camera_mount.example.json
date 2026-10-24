@@ -1,0 +1,10 @@
+{
+  "height_m": null,
+  "pitch_down_deg": null,
+  "roll_deg": 0.0,
+  "yaw_deg": 0.0,
+  "camera_x_m": 0.0,
+  "camera_y_m": 0.0,
+  "ground_frame": "vision_ground",
+  "camera_frame": "camera_optical_frame"
+}
