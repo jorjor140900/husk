@@ -30,5 +30,6 @@ setup(
         "control_simulator = husky_drivable_area.control_simulator:main",
         "control_self_test = husky_drivable_area.control_self_test:main",
         "laser_safety = husky_drivable_area.safety_node:main",
+        "vision_control_preview = husky_drivable_area.vision_preview_node:main",
     ]},
 )

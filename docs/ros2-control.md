@@ -259,6 +259,90 @@ ros2 param set /husky_lidar_demo/control_simulator publish_scan false
 ชุด `control_self_test` เดิมยังผ่าน 15 checks ค่าเหล่านี้เป็นผล simulation
 ไม่ได้ทดสอบหน้าต่าง RViz บน desktop หรืออุปกรณ์ LiDAR/หุ่นจริง
 
+## เชื่อมกล้องจริงกับ preview ของ controller ระหว่างรอลงพื้นที่
+
+หลังทดสอบ controller/sensor จำลองแล้ว ให้กลับมาตรวจส่วนงานภาพด้วย
+`vision_preview.launch.py`: **webcam → SegFormer → pixel reference → ground projection → Pure Pursuit candidate**
+เปิดภาพ overlay กับ RViz ให้ในคำสั่งเดียว โดยใช้โมเดลเดิม ไม่ต้อง train ใหม่
+
+นี่เป็นการดูค่าที่กฎควบคุมคำนวณได้ **เมื่อสมมติว่าจุดกำเนิดบนพื้นอยู่นิ่ง**
+ไม่มี odometry จริงและไม่มีหุ่นจำลองวิ่งตามภาพ ไม่มีการสร้าง `odom → base_link` ปลอม
+node นี้ส่งเฉพาะ Path, MarkerArray และ JSON ไม่ประกาศ publisher ชนิด Twist หรือช่อง cmd_vel
+ไม่มี service สำหรับ arm ให้สั่งมอเตอร์จาก preview นี้
+
+### เตรียมกล้องในห้อง
+
+ยึดกล้องให้นิ่ง มองพื้นราบ และตรวจว่า `camera_calibration/mount.json` เป็นความสูง/มุมก้มของตำแหน่งปัจจุบัน
+คงความละเอียด capture 640×480 และ focus/zoom ตามที่คาลิเบรตไว้
+กำหนด origin บนพื้นใต้เลนส์, แกน X ตามทิศกล้อง, ปรับกล้องให้ระดับเพื่อใช้ roll/yaw=0
+ถ้าการติดตั้งเปลี่ยน ให้วัด mount ใหม่; เก็บค่าของการติดตั้งคนละครั้งแยกชื่อไฟล์ได้
+สำหรับขั้นนี้ยังไม่ต้องรู้การติดตั้งกล้องบน Husky จริง
+
+อัปเดต `--update-code` แล้ว build ตามขั้น 1 หยุด launch กล้อง/projection/demo เดิมก่อน
+เพื่อไม่เปิด webcam/detector หรือ TF ของกล้องซ้อนกัน แล้วรัน:
+
+```bash
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+source install/local_setup.bash
+QT_QPA_PLATFORM=xcb ros2 launch husky_vision vision_preview.launch.py \
+  camera_index:=2 \
+  model_path:="$HOME/husky_vision_ws/models/husky-segformer" \
+  camera_calibration:="$HOME/husky_vision_ws/camera_calibration/camera-v2.yaml" \
+  camera_mount:="$HOME/husky_vision_ws/camera_calibration/mount.json"
+```
+
+ถ้าใช้ calibration ชื่อ `camera.yaml` ให้เปลี่ยนเฉพาะชื่อไฟล์ให้ตรง
+ค่าเริ่มต้นคือ CPU, model input 320×192, 2 threads; capture คง 640×480
+`show_image:=false` หรือ `rviz:=false` ใช้ปิดแต่ละหน้าต่างได้
+`use_webcam:=false image_topic:=/your/image_raw` ใช้รับภาพจาก publisher ภายนอก โดย launch ยังเปิด detector ให้
+ห้ามนำ calibration ของ webcam ไปใช้ฉายคลิปจากกล้องคนละตัวโดยถือว่าระยะถูกต้อง
+
+### ดูอะไรบนหน้าจอ
+
+- ภาพ overlay เดิมแสดง drivable mask และ reference จาก AI
+- เส้นเหลืองใน RViz คือ pixel reference ที่ฉายลงพื้นด้วย calibration/mount ที่ให้ไว้
+- ลูกศรน้ำเงินคือทิศ X ของ **origin ที่สมมติ** ไม่ใช่ตำแหน่งหุ่นจริง
+- ลูกศรฟ้ากับจุดเหลืองคือทิศไปยัง lookahead ที่คำนวณได้
+- ข้อความ `candidate v` หน่วย m/s และ `omega` หน่วย rad/s เป็นค่าก่อน acceleration limits
+  omega บวกคือเลี้ยวซ้าย ลบคือเลี้ยวขวา ไม่ใช่คำสั่งที่ส่งให้หุ่น
+- `NO CANDIDATE` หมายถึงขณะนั้นคำนวณ candidate ไม่ได้ จะไม่ค้างค่าจากเฟรมเก่า
+
+Terminal อีกหน้าที่ source ROS/workspace แล้ว:
+
+```bash
+ros2 topic echo /vision_preview/status --once
+```
+
+`candidate_before_acceleration_limits` มี v/omega เมื่อคำนวณได้ หรือเป็น null เมื่อไม่มี candidate
+`ready_for_control` และ `footprint_checked` เป็น false เสมอ เพราะยังไม่รู้ robot pose/clearance จริง
+ถ้าเปลี่ยนชื่อ `ground_frame` ใน mount ให้ปรับ Fixed Frame ของ RViz ให้ตรงกัน
+
+สาเหตุที่พบบ่อย:
+
+| reason | สิ่งที่ได้เรียนรู้ |
+| --- | --- |
+| `image_path_invalid:*` | detector ยังหา reference ไม่ได้ในพื้นผิว/มุมภาพนี้ ตรวจ overlay และโมเดล |
+| `stale_or_invalid_source_timestamp`, `no_recent_detection` | ผลภาพเก่าหรือไม่มีผลใหม่; ใช้ timeout เดียวกับ controller เริ่มต้น 0.5 s |
+| `source_frame_mismatch` | frame ภาพไม่ตรงกับ mount ของกล้อง |
+| `invalid_detection_or_calibration_geometry` | อ่าน `detail` เช่น capture resolution ต่างจาก calibration |
+| `controller:too_far_from_path` | จุดเริ่มของเส้นอยู่ห่าง origin ที่สมมติเกินเกณฑ์ อาจเป็น blind gap ของกล้อง; ไม่ใช่ lateral error เสมอไป |
+| `candidate_available` | การคำนวณเรขาคณิตและ Pure Pursuit ได้ค่าในสมมติฐานนี้ ไม่ได้ยืนยันว่าหุ่นผ่านได้ |
+
+ในห้อง หากพื้นไม่เหมือนข้อมูลฝึก อาจไม่พบ drivable area ซึ่งเป็นผลที่ควรเก็บไปวิเคราะห์โมเดล
+จุดนี้ใช้สังเกตว่า mask/reference ที่สั่นส่งผลให้ candidate เลี้ยวสลับหรือหยุดอย่างไร และความหน่วงภาพถึงเกณฑ์ controller หรือยัง
+ยังไม่ได้ทดสอบวงจรปิดจากภาพบนหุ่นที่เคลื่อนที่ การยืนยันระยะ/footprint, motion compensation, odometry และ LiDAR จริงยังต้องทำภายหลัง
+
+ตรวจ build และการส่งข้อมูลจริงใน official ROS Jazzy แล้ว รวมการปฏิเสธภาพเก่า,
+resolution/frame ผิด, blind gap และการล้างเส้น/ลูกศรเมื่อข้อมูลหมดอายุ
+ตรวจ publisher graph ว่าไม่มี Twist, cmd_vel หรือ Odometry จาก preview
+ทดสอบ launch ครบตั้งแต่ Image สังเคราะห์ผ่าน SegFormer test fixture และ detector ไปจนถึง candidate
+fixture ใช้เพื่อทดสอบ wiring ไม่ใช่โมเดลที่ train แล้วหรือผลประเมินความแม่นยำภาพ
+ตรวจ official image_view ที่ launch เปิดให้ด้วย Qt offscreen แล้วว่า subscribe compressed overlay
+และถอดภาพกลับมาได้ โดยไม่มี transport/type mismatch
+unit tests รวม 105 รายการผ่าน ยังต้องลอง webcam/โมเดลจริงและ desktop ของผู้ใช้
+
 ## 4. โค้ดที่เตรียมไว้สำหรับต่อกับหุ่นภายหลัง
 
 | ส่วน | หน้าที่ |

@@ -49,6 +49,8 @@ class WorkspaceTests(unittest.TestCase):
             self.assertTrue((package / "launch/lidar_demo.launch.py").is_file())
             self.assertTrue((package / "husky_vision/collision.py").is_file())
             self.assertIn("husky_vision.safety_node:main", (package / "setup.py").read_text())
+            self.assertIn("husky_vision.vision_preview_node:main", (package / "setup.py").read_text())
+            self.assertTrue((package / "launch/vision_preview.launch.py").is_file())
             self.assertTrue((package / "docs/ros2-control.md").is_file())
             guide = (destination / "START_HERE.md").read_text()
             self.assertNotIn("~/husky_vision_ws", guide)

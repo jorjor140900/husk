@@ -1,0 +1,52 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: vision_ground
+    Background Color: 35; 35; 35
+    Frame Rate: 15
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Ground grid (0.5 m)
+      Enabled: true
+      Cell Size: 0.5
+      Plane Cell Count: 20
+      Color: 90; 90; 90
+      Plane: XY
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/Path
+      Name: AI reference projected to ground (yellow)
+      Enabled: true
+      Topic:
+        Value: /vision_preview/reference_ground
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Buffer Length: 1
+      Color: 255; 230; 0
+      Line Style: Lines
+      Pose Style: None
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Stationary preview and diagnostics
+      Enabled: true
+      Topic:
+        Value: /vision_preview/markers
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Target Frame: vision_ground
+      Scale: 100
+      X: 2.0
+      Y: 0.5
+      Angle: 0.0
+Window Geometry:
+  Width: 1280
+  Height: 800

@@ -55,6 +55,8 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 ทดลองวงจรปิดและการหยุดเมื่อข้อมูลขาดใน `/husky_demo/` โดยไม่ต้องเปิดกล้องหรือเชื่อมหุ่น
 หลังผ่านชุด controller มี `lidar_demo.launch.py` สำหรับทดลองกรองคำสั่งด้วย LaserScan จำลอง
 และ rectangle ที่กวาดผ่านระหว่างเคลื่อนที่/เลี้ยว ดูขั้นต่อในคู่มือเดียวกัน
+ระหว่างรอลงพื้นที่ ใช้ `vision_preview.launch.py` เชื่อม webcam/AI กับการดูค่า v/omega ของ Pure Pursuit
+ในสมมติฐานกล้องนิ่ง มีภาพและ RViz พร้อมสถานะ โดยไม่สร้าง odometry หรือส่งคำสั่งมอเตอร์
 
 ## ผลลัพธ์
 
