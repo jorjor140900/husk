@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>husky_vision_bridge</name>
+  <version>0.1.0</version>
+  <description>Robot-side telemetry relay and local velocity watchdog for Husky vision.</description>
+  <maintainer email="jorjor140900@users.noreply.github.com">husk maintainers</maintainer>
+  <license>Unlicensed</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>rosbridge_server</exec_depend>
+  <exec_depend condition="$ROS_PYTHON_VERSION == 2">python-monotonic</exec_depend>
+</package>

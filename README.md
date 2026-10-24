@@ -61,6 +61,10 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 ตรวจความสูงและมุมก้มใน mount ให้ตรงกับการตั้งกล้องปัจจุบันก่อนใช้ระยะที่ฉายลงพื้น
 ใช้ `ground_check.launch.py` แสดงกากบาทระยะบนภาพดิบแล้ววัดเทียบเครื่องหมายบนพื้น
 ดู [วิธีตรวจระยะ 10/25/50 cm ในห้อง](docs/ros2-metric-path.md#6-ตรวจระยะก่อนทำ-controller)
+มี [ชุดเตรียมต่อ Husky ROS1–ROS2](docs/robot-field-kit.md) ด้วย rosbridge gateway,
+watchdog บนหุ่น, profile ค่าจริง, launch รวมและ offline link self-test
+สร้างชุดด้วย `ros2 run husky_vision prepare_robot_kit --workspace ~/husky_vision_ws`
+เริ่ม observe/disarmed; วันจริงต้องเติม topic/TF/geometry และตรวจ sensor/gate ก่อนเปิดคำสั่ง
 
 ## ผลลัพธ์
 

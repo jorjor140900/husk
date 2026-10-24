@@ -23,12 +23,18 @@ SOURCE_PACKAGE = "husky_drivable_area"
 
 
 def ros_files():
-    files = {name: ROOT / name for name in ("setup.py", "package.xml")}
+    files = {name: ROOT / name for name in ("setup.py", "package.xml", "requirements-bridge.txt")}
     files.update({f"{PACKAGE}/{path.name}": path for path in (ROOT / SOURCE_PACKAGE).glob("*.py")
                   if path.name != "__init__.py"})
     files.update({str(path.relative_to(ROOT)): path for directory, pattern in (
-        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"),
+        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"), ("docs", "robot-field-kit.md"),
     ) for path in (ROOT / directory).glob(pattern) if path.is_file()})
+    for path in (ROOT / "husky_link_core").glob("*.py"):
+        files[str(path.relative_to(ROOT))] = path
+        files["ros1/husky_vision_bridge/src/husky_link_core/"+path.name] = path
+    for path in (ROOT / "ros1").rglob("*"):
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+            files[str(path.relative_to(ROOT))] = path
     return files
 
 

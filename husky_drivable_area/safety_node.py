@@ -13,7 +13,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
-from geometry_msgs.msg import Point, Twist
+from geometry_msgs.msg import Point, Twist, TwistStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
@@ -65,6 +65,7 @@ class LaserSafetyNode(Node):
         self.request_sub = self.create_subscription(Twist, "control/requested_cmd_vel", self._request, 1)
         self.permission_sub = self.create_subscription(Bool, "motion_permitted", self._permission, 1)
         self.output = self.create_publisher(Twist, "control/cmd_vel", 1)
+        self.stamped_output = self.create_publisher(TwistStamped, "control/cmd_vel_stamped", 1)
         self.status = self.create_publisher(String, "safety/status", 1)
         self.marker = self.create_publisher(Marker, "safety/sweep", 1)
         self.timer = self.create_timer(0.05, self._tick)
@@ -175,12 +176,20 @@ class LaserSafetyNode(Node):
             command.linear.x, command.angular.z = self.proposed
         else:
             self.limiter.reset()
-        self.output.publish(command)
+        self._publish_command(command)
         self.status.publish(String(data=json.dumps({"reason": reason, "command_allowed": reason == "clear",
             "linear_x": command.linear.x, "angular_z": command.angular.z,
             "model": "planar_scan_and_command_stop_sweeps", "physical_robot_validated": False})))
         if self.marker.get_subscription_count() > 0:
             self._draw(poses, reason)
+
+    def _publish_command(self, command):
+        self.output.publish(command)
+        stamped = TwistStamped()
+        stamped.header.stamp = self.get_clock().now().to_msg()
+        stamped.header.frame_id = self.base_frame
+        stamped.twist = command
+        self.stamped_output.publish(stamped)
 
     def _draw(self, poses, reason):
         marker = Marker()
@@ -216,6 +225,6 @@ def main(args=None):
     finally:
         if node is not None:
             if rclpy.ok():
-                node.output.publish(Twist())
+                node._publish_command(Twist())
             node.destroy_node()
         rclpy.try_shutdown()

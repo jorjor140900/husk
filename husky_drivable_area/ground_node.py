@@ -22,6 +22,7 @@ class GroundPathNode(Node):
             "camera_calibration": "", "camera_mount": "",
             "status_topic": "/drivable_area/status", "max_frame_age_sec": 2.0,
             "max_distance_m": 5.0, "max_segment_m": 0.5,
+            "publish_camera_tf": True,
         }.items():
             self.declare_parameter(name, value)
         value = lambda name: self.get_parameter(name).value
@@ -44,7 +45,8 @@ class GroundPathNode(Node):
         transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z = self.mount.origin.tolist()
         q = self.mount.quaternion_xyzw.tolist()
         transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = q
-        self.tf.sendTransform(transform)
+        if value("publish_camera_tf"):
+            self.tf.sendTransform(transform)
         # Status already contains path + both image sizes + source stamp in one
         # message. Do not pair asynchronous image/pixel topics or add image load.
         self.subscription = self.create_subscription(String, value("status_topic"), self._status, 1)

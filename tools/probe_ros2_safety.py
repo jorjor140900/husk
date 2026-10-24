@@ -19,7 +19,7 @@ def main():
     import numpy as np
     import rclpy
     from rclpy.node import Node
-    from geometry_msgs.msg import TransformStamped, Twist
+    from geometry_msgs.msg import TransformStamped, Twist, TwistStamped
     from nav_msgs.msg import Odometry
     from sensor_msgs.msg import LaserScan
     from std_msgs.msg import Bool, String
@@ -30,9 +30,10 @@ def main():
     odom_frame, base_frame = namespace + "/odom", namespace + "/base_link"
     rclpy.init()
     node = Node("acceptance_probe", namespace=namespace)
-    status, commands = [], []
+    status, commands, stamped_commands = [], [], []
     subs = [node.create_subscription(String, "safety/status", lambda m: status.append(json.loads(m.data)), 1),
-            node.create_subscription(Twist, "control/cmd_vel", commands.append, 1)]
+            node.create_subscription(Twist, "control/cmd_vel", commands.append, 1),
+            node.create_subscription(TwistStamped, "control/cmd_vel_stamped", stamped_commands.append, 1)]
     pubs = {"scan": node.create_publisher(LaserScan, "scan", 1), "odom": node.create_publisher(Odometry, "odom", 1),
             "request": node.create_publisher(Twist, "control/requested_cmd_vel", 1),
             "permission": node.create_publisher(Bool, "motion_permitted", 1)}
@@ -134,6 +135,8 @@ def main():
         state["time_increment"] = 0.0
         expect("clear")
         assert any(c.linear.x > 0 for c in commands)
+        assert any(c.twist.linear.x > 0 for c in stamped_commands)
+        assert all(c.header.frame_id == base_frame and (c.header.stamp.sec or c.header.stamp.nanosec) for c in stamped_commands)
         print(json.dumps({"result": "passed", "checks": checks, "namespace": namespace}), flush=True)
     finally:
         if child.poll() is None:

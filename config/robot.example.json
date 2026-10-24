@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "bridge": {
+    "url": "ws://127.0.0.1:9090",
+    "forward_commands": false,
+    "expected_output_topic": null
+  },
+  "robot": {
+    "ros1_distro": null,
+    "odom_topic": null,
+    "scan_topic": null,
+    "odom_frame": null,
+    "base_frame": null,
+    "base_to_ground_z_m": null,
+    "ros1_permission_topic": null,
+    "joy_topic": null,
+    "joy_deadman_button": null,
+    "external_permission_topic": "/husky_link/external_permission"
+  },
+  "camera": {
+    "source": "local_usb",
+    "ros1_compressed_topic": null,
+    "publish_camera_tf": true,
+    "index": 2,
+    "width": 640,
+    "height": 480,
+    "fps": 15.0,
+    "device": "cpu",
+    "model_width": 320,
+    "model_height": 192,
+    "cpu_threads": 2,
+    "model_path": null,
+    "calibration_path": null,
+    "mount_path": null
+  },
+  "footprint": {"front_m": null, "rear_m": null, "half_width_m": null, "margin_m": 0.15},
+  "field_measurements": {
+    "geometry_checked": false,
+    "mux_and_base_timeout_checked": false,
+    "independent_permission_gate_checked": false
+  }
+}
