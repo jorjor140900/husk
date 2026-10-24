@@ -53,10 +53,10 @@ def main():
                 rclpy.spin_once(node, timeout_sec=0.02)
             assert predicate(), status[-1:]
 
-        def data():
-            stamp = node.get_clock().now().to_msg()
+        def data(delay_ms=0):
+            sec, ns = divmod(node.get_clock().now().nanoseconds-int(delay_ms*1_000_000), 1_000_000_000)
             return {"valid_image_path": True, "reason": "ok",
-                    "source_header": {"frame_id": camera_frame, "stamp": {"sec": stamp.sec, "nanosec": stamp.nanosec}},
+                    "source_header": {"frame_id": camera_frame, "stamp": {"sec": sec, "nanosec": ns}},
                     "path_coordinate_system": "processed_image_pixels_xy_near_to_far",
                     "path": [[319.5, v] for v in range(450, 199, -1)],
                     "processed_shape_hw": [480, 640], "input_shape_hw": [480, 640]}
@@ -64,7 +64,10 @@ def main():
         def send(value, expected):
             count = len(status)
             publisher.publish(String(data=json.dumps(value)))
-            wait(lambda: len(status) > count and status[-1]["reason"] == expected)
+            wait(lambda: len(status) > count and status[-1]["reason"] == expected and status[-1]["result_receipt_age_ms"] < 300)
+
+        def marker(index):
+            return next(item for item in markers[-1].markers if item.id == index)
 
         try:
             wait(lambda: publisher.get_subscription_count() == 1)
@@ -72,13 +75,25 @@ def main():
             candidate = status[-1]["candidate_before_acceleration_limits"]
             assert abs(candidate["linear_x_mps"] - 0.2) < 1e-9 and abs(candidate["angular_z_rps"]) < 1e-9
             assert status[-1]["preview_only"] and not status[-1]["ready_for_control"]
-            wait(lambda: paths and len(paths[-1].poses) > 2 and markers and markers[-1].markers[-1].action == Marker.ADD)
+            wait(lambda: paths and len(paths[-1].poses) > 2 and markers and marker(3).action == Marker.ADD)
             assert paths[-1].header.frame_id == ground_frame
             print("PASS: real DDS camera metadata -> metric path -> stationary Pure Pursuit candidate", flush=True)
+            wait(lambda: status[-1]["reason"] == "stale_for_control", seconds=1.5)
+            wait(lambda: marker(3).action == Marker.DELETE and marker(4).color.g < 0.6)
+            assert paths[-1].poses and status[-1]["candidate_before_acceleration_limits"] is None
+            for delay_ms in (655, 1330, 1671):
+                value = data(delay_ms)
+                send(value, "stale_for_control")
+                stamp = value["source_header"]["stamp"]
+                wait(lambda: paths[-1].header.stamp.sec == stamp["sec"] and paths[-1].header.stamp.nanosec == stamp["nanosec"])
+                assert paths[-1].poses and status[-1]["ground_path_points"] > 2
+                assert status[-1]["candidate_before_acceleration_limits"] is None
+                assert status[-1]["valid_image_path"] and status[-1]["controller_reason"] == "tracking"
+            print("PASS: 655-1671ms CPU results stay visible with original stamps; candidate/target expire at controller limit", flush=True)
             value = data()
-            value["source_header"]["stamp"]["sec"] -= 2
-            send(value, "stale_or_invalid_source_timestamp")
-            wait(lambda: not paths[-1].poses and markers[-1].markers[-1].action == Marker.DELETE)
+            value["source_header"]["stamp"]["sec"] -= 4
+            send(value, "display_expired")
+            wait(lambda: not paths[-1].poses and marker(3).action == Marker.DELETE and marker(4).action == Marker.DELETE)
             value = data()
             value["input_shape_hw"] = [720, 1280]
             send(value, "invalid_detection_or_calibration_geometry")
@@ -91,15 +106,18 @@ def main():
             send(value, "controller:too_far_from_path")
             assert status[-1]["candidate_before_acceleration_limits"] is None
             send({"valid_image_path": False, "reason": "no_path"}, "image_path_invalid:no_path")
+            wait(lambda: not paths[-1].poses and marker(4).action == Marker.DELETE)
+            wait(lambda: status[-1]["result_receipt_age_ms"] > 700)
+            assert status[-1]["reason"] == "image_path_invalid:no_path"
             send(data(), "candidate_available")
-            wait(lambda: status[-1]["reason"] == "no_recent_detection")
-            wait(lambda: not paths[-1].poses and markers[-1].markers[-1].action == Marker.DELETE)
+            wait(lambda: status[-1]["reason"] == "display_expired")
+            wait(lambda: not paths[-1].poses and marker(3).action == Marker.DELETE and marker(4).action == Marker.DELETE)
             publishers = node.get_publisher_names_and_types_by_node("vision_control_preview", "/" + namespace)
             assert publishers
             types = {kind for _, kinds in publishers for kind in kinds}
             assert not types.intersection({"geometry_msgs/msg/Twist", "geometry_msgs/msg/TwistStamped", "nav_msgs/msg/Odometry"}), types
             assert not any("cmd_vel" in topic for topic, _ in publishers), publishers
-            print("PASS: stale/mismatched inputs and blind gap reject; timeout clears; node publishes no Twist/Odometry/cmd_vel", flush=True)
+            print("PASS: invalid/mismatched inputs clear immediately; diagnostics persist; display eventually expires; no Twist/Odometry/cmd_vel", flush=True)
         finally:
             if child.poll() is None:
                 child.send_signal(signal.SIGINT)

@@ -6,7 +6,7 @@ Visualization Manager:
   Global Options:
     Fixed Frame: vision_ground
     Background Color: 35; 35; 35
-    Frame Rate: 15
+    Frame Rate: 10
   Displays:
     - Class: rviz_default_plugins/Grid
       Name: Ground grid (0.5 m)
@@ -16,21 +16,8 @@ Visualization Manager:
       Color: 90; 90; 90
       Plane: XY
       Reference Frame: <Fixed Frame>
-    - Class: rviz_default_plugins/Path
-      Name: AI reference projected to ground (yellow)
-      Enabled: true
-      Topic:
-        Value: /vision_preview/reference_ground
-        Reliability Policy: Reliable
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Depth: 1
-      Buffer Length: 1
-      Color: 255; 230; 0
-      Line Style: Lines
-      Pose Style: None
     - Class: rviz_default_plugins/MarkerArray
-      Name: Stationary preview and diagnostics
+      Name: Reference (yellow fresh, orange delayed) and diagnostics
       Enabled: true
       Topic:
         Value: /vision_preview/markers

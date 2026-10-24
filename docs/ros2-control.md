@@ -277,6 +277,11 @@ node นี้ส่งเฉพาะ Path, MarkerArray และ JSON ไม�
 กำหนด origin บนพื้นใต้เลนส์, แกน X ตามทิศกล้อง, ปรับกล้องให้ระดับเพื่อใช้ roll/yaw=0
 ถ้าการติดตั้งเปลี่ยน ให้วัด mount ใหม่; เก็บค่าของการติดตั้งคนละครั้งแยกชื่อไฟล์ได้
 สำหรับขั้นนี้ยังไม่ต้องรู้การติดตั้งกล้องบน Husky จริง
+`pitch_down_deg` วัดก้มลงจากแนวราบ: `0` คือมองระดับ, `70` คือก้มลง 70°
+เช่น กล้องสูง 77 cm และก้มประมาณ 70° ต้องใช้ `height_m: 0.77`, `pitch_down_deg: 70.0`
+ห้ามคงมุมเป็น 0 เมื่อกล้องก้มอยู่ เพราะระยะฉายลงพื้นจะผิดและอาจขึ้น `too_far_from_path`
+แก้เฉพาะ mount แล้ว restart launch ได้ ไม่ต้องคาลิเบรต intrinsics หรือ train ใหม่
+มุมประมาณใช้ตรวจ preview ได้ แต่ต้องเทียบระยะบนพื้นที่วัดจริงก่อนใช้ควบคุม
 
 อัปเดต `--update-code` แล้ว build ตามขั้น 1 หยุด launch กล้อง/projection/demo เดิมก่อน
 เพื่อไม่เปิด webcam/detector หรือ TF ของกล้องซ้อนกัน แล้วรัน:
@@ -302,12 +307,24 @@ QT_QPA_PLATFORM=xcb ros2 launch husky_vision vision_preview.launch.py \
 ### ดูอะไรบนหน้าจอ
 
 - ภาพ overlay เดิมแสดง drivable mask และ reference จาก AI
-- เส้นเหลืองใน RViz คือ pixel reference ที่ฉายลงพื้นด้วย calibration/mount ที่ให้ไว้
+- เส้นใน RViz คือ pixel reference ที่ฉายลงพื้นด้วย calibration/mount ที่ให้ไว้
+  สีเหลืองคืออายุผ่านเกณฑ์ controller; สีส้มคือผลยังแสดงเพื่อตรวจงาน แต่อายุเกินเกณฑ์ควบคุมแล้ว
 - ลูกศรน้ำเงินคือทิศ X ของ **origin ที่สมมติ** ไม่ใช่ตำแหน่งหุ่นจริง
 - ลูกศรฟ้ากับจุดเหลืองคือทิศไปยัง lookahead ที่คำนวณได้
 - ข้อความ `candidate v` หน่วย m/s และ `omega` หน่วย rad/s เป็นค่าก่อน acceleration limits
   omega บวกคือเลี้ยวซ้าย ลบคือเลี้ยวขวา ไม่ใช่คำสั่งที่ส่งให้หุ่น
-- `NO CANDIDATE` หมายถึงขณะนั้นคำนวณ candidate ไม่ได้ จะไม่ค้างค่าจากเฟรมเก่า
+- `Candidate BLOCKED` หมายถึงขณะนั้นไม่มี candidate ที่ผ่านเกณฑ์ จะไม่ค้างค่าจากเฟรมเก่า
+
+**การเห็นเส้นกับการผ่านเงื่อนไขควบคุมเป็นคนละสถานะ** โดย preview แสดง geometry
+ได้จน source/receipt อายุเกิน `display_timeout_sec` เริ่มต้น 3 s
+แต่ candidate/ลูกศร lookahead ถูกล้างเมื่อเกิน `path_timeout_sec` เริ่มต้น 0.5 s ตาม controller
+ไม่ขยายเกณฑ์ของ controller เพื่อทำให้ภาพ CPU ที่ช้ากลายเป็นคำสั่งใช้งานได้
+ดังนั้นผลภาพอายุ 650–1700 ms จะยังมีเส้นสีส้มและ `Image path: YES`
+พร้อม `Candidate BLOCKED: stale_for_control` ไม่ขึ้นว่าตรวจไม่เจอทั้งที่มีผลภาพ
+ถ้าหยุดส่งภาพ เส้นเก่าหายเมื่อหมดอายุแสดง; ถ้า detector ส่งผลใหม่ว่าไม่มี path
+หรือ calibration/frame ไม่ตรง เส้นเดิมถูกล้างทันที ไม่เก็บเส้นเก่าแทนผลใหม่
+ข้อความอัปเดตอายุข้อมูลต่อเนื่องและคงเหตุผลการปฏิเสธของ detector ไว้ ไม่กลบด้วย timeout 0.5 s
+ปรับ `display_timeout_sec:=...` ได้เพื่อดูภาพเท่านั้น ต้องไม่น้อยกว่า controller timeout
 
 Terminal อีกหน้าที่ source ROS/workspace แล้ว:
 
@@ -316,6 +333,10 @@ ros2 topic echo /vision_preview/status --once
 ```
 
 `candidate_before_acceleration_limits` มี v/omega เมื่อคำนวณได้ หรือเป็น null เมื่อไม่มี candidate
+`display_state`, `valid_image_path`, `detection_reason`, `controller_reason` แยกสถานะการเห็นเส้น,
+เหตุผลจาก detector และเหตุผลทาง geometry ของ controller; `frame_age_ms` ใช้ timestamp ภาพต้นทางจริง
+`path_start_ground_xy_m` คือจุดต้นของเส้นที่ฉายได้ หน่วยเมตร ใช้ตรวจระยะหน้า/ด้านข้าง
+`camera_height_m` / `camera_pitch_down_deg` แสดงค่าติดตั้งที่ node ใช้อยู่
 `ready_for_control` และ `footprint_checked` เป็น false เสมอ เพราะยังไม่รู้ robot pose/clearance จริง
 ถ้าเปลี่ยนชื่อ `ground_frame` ใน mount ให้ปรับ Fixed Frame ของ RViz ให้ตรงกัน
 
@@ -324,24 +345,28 @@ ros2 topic echo /vision_preview/status --once
 | reason | สิ่งที่ได้เรียนรู้ |
 | --- | --- |
 | `image_path_invalid:*` | detector ยังหา reference ไม่ได้ในพื้นผิว/มุมภาพนี้ ตรวจ overlay และโมเดล |
-| `stale_or_invalid_source_timestamp`, `no_recent_detection` | ผลภาพเก่าหรือไม่มีผลใหม่; ใช้ timeout เดียวกับ controller เริ่มต้น 0.5 s |
+| `stale_for_control` | มีเส้นสำหรับดู แต่ source/receipt อายุเกินเกณฑ์ควบคุม 0.5 s; ไม่มี candidate |
+| `display_expired` | source/receipt อายุเกินเกณฑ์แสดง 3 s; ล้างเส้นและ candidate |
+| `waiting_for_detection` | node ยังไม่ได้รับ status จาก detector เลย |
+| `stale_or_invalid_source_timestamp` | timestamp เป็นศูนย์/ติดลบ หรืออนาคตเกิน 50 ms; ไม่ฉายเส้น |
 | `source_frame_mismatch` | frame ภาพไม่ตรงกับ mount ของกล้อง |
 | `invalid_detection_or_calibration_geometry` | อ่าน `detail` เช่น capture resolution ต่างจาก calibration |
-| `controller:too_far_from_path` | จุดเริ่มของเส้นอยู่ห่าง origin ที่สมมติเกินเกณฑ์ อาจเป็น blind gap ของกล้อง; ไม่ใช่ lateral error เสมอไป |
+| `controller:too_far_from_path` | ระยะสั้นสุดจาก origin ถึงเส้นเกินเกณฑ์ 0.8 m; ตรวจความสูง/มุมก้ม mount ก่อน อาจเป็น blind gap ของกล้อง ไม่ใช่ lateral error เสมอไป |
 | `candidate_available` | การคำนวณเรขาคณิตและ Pure Pursuit ได้ค่าในสมมติฐานนี้ ไม่ได้ยืนยันว่าหุ่นผ่านได้ |
 
 ในห้อง หากพื้นไม่เหมือนข้อมูลฝึก อาจไม่พบ drivable area ซึ่งเป็นผลที่ควรเก็บไปวิเคราะห์โมเดล
 จุดนี้ใช้สังเกตว่า mask/reference ที่สั่นส่งผลให้ candidate เลี้ยวสลับหรือหยุดอย่างไร และความหน่วงภาพถึงเกณฑ์ controller หรือยัง
 ยังไม่ได้ทดสอบวงจรปิดจากภาพบนหุ่นที่เคลื่อนที่ การยืนยันระยะ/footprint, motion compensation, odometry และ LiDAR จริงยังต้องทำภายหลัง
 
-ตรวจ build และการส่งข้อมูลจริงใน official ROS Jazzy แล้ว รวมการปฏิเสธภาพเก่า,
-resolution/frame ผิด, blind gap และการล้างเส้น/ลูกศรเมื่อข้อมูลหมดอายุ
+ตรวจ build และการส่งข้อมูลจริงใน official ROS Jazzy แล้ว รวมผล CPU อายุ 655–1671 ms
+ที่ยังแสดง geometry แต่ไม่มี candidate, watchdog ล้าง candidate ก่อนล้างเส้น,
+resolution/frame ผิด, blind gap และการเก็บเหตุผล detector เมื่อไม่มี path
 ตรวจ publisher graph ว่าไม่มี Twist, cmd_vel หรือ Odometry จาก preview
 ทดสอบ launch ครบตั้งแต่ Image สังเคราะห์ผ่าน SegFormer test fixture และ detector ไปจนถึง candidate
 fixture ใช้เพื่อทดสอบ wiring ไม่ใช่โมเดลที่ train แล้วหรือผลประเมินความแม่นยำภาพ
 ตรวจ official image_view ที่ launch เปิดให้ด้วย Qt offscreen แล้วว่า subscribe compressed overlay
 และถอดภาพกลับมาได้ โดยไม่มี transport/type mismatch
-unit tests รวม 105 รายการผ่าน ยังต้องลอง webcam/โมเดลจริงและ desktop ของผู้ใช้
+ยังต้องลอง webcam/โมเดลจริงและ desktop ของผู้ใช้
 
 ## 4. โค้ดที่เตรียมไว้สำหรับต่อกับหุ่นภายหลัง
 

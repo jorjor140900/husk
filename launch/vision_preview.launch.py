@@ -18,6 +18,7 @@ def generate_launch_description():
                 "device": "cpu", "model_width": "320", "model_height": "192", "cpu_threads": "2",
                 "use_webcam": "true", "image_topic": "/camera/image_raw",
                 "rviz": "true", "show_image": "true",
+                "display_timeout_sec": "3.0",
                 "controller_config": str(share / "config/controller.yaml")}
     inputs = ("camera_index", "camera_width", "camera_height", "camera_fps", "device", "model_width",
               "model_height", "cpu_threads", "use_webcam", "image_topic", "model_path")
@@ -31,7 +32,8 @@ def generate_launch_description():
         Node(package="husky_drivable_area", executable="vision_control_preview", namespace="vision_preview", output="screen",
              parameters=[LaunchConfiguration("controller_config"), {
                  name: ParameterValue(LaunchConfiguration(name), value_type=str)
-                 for name in ("camera_calibration", "camera_mount")}]),
+                 for name in ("camera_calibration", "camera_mount")},
+                 {"display_timeout_sec": ParameterValue(LaunchConfiguration("display_timeout_sec"), value_type=float)}]),
         Node(package="rviz2", executable="rviz2", arguments=["-d", str(share / "config/vision_preview.rviz")],
              condition=IfCondition(LaunchConfiguration("rviz")), output="screen"),
         Node(package="image_view", executable="image_view", name="vision_preview_image", namespace="vision_preview", output="screen",
