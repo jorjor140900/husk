@@ -358,6 +358,11 @@ ros2 topic echo /vision_preview/status --once
 จุดนี้ใช้สังเกตว่า mask/reference ที่สั่นส่งผลให้ candidate เลี้ยวสลับหรือหยุดอย่างไร และความหน่วงภาพถึงเกณฑ์ controller หรือยัง
 ยังไม่ได้ทดสอบวงจรปิดจากภาพบนหุ่นที่เคลื่อนที่ การยืนยันระยะ/footprint, motion compensation, odometry และ LiDAR จริงยังต้องทำภายหลัง
 
+เมื่อเริ่มเห็นเส้นและ candidate แล้ว ขั้นถัดไปคือ [โหมดตรวจระยะกับเครื่องหมายบนพื้นจริง](ros2-metric-path.md#6-ตรวจระยะก่อนทำ-controller)
+ใช้ `ground_check.launch.py` แสดงจุด 10/25/50 cm และจุดซ้ายขวาบนภาพดิบ โดยใช้ calibration/mount ชุดเดียวกัน
+การที่ geometry gate ขึ้น tracking ไม่ได้ยืนยันว่ามุมก้มที่ประมาณและระยะบนพื้นถูกต้อง
+หลังวัดระยะจึงกลับมาเก็บความหน่วง AI ให้ต่อเนื่องตามเกณฑ์ controller ก่อนทดลองควบคุมจากภาพ
+
 ตรวจ build และการส่งข้อมูลจริงใน official ROS Jazzy แล้ว รวมผล CPU อายุ 655–1671 ms
 ที่ยังแสดง geometry แต่ไม่มี candidate, watchdog ล้าง candidate ก่อนล้างเส้น,
 resolution/frame ผิด, blind gap และการเก็บเหตุผล detector เมื่อไม่มี path

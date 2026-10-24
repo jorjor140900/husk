@@ -186,7 +186,68 @@ ros2 topic echo /drivable_area/reference_ground --once
 
 ## 6. ตรวจระยะก่อนทำ controller
 
-ติดเทปบนพื้นราบด้านหน้ากล้องที่ระยะ X **1 m, 2 m และ 3 m** จากจุดกำเนิดที่กำหนด
+### แสดงจุดระยะบนภาพกล้องแล้ววัดเทียบจริง
+
+อัปเดตแพ็กเกจด้วย `--update-code` และ build ตามขั้น 1 แล้วหยุด launch กล้อง/AI/preview เดิมด้วย Ctrl+C
+ยึดกล้องในตำแหน่งเดิม คง capture/focus/zoom ตาม calibration และใช้พื้นราบ
+โหมดนี้เปิดเฉพาะ webcam + เรขาคณิต + image_view จึงไม่ต้องโหลดโมเดลหรือเปิด RViz
+
+```bash
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+source install/local_setup.bash
+QT_QPA_PLATFORM=xcb ros2 launch husky_vision ground_check.launch.py \
+  camera_index:=2 \
+  camera_calibration:="$HOME/husky_vision_ws/camera_calibration/camera-v2.yaml" \
+  camera_mount:="$HOME/husky_vision_ws/camera_calibration/mount.json"
+```
+
+เปลี่ยนชื่อ calibration ให้ตรงกับไฟล์จริง โหมดนี้ไม่แก้ mount/calibration และไม่ส่ง TF, Path หรือคำสั่งมอเตอร์
+ถ้าใช้กล้อง publisher ภายนอกอยู่แล้ว ให้ใช้ `use_webcam:=false image_topic:=/your/image_raw`
+แสดงจุดจากพิกัดพื้น Z=0 ผ่าน intrinsics และ distortion ของภาพดิบ
+แถบข้อความที่เพิ่มบนภาพมีไว้แสดงผลเท่านั้น พิกัด `raw_pixel_uv` ใน status ยังอ้างอิงภาพดิบ 640×480
+
+1. ใช้สายห้อยน้ำหนัก/แนวดิ่งหาจุดบนพื้น **ใต้ศูนย์กลางเลนส์** ติดเทปเล็ก ๆ เป็นจุดเริ่มวัด
+2. กำหนด +X ไปข้างหน้า, +Y ไปซ้ายตาม ground frame; ในชุดทดลองให้ yaw/roll ตรงกับแกนและค่าที่วัดไว้
+3. วัดและติดเทปแบนบนพื้นตามตาราง ไม่วัดจากขาตั้ง หน้ากล้อง หรือหน้าต่างบนจอ
+4. ดูว่ากากบาทที่มีชื่อเดียวกันทับกลางเทปจริงหรือไม่ ตรวจหลายระยะและด้านซ้ายขวา
+
+| จุดบนภาพ | ระยะไปข้างหน้าจากจุดใต้เลนส์ | ระยะซ้าย/ขวา |
+| --- | --- | --- |
+| `C010` | 10 cm | ตรงกลาง Y=0 |
+| `C025` | 25 cm | ตรงกลาง Y=0 |
+| `C050` | 50 cm | ตรงกลาง Y=0 |
+| `L025` | 25 cm | ไปซ้ายอีก 20 cm |
+| `R025` | 25 cm | ไปขวาอีก 20 cm |
+
+เลือกจุดที่อยู่ในภาพจริง แถบบนบอก `Visible center X` จุดนอกภาพไม่แสดง
+กล้องก้มประมาณ 70° อาจเห็นเฉพาะช่วง 10–50 cm จึงไม่กำหนดให้ต้องเห็น 1–3 m
+จุดอื่นมี `C075`, `C100`, `C150`, `C200`, `C300` เมื่อระยะนั้นอยู่ในมุมมองกล้อง
+`L`/`R` ทุกจุดอยู่ที่ Y=+0.20/-0.20 m; ระยะ X อ่านจากตัวเลขชื่อจุดเป็น cm
+สำหรับ mount ที่ camera_x/y ไม่เป็นศูนย์ ตารางนี้ยังเริ่มจากพื้นใต้เลนส์ แต่แกนยังตาม ground frame
+
+ถ้าต้องการบันทึก error เป็น cm ให้เลื่อนเครื่องหมายแบนอีกชิ้นบนพื้นจนภาพของมันตรงกับกากบาท
+แล้ววัด X/Y จริงของชิ้นนั้นเทียบกับค่าที่ป้ายระบุ แยกจากจุดตรวจที่ติดไว้เดิม
+เก็บผลหลายจุดก่อนปรับความสูง/มุมก้ม และคงจุดหนึ่งไว้ตรวจซ้ำหลังปรับ
+ตรวจ focus, ขนาด capture, จุดอ้างอิงเลนส์, roll/yaw และพื้นราบด้วย
+หลังแก้ mount หรือ calibration ต้อง Ctrl+C แล้วเปิดโหมดตรวจใหม่ให้โหลดค่าล่าสุด
+
+อ่านค่าที่ใช้และจุดที่มองเห็นได้:
+
+```bash
+ros2 topic echo /ground_check/status --once
+```
+
+`valid_ground_overlay` ยืนยันเพียงว่าซอฟต์แวร์ฉายจุดและรับภาพถูกขนาด/frame/เวลา
+`physical_geometry_verified` ยังเป็น false เพราะการทับตรงกับเครื่องหมายจริงต้องวัดตรวจเอง
+ถ้า frame/resolution ผิดหรือภาพเก่า/กล้องหยุด ภาพเปลี่ยนเป็นคำเตือนและล้างตาราง
+หลังตรวจระยะแล้วกลับไปเปิด `vision_preview.launch.py` เพื่อเก็บความหน่วงของ AI ต่อ
+ระยะมองที่สั้นจากกล้องก้มมากต้องตรวจเทียบกับ lookahead และระยะหยุดก่อนเลือกการติดตั้งบนหุ่นจริง
+
+### ตรวจพิกัดพิกเซลเองเพิ่มเติม
+
+ใช้จุดบนพื้นหลายระยะที่อยู่ในภาพ เช่น 1 m, 2 m และ 3 m เมื่อมุมกล้องมองถึง
 เพื่อทดสอบพิกัดจุดบนภาพเดียวกันโดยตรง ใช้ Python ใน Terminal ที่เปิด venv:
 
 ```python
@@ -222,6 +283,8 @@ odometry/TF และเงื่อนไขหยุด ก่อนต่อ 
 | `/drivable_area/reference_ground` | `nav_msgs/Path` | เส้นเปิด near→far หน่วยเมตรบน Z=0 ของ `vision_ground`; timestamp ของภาพต้นทาง |
 | `/drivable_area/ground_status` | `std_msgs/String` JSON | ผล projection; `ready_for_control=false`, `footprint_checked=false` |
 | `/tf_static` | TF | mount ที่วัดจริง: `vision_ground` → `camera_optical_frame` |
+| `/ground_check/overlay/compressed` | `sensor_msgs/CompressedImage` | กากบาทระยะสำหรับวัดเทียบพื้นจริง ใช้เฉพาะโหมดตรวจ |
+| `/ground_check/status` | `std_msgs/String` JSON | พิกัดเมตร/พิกเซลของจุดที่มองเห็นและสถานะภาพของโหมดตรวจ |
 
 `vision_ground` เป็น frame ท้องถิ่นของชุดกล้องทดลอง ไม่ใช่ `map`/`odom` และไม่ติดตามตำแหน่งหุ่นในโลก
 ห้ามมี node อื่นส่ง TF ของ child `camera_optical_frame` ซ้ำขณะใช้ launch ทดลองนี้
@@ -229,11 +292,14 @@ odometry/TF และเงื่อนไขหยุด ก่อนต่อ 
 
 ## การตรวจซอฟต์แวร์
 
-ชุด unit tests รวม 81 รายการผ่าน ครอบคลุม ray–plane intersection,
+ชุด unit tests ครอบคลุม ray–plane intersection,
 การชดเชย distortion, camera rotation/offset, half-pixel resize, เครื่องหมายแกน Y,
 การปฏิเสธ resolution ผิด และการนำเข้า YAML โดยไม่เขียนทับไฟล์เก่า
 ตรวจใน official `ros:jazzy-perception` container เพิ่ม: สร้าง/อัปเดต workspace แยก,
 colcon build, launch arguments และส่ง Path/TF ผ่าน DDS จริงด้วยข้อมูลเรขาคณิตสังเคราะห์
 ตรวจ timestamp/พิกัดเมตร, ล้างเส้นเมื่อ invalid/stale/timeout และกลับมาส่งเมื่อข้อมูลใหม่ถูกต้อง
 PDF เป็น vector A4 และ OpenCV ตรวจพบมุมภายในครบ 54 จุดจากภาพ render
+โหมด `ground_check` ตรวจพิกัดด้วยสูตร ray ของกล้องก้ม 70°, การชดเชย distortion/rotation/offset
+และส่งภาพผ่าน launch/JPEG/official image_view ใน ROS Jazzy ด้วยภาพสังเคราะห์และ Qt offscreen
+ตรวจ frame/resolution/stale/future/timeout ว่าล้างตาราง และกลับมาแสดงเมื่อภาพใหม่ถูกต้อง
 ยังไม่ได้ทดสอบการคาลิเบรต webcam ของผู้ใช้ ระยะภาคสนาม หรือหน้าต่าง RViz บนเครื่องผู้ใช้

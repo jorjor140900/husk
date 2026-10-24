@@ -156,3 +156,31 @@ def project_path(pixels, processed_shape_hw, input_shape_hw, calibration, mount,
     if len(projected) < 2:
         return np.empty((0, 3)), "insufficient_ground_path:" + reason
     return np.asarray(projected), reason
+
+
+def ground_to_image(points_xy, calibration, mount):
+    """Project known Z=0 ground points into RAW, distorted camera pixels.
+
+    Return pixels and an in-image mask. Points behind the camera have NaN
+    pixels and are never visible. This direction is for measured-floor checks,
+    not an assertion that any projected surface is traversable.
+    """
+    points = np.asarray(points_xy, dtype=float)
+    if (points.ndim != 2 or points.shape[1] != 2 or not 1 <= len(points) <= 10000 or
+            not np.isfinite(points).all()):
+        raise ValueError("ground points must contain 1..10000 finite [x, y] pairs")
+    world = np.column_stack([points, np.zeros(len(points))])
+    camera_points = (world - mount.origin) @ mount.rotation
+    front = camera_points[:, 2] > 1e-6
+    pixels = np.full((len(points), 2), np.nan)
+    if front.any():
+        try:
+            projected, _ = cv2.projectPoints(camera_points[front], np.zeros(3), np.zeros(3),
+                                             calibration.matrix, calibration.distortion)
+        except cv2.error as exc:
+            raise ValueError("ground points could not be projected through camera calibration") from exc
+        pixels[front] = projected.reshape(-1, 2)
+    visible = (front & np.isfinite(pixels).all(axis=1) & (pixels[:, 0] >= 0) &
+               (pixels[:, 0] <= calibration.width-1) & (pixels[:, 1] >= 0) &
+               (pixels[:, 1] <= calibration.height-1))
+    return pixels, visible
