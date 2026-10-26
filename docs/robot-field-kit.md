@@ -166,6 +166,8 @@ ros2 launch husky_vision robot_link.launch.py
 ไม่ต้องตั้ง ROS_MASTER_URI ให้ชี้ข้ามเครื่องสำหรับ gateway นี้
 นาฬิกาสองเครื่องต้องตรงกัน ตรวจ source age; ไม่แก้ stamp ให้เป็นเวลาปัจจุบันเพื่อซ่อน network delay
 ถ้าเน็ตหลุด client จะปิด enable latch; เชื่อมต่อใหม่ไม่ทำให้กลับมาส่งคำสั่งเอง
+ถ้ากล้อง ROS1 ส่งภาพนิ่งแต่ภาพ Jazzy ขาดช่วง ดู [การวัดและอัปเดต camera transport](https://github.com/jorjor140900/husk/blob/work/docs/ros1-camera-latency.md)
+มีการแยก watchdog จาก image telemetry, จำกัดภาพล่าสุด และ status แยกช่วงเวลาในการรับ/ถอดภาพ
 
 ## เปิด pipeline รวมหลังกรอกค่าหุ่นครบ
 

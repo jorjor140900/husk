@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from husky_link_core.protocol import CommandWatchdog, dumps, joy_permitted, loads, stamp_dict
 from husky_drivable_area.robot_link import RosbridgeLink
@@ -113,6 +114,20 @@ class LinkEnableTests(unittest.TestCase):
         self.assertEqual(link.snapshot()["reason"], "ok")
         self.assertFalse(link.enable(True)[0])
         self.assertFalse(link.snapshot()["motion_permitted"])
+
+    def test_camera_metrics_distinguish_source_age_from_receipt_gaps_without_restamping(self):
+        link = self.link()
+        packet = {"protocol": 1, "kind": "image", "msg": {"header": {"stamp": stamp_dict(9_900_000_000)}}}
+        with mock.patch("husky_drivable_area.robot_link.time.monotonic", return_value=2.0):
+            link._received("image", packet)
+        with mock.patch("husky_drivable_area.robot_link.time.monotonic", return_value=2.5):
+            link._received("image", packet)
+            stats = link.snapshot()["camera_transport"]
+        self.assertEqual(stats["received_frames"], 2)
+        self.assertEqual(stats["source_age_at_receipt_ms"], 100)
+        self.assertEqual(stats["last_gap_ms"], 500)
+        self.assertEqual(stats["receipt_age_ms"], 0)
+        self.assertEqual(link.take()["image"]["msg"]["header"]["stamp"], stamp_dict(9_900_000_000))
 
     def test_matching_receiver_and_manual_enable_are_both_required(self):
         link = self.link(forward_commands=True, base_frame="base_link", expected_output_topic="/husky_vision/watchdog_preview")

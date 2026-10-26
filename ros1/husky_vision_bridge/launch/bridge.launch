@@ -7,6 +7,8 @@
   <arg name="address" default="127.0.0.1" />
   <arg name="port" default="9090" />
   <arg name="profile_path" default="" />
+  <arg name="image_max_fps" default="10.0" />
+  <arg name="image_max_age_sec" default="0.5" />
   <include file="$(find rosbridge_server)/launch/rosbridge_websocket.launch">
     <arg name="address" value="$(arg address)" />
     <arg name="port" value="$(arg port)" />
@@ -17,6 +19,8 @@
   </include>
   <node pkg="husky_vision_bridge" type="robot_gateway.py" name="robot_gateway" ns="husky_vision" output="screen" required="true">
     <param name="profile_path" value="$(arg profile_path)" />
+    <param name="image_max_fps" value="$(arg image_max_fps)" />
+    <param name="image_max_age_sec" value="$(arg image_max_age_sec)" />
     <param name="odom_topic" value="$(arg odom_topic)" />
     <param name="scan_topic" value="$(arg scan_topic)" />
     <param name="base_frame" value="$(arg base_frame)" />

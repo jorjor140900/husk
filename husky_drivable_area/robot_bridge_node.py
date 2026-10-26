@@ -57,6 +57,7 @@ class RobotBridgeNode(Node):
         self.external_permission_pub = self.create_publisher(Bool, "external_permission", 1)
         self.command_lock, self.last_command = threading.Lock(), None
         self.decode_errors = {}
+        self.image_decode_ms = None
         self.link = RosbridgeLink(value("bridge_url"), prefix=value("ros1_prefix"), forward_commands=value("forward_commands"),
                                  base_frame=value("base_frame"), expected_output_topic=value("expected_output_topic"),
                                  command_provider=self._motion, ros_clock=lambda: self.get_clock().now().nanoseconds)
@@ -97,10 +98,12 @@ class RobotBridgeNode(Node):
                 continue
             try:
                 if kind == "image":
+                    started = time.monotonic()
                     image = decode_camera(packet["msg"], self.camera_width, self.camera_height)
                     header = Header()
                     set_message_fields(header, ros2_fields(packet["msg"]["header"]))
                     self.image_pub.publish(fill_image(Image(), image, header))
+                    self.image_decode_ms = (time.monotonic()-started)*1000
                     with self.command_lock:
                         self.decode_errors.pop(kind, None)
                     continue
@@ -138,6 +141,7 @@ class RobotBridgeNode(Node):
                 with self.command_lock:
                     self.decode_errors[kind] = str(exc)[:160]
         status = self.link.snapshot()
+        status["camera_transport"]["decode_publish_ms"] = self.image_decode_ms
         with self.command_lock:
             status["decode_errors"] = dict(self.decode_errors)
         status["ready_for_autonomous_control"] = False

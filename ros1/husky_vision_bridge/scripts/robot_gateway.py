@@ -7,6 +7,7 @@ import time
 import json
 import os
 import base64
+import math
 
 import rospy
 from geometry_msgs.msg import Twist
@@ -74,17 +75,28 @@ class RobotGateway(object):
         if self.joy_topic:
             self.subs.append(rospy.Subscriber(self.joy_topic, Joy, self.joy, queue_size=1))
         camera = profile.get("camera", {})
+        self.image_max_fps = float(rospy.get_param("~image_max_fps", 10.0))
+        self.image_max_age = float(rospy.get_param("~image_max_age_sec", 0.5))
+        if (not 1 <= self.image_max_fps <= 30 or not 0 < self.image_max_age <= 2 or
+                math.isnan(self.image_max_age) or math.isinf(self.image_max_age)):
+            raise ValueError("image_max_fps must be 1..30 and image_max_age_sec 0..2")
+        self.last_image_sent = float("-inf")
         if camera.get("source") == "ros1_compressed":
             topic = camera.get("ros1_compressed_topic")
             if not topic or not topic.startswith("/"):
                 raise ValueError("set the ROS1 sensor_msgs/CompressedImage topic")
-            self.subs.append(rospy.Subscriber(topic, CompressedImage, self.telemetry, callback_args="image", queue_size=1))
+            self.subs.append(rospy.Subscriber(topic, CompressedImage, self.telemetry, callback_args="image",
+                                             queue_size=1, buff_size=2*1024*1024, tcp_nodelay=True))
         self.enable = rospy.Service("set_enabled", SetBool, self.set_enabled)
         # The stop deadline must continue even if /clock or ROS time freezes.
         self.stopping = threading.Event()
         self.thread = threading.Thread(target=self.loop)
         self.thread.daemon = True
         self.thread.start()
+        # Image/JSON serialization must not be in the local stop-deadline loop.
+        self.telemetry_thread = threading.Thread(target=self.telemetry_loop)
+        self.telemetry_thread.daemon = True
+        self.telemetry_thread.start()
         rospy.on_shutdown(self.stop)
         rospy.loginfo("Robot gateway DISARMED; output=%s; driver enabled=%s", self.output_topic, self.allow_output)
 
@@ -166,13 +178,23 @@ class RobotGateway(object):
                 "driver_output_enabled": self.allow_output, "output_topic": self.output_topic,
                 "base_frame": self.gate.base_frame, "max_linear_mps": self.gate.max_linear,
                 "max_angular_rps": self.gate.max_angular, "command_timeout_sec": self.gate.timeout})))
+
+    def flush_telemetry(self):
+        with self.lock:
             pending, self.pending = self.pending, {}
+            if "image" in pending and monotonic()-self.last_image_sent < 1.0/self.image_max_fps:
+                # The callback overwrites this slot with a newer image. Never
+                # build a FIFO of camera frames while limiting transport rate.
+                self.pending["image"] = pending.pop("image")
         for kind, message in pending.items():
             try:
                 received_stamp = None
                 if kind == "permission":
                     message, received_stamp = message
                 if kind == "image":
+                    age = (rospy.Time.now().to_nsec()-message.header.stamp.to_nsec())/1e9
+                    if not -0.05 <= age <= self.image_max_age:
+                        raise ValueError("stale_camera_input")
                     if len(message.data) > 1048576:
                         raise ValueError("camera_payload_too_large")
                     value = {"header": wire(message.header), "format": message.format,
@@ -183,13 +205,20 @@ class RobotGateway(object):
                 if received_stamp is not None:
                     packet["received_stamp"] = received_stamp
                 self.publishers[kind].publish(String(data=dumps(packet)))
-            except (ValueError, TypeError, OverflowError):
-                rospy.logwarn_throttle(2.0, "Telemetry packet rejected: " + kind)
+                if kind == "image":
+                    self.last_image_sent = monotonic()
+            except (ValueError, TypeError, OverflowError) as exc:
+                rospy.logwarn_throttle(2.0, "Telemetry packet rejected: " + kind + " (" + str(exc) + ")")
 
     def loop(self):
         while not self.stopping.is_set() and not rospy.is_shutdown():
             self.tick(None)
             self.stopping.wait(0.05)
+
+    def telemetry_loop(self):
+        while not self.stopping.is_set() and not rospy.is_shutdown():
+            self.flush_telemetry()
+            self.stopping.wait(0.025)
 
     def stop(self):
         self.stopping.set()

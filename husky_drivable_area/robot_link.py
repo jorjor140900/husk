@@ -28,6 +28,10 @@ class RosbridgeLink:
         self.connected = self.enabled = False
         self.receiver = None
         self.pending, self.error, self.sequence = {}, "not_connected", 0
+        self.image_count = 0
+        self.image_received_at = None
+        self.image_source_age_ms = self.image_last_gap_ms = None
+        self.image_max_gap_ms = 0.0
         self.stop_stamp = None
         self.thread = threading.Thread(target=self._run, daemon=True, name="ros1_link")
 
@@ -64,7 +68,11 @@ class RosbridgeLink:
             return {"connected": self.connected, "enabled": self.enabled, "forward_commands": self.forward_commands,
                     "reason": reason, "transport_error": self.error,
                     "receiver": self.receiver[0].copy() if self.receiver else None,
-                    "motion_permitted": reason == "ok" and self.forward_commands and self.enabled and self.receiver[0]["armed"]}
+                    "motion_permitted": reason == "ok" and self.forward_commands and self.enabled and self.receiver[0]["armed"],
+                    "camera_transport": {"received_frames": self.image_count,
+                        "source_age_at_receipt_ms": self.image_source_age_ms,
+                        "last_gap_ms": self.image_last_gap_ms, "max_gap_ms": self.image_max_gap_ms,
+                        "receipt_age_ms": (time.monotonic()-self.image_received_at)*1000 if self.image_received_at is not None else None}}
 
     def enable(self, enabled):
         with self.lock:
@@ -108,6 +116,14 @@ class RosbridgeLink:
                 self.receiver = (packet, now)
             elif packet.get("kind") != kind or not isinstance(packet.get("msg"), dict):
                 raise ValueError("invalid_telemetry_envelope")
+            if kind == "image":
+                source = stamp_ns(packet["msg"]["header"]["stamp"])
+                self.image_source_age_ms = (self.ros_clock()-source)/1e6
+                if self.image_received_at is not None:
+                    self.image_last_gap_ms = (now-self.image_received_at)*1000
+                    self.image_max_gap_ms = max(self.image_max_gap_ms, self.image_last_gap_ms)
+                self.image_received_at = now
+                self.image_count += 1
             self.pending[kind] = packet
 
     def _send_command(self, socket):
@@ -141,7 +157,8 @@ class RosbridgeLink:
                 socket.settimeout(0.02)
                 for kind in self.KINDS:
                     topic = self.prefix+("/state" if kind == "state" else "/"+kind+"_json")
-                    socket.send(json.dumps({"op": "subscribe", "id": kind, "topic": topic, "type": "std_msgs/String", "queue_length": 1}))
+                    socket.send(json.dumps({"op": "subscribe", "id": kind, "topic": topic, "type": "std_msgs/String",
+                                            "queue_length": 1, "throttle_rate": 100 if kind == "image" else 0}))
                 if self.forward_commands:
                     socket.send(json.dumps({"op": "advertise", "topic": self.prefix+"/command", "type": "std_msgs/String"}))
                 with self.lock:
