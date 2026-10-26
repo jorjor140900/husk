@@ -197,6 +197,11 @@ preflight ไม่ arm, ไม่ส่ง command และไม่ปรั�
 
 การเชื่อม topic สำเร็จยังต้องผ่านการตรวจภาคสนามเหล่านี้:
 
+สำหรับ cpr-a200-1068 พบ VLP16 driver ที่สร้าง scan จาก ring 8 (+1°), metadata ไม่ตรงกับ
+สัญญาของตัวกรอง และมี acquisition ประมาณ 101 ms แม้ LaserScan timing เป็นศูนย์
+ดู [ผลตรวจ bag และขอบเขต adapter offline](https://github.com/jorjor140900/husk/blob/work/docs/vlp16-field-review.md)
+ยังต้องทำ runtime integration/coverage ก่อนเปิดคำสั่ง ห้ามถือว่า time_increment=0 ยืนยัน deskew แล้ว
+
 - พิกัดกล้อง/ระยะบนพื้นและ footprint ที่วัดจริง
 - path/drivable/obstacle map ต้องรองรับ footprint และพื้นที่กวาดตอนเลี้ยว ผ่าน gate อิสระ
   ที่ส่ง Bool heartbeat บน `robot.external_permission_topic`; ค่าเริ่มต้นรับ local gate ที่ bridge มา

@@ -65,6 +65,8 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 watchdog บนหุ่น, profile ค่าจริง, launch รวมและ offline link self-test
 สร้างชุดด้วย `ros2 run husky_vision prepare_robot_kit --workspace ~/husky_vision_ws`
 เริ่ม observe/disarmed; วันจริงต้องเติม topic/TF/geometry และตรวจ sensor/gate ก่อนเปิดคำสั่ง
+มี [ผลตรวจ VLP16 จาก bag ของ cpr-a200-1068](docs/vlp16-field-review.md) และเครื่องมือ offline
+ตรวจ ring/timing พร้อมแกน deskew รายจุด; ยังไม่เชื่อมส่วนนี้เข้า field controller
 
 ## ผลลัพธ์
 
