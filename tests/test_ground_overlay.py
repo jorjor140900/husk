@@ -35,8 +35,23 @@ class GroundOverlayTests(unittest.TestCase):
             pitch_down_deg=67.5, camera_x_m=-0.28, camera_y_m=-0.21))
         self.assertLess(axis_x_at_row(self.axis(mount=right), 260), 319.5)
         full, small = self.axis(), self.axis((240, 320))
-        both = np.isfinite(full).all(axis=1) & np.isfinite(small).all(axis=1)
-        np.testing.assert_allclose(small[both], (full[both]+0.5)/2-0.5)
+        # Compare the same physical row after resizing, including pixel centers.
+        full_x = axis_x_at_row(full, 260)
+        small_x = axis_x_at_row(small, (260+0.5)/2-0.5)
+        self.assertAlmostEqual(small_x, (full_x+0.5)/2-0.5, places=8)
+
+    def test_rear_mount_centerline_reaches_bottom_edge_at_both_resolutions(self):
+        for shape in ((480, 640), (240, 320)):
+            with self.subTest(shape=shape):
+                pixels = self.axis(shape)
+                visible = pixels[np.isfinite(pixels).all(axis=1)]
+                self.assertGreater(visible[:, 1].max(), shape[0]-2)
+                self.assertIsNotNone(axis_x_at_row(pixels, shape[0]-2))
+                frame = np.full((*shape, 3), 120, np.uint8)
+                result = RoadDetector().process(frame, drivable_probability=np.zeros(shape))
+                image = draw_result(result, robot_axis=pixels)
+                blue = image[-1, :, 0].astype(int)-image[-1, :, 1].astype(int)
+                self.assertTrue((blue > 100).any())
 
     def test_frame_or_raw_resolution_mismatch_rejected(self):
         for size, frame in (((480, 640), "other_camera"), ((720, 1280), "camera_optical_frame")):

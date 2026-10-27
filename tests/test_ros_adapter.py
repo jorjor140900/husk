@@ -207,7 +207,7 @@ class CallbackTests(unittest.TestCase):
         with mock.patch.object(self.module, "draw_result", wraps=self.module.draw_result) as draw:
             self.node._process_latest()
         axis = draw.call_args.kwargs["robot_axis"]
-        self.assertEqual(axis.shape, (512, 2))
+        self.assertEqual(axis.shape[1], 2)
         self.assertTrue(np.isfinite(axis).any())
         self.assertEqual(self.status()["processed_shape_hw"], [240, 320])
 
