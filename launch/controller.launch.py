@@ -18,6 +18,8 @@ def generate_launch_description():
         "permission_topic": ("/husky_safety/motion_permitted", "Fresh Bool heartbeat from independent collision/stop gate"),
         "odom_frame": ("odom", "Fixed odometry frame"),
         "base_frame": ("base_link", "Odometry child frame"),
+        "cruise_speed_mps": ("0.2", "Requested tracking speed before limiting/gates"),
+        "max_angular_speed_rps": ("0.5", "Maximum controller angular speed"),
         "config_file": (str(share / "config/controller.yaml"), "Controller tuning YAML"),
     }
     return LaunchDescription([
@@ -25,6 +27,6 @@ def generate_launch_description():
           for name, (default, description) in arguments.items()],
         Node(package="husky_drivable_area", executable="path_controller", namespace="husky_control", output="screen",
              parameters=[LaunchConfiguration("config_file"),
-                         {name: ParameterValue(LaunchConfiguration(name), value_type=str)
+                         {name: ParameterValue(LaunchConfiguration(name), value_type=(float if name in ("cruise_speed_mps", "max_angular_speed_rps") else str))
                           for name in arguments if name != "config_file"}, {"start_enabled": False}]),
     ])

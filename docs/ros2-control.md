@@ -457,3 +457,30 @@ projection ปัจจุบันยังรายงาน `ready_for_contro
 เมื่อต้องการตรวจ DDS ซ้ำ เปิด Terminal ที่ source Jazzy, venv และ workspace แล้วเรียก
 `python /path/to/git-repo/tools/probe_ros2_control.py --package husky_vision`
 เครื่องมือนี้สร้าง namespace และ TF frames เฉพาะการทดสอบของตน ไม่ส่งคำสั่งไปหุ่นจริง
+# Read-only geometry preview while command permission is absent
+
+`/husky_control/control/status` includes `geometry_preview`: Pure Pursuit's
+calculation from the real metric path and real odometry, including capture-time
+TF and the normal path/odometry timeouts. It reports the requested speed,
+angular speed and cross-track error even while the controller is disabled or
+the independent permission gate is absent. This JSON diagnostic is explicitly
+`for_display_only`; it does not check collisions or grant motion permission.
+The existing Twist preview and actual command retain their permission checks.
+
+For the measured Husky link, run the controller initially disabled:
+
+```bash
+ros2 launch husky_vision controller.launch.py \
+  path_topic:=/drivable_area/reference_ground \
+  odom_topic:=/husky_link/odom odom_frame:=odom base_frame:=base_link \
+  permission_topic:=/husky_link/external_permission \
+  cruise_speed_mps:=0.05 max_angular_speed_rps:=0.2
+```
+
+Keep gateway output and link forwarding disabled during this check. A normal
+initial status can have `reason=disabled`, `candidate_reason=permission_timeout`,
+and `geometry_preview.reason=tracking` simultaneously. Actual `linear_x` and
+`angular_z` remain zero. `tf_unavailable`, `stale_path`, `stale_odometry` and
+`too_far_from_path` in the geometry preview identify the geometry/input issue
+to resolve before proceeding. A tracking preview does not complete the VLP16
+runtime integration, robot permission gate or physical obstacle checks.

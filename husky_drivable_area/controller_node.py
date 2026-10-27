@@ -147,6 +147,10 @@ class PathControllerNode(Node):
             return Demand(reason="permission_timeout")
         if not self.permitted:
             return Demand(reason="motion_not_permitted")
+        return self._geometry_demand(now_ros_ns, now)
+
+    def _geometry_demand(self, now_ros_ns, now):
+        """Read-only geometry calculation; never use without the permission gate."""
         if self.pose is None:
             return Demand(reason=self.odom_error)
         if not fresh_stamp(self.odom_source_ns, self.odom_received, now_ros_ns, now, self.odom_timeout):
@@ -160,7 +164,10 @@ class PathControllerNode(Node):
     def _tick(self):
         now = time.monotonic()
         dt, self.last_tick = max(1e-6, now - self.last_tick), now
-        demand = self._demand(self.get_clock().now().nanoseconds, now)
+        now_ros_ns = self.get_clock().now().nanoseconds
+        demand = self._demand(now_ros_ns, now)
+        geometry = (self._geometry_demand(now_ros_ns, now)
+                    if demand.reason in ("permission_timeout", "motion_not_permitted") else demand)
         preview = Twist()
         preview.linear.x, preview.angular.z = demand.linear, demand.angular
         self.preview_pub.publish(preview)
@@ -174,6 +181,12 @@ class PathControllerNode(Node):
             "linear_x": v, "angular_z": w, "cross_track_m": demand.cross_track_m,
             "remaining_m": demand.remaining_m, "target_robot_xy": demand.target_robot_xy,
             "collision_checked_by_controller": False,
+            "geometry_preview": {
+                "for_display_only": True, "permission_checked": False, "collision_checked": False,
+                "reason": geometry.reason, "linear_x": geometry.linear, "angular_z": geometry.angular,
+                "cross_track_m": geometry.cross_track_m, "remaining_m": geometry.remaining_m,
+                "target_robot_xy": geometry.target_robot_xy,
+            },
         }, allow_nan=False)))
 
     def stop(self):
