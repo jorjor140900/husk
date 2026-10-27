@@ -27,7 +27,7 @@ def ros_files():
     files.update({f"{PACKAGE}/{path.name}": path for path in (ROOT / SOURCE_PACKAGE).glob("*.py")
                   if path.name != "__init__.py"})
     files.update({str(path.relative_to(ROOT)): path for directory, pattern in (
-        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"), ("docs", "robot-field-kit.md"), ("docs", "ros2-mount-fit.md"),
+        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"), ("docs", "robot-field-kit.md"), ("docs", "ros2-mount-fit.md"), ("docs", "ros2-charuco.md"),
     ) for path in (ROOT / directory).glob(pattern) if path.is_file()})
     for path in (ROOT / "husky_link_core").glob("*.py"):
         files[str(path.relative_to(ROOT))] = path
