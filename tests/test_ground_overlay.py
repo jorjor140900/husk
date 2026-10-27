@@ -78,6 +78,28 @@ class GroundOverlayTests(unittest.TestCase):
         self.assertIsNone(axis_x_at_row([[100, 220], [np.nan, np.nan], [200, 100]], 180))
         self.assertIsNone(axis_x_at_row([], 180))
 
+    def test_strong_distortion_cannot_create_a_second_centerline(self):
+        # Field regression: out-of-FOV rays with this lens model folded back
+        # into the image, making a second blue diagonal and ambiguous dx.
+        calibration = CameraCalibration.from_mapping({
+            "image_width": 640, "image_height": 480, "distortion_model": "plumb_bob",
+            "camera_matrix": {"data": [602.3991862281756, 0, 332.30661842498023,
+                                       0, 601.1962290642755, 248.00832217834227, 0, 0, 1]},
+            "distortion_coefficients": {"data": [-.07779782874034351, .9307533766478154,
+                                                  -.0005908557793546126, .00003155485163658912,
+                                                  -2.4624453091490115]}})
+        mount = CameraMount.from_mapping(mount_mapping(height_m=.99,
+            pitch_down_deg=19.633314958674244, roll_deg=-2.0522536710550696,
+            yaw_deg=-.0008921954581528848, camera_x_m=-.26, camera_y_m=.21))
+        for shape in ((480, 640), (240, 320)):
+            pixels = robot_axis_pixels(calibration, mount, shape, (480, 640), "camera_optical_frame")
+            visible = np.isfinite(pixels).all(axis=1)
+            edges = np.flatnonzero(np.diff(np.r_[False, visible, False].astype(int)))
+            self.assertEqual(len(edges), 2, "only one physical centerline may enter the view")
+            for fraction in (.21, .4, .65, .85, .99):
+                self.assertIsNotNone(axis_x_at_row(pixels, (shape[0]-1)*fraction))
+            self.assertGreater(axis_x_at_row(pixels, .8*shape[0]), shape[1]/2)
+
     def test_calibrated_overlay_hides_old_axis_and_empty_axis_has_no_fallback(self):
         frame = np.full((240, 320, 3), 120, np.uint8)
         result = RoadDetector().process(frame, drivable_probability=np.zeros((240, 320)))

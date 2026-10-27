@@ -1,7 +1,7 @@
 # Projected robot centerline in the camera overlay
 
 The blue line can use raw-camera calibration and the measured mount to project
-the robot's ground centerline (`X=-5..5 m, Y=0, Z=0`) into the image.
+the robot's ground centerline (`Y=0, Z=0`) into the image.
 It accounts for lens distortion, camera translation/rotation and the detector's
 processed resolution. A left-mounted camera normally sees this line to the
 right of the image center; its image X varies with distance.
@@ -24,6 +24,10 @@ connected, and a calibration/frame mismatch hides the blue line with a warning.
 The drawing includes the floor behind the robot origin, allowing a rear-mounted,
 downward-facing camera to show the guide down to the bottom image edge. It keeps
 the same thickness and processed resolution; it does not extend a driving path.
+Far-field guide samples continue toward the horizon so the line covers the
+visible image above the driving lookahead as well. Polynomial lens distortion
+can fold out-of-view rays back into the image; an inverse-ray consistency check
+rejects those false branches instead of drawing a second centerline.
 
 Without these parameters, the existing configured image axis remains available
 and is labeled `Blue=assumed axis`. The legacy `reference_geometry` metadata
