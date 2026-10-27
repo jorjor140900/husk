@@ -77,6 +77,34 @@ class GroundGeometryTests(unittest.TestCase):
                                [2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)]])
             np.testing.assert_allclose(matrix, mount.rotation, atol=1e-12)
 
+    def test_rear_camera_preserves_contiguous_path_across_robot_origin(self):
+        mount = CameraMount.from_mapping(mount_mapping(
+            height_m=0.99, pitch_down_deg=67.5,
+            camera_x_m=-0.28, camera_y_m=0.21))
+        ground = np.array([[-0.15, 0.21, 0], [-0.05, 0.21, 0],
+                           [0.05, 0.21, 0], [0.20, 0.21, 0]])
+        camera_points = (ground - mount.origin) @ mount.rotation
+        image, _ = cv2.projectPoints(camera_points, np.zeros(3), np.zeros(3),
+                                     self.camera.matrix, self.camera.distortion)
+        actual, reason = project_path(image.reshape(-1, 2), [480, 640],
+                                     [480, 640], self.camera, mount)
+        self.assertEqual(reason, "ok")
+        np.testing.assert_allclose(actual, ground, atol=1e-9)
+
+    def test_rear_camera_does_not_bridge_a_metric_gap(self):
+        mount = CameraMount.from_mapping(mount_mapping(
+            height_m=0.99, pitch_down_deg=67.5,
+            camera_x_m=-0.28, camera_y_m=0.21))
+        ground = np.array([[-0.15, 0.21, 0], [-0.05, 0.21, 0],
+                           [0.55, 0.21, 0]])
+        camera_points = (ground - mount.origin) @ mount.rotation
+        image, _ = cv2.projectPoints(camera_points, np.zeros(3), np.zeros(3),
+                                     self.camera.matrix, self.camera.distortion)
+        actual, reason = project_path(image.reshape(-1, 2), [480, 640],
+                                     [480, 640], self.camera, mount)
+        self.assertEqual(reason, "segment_gap_clipped")
+        np.testing.assert_allclose(actual, ground[:2], atol=1e-9)
+
     def test_horizon_and_range_keep_only_contiguous_prefix(self):
         path = [[319.5, v] for v in range(450, 0, -1)]
         points, reason = self.project(path, max_distance_m=2)

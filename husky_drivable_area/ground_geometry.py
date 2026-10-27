@@ -115,6 +115,8 @@ def project_path(pixels, processed_shape_hw, input_shape_hw, calibration, mount,
     Intrinsics refer to RAW camera input, not model tensors or the display.
     Resize uses OpenCV's half-pixel center convention. Wrong resolution, frame,
     age and non-flat terrain must not be silently treated as calibrated data.
+    Points behind the ground-frame origin remain valid geometry, for example
+    with a rear-mounted camera. Forward target selection belongs to control.
     """
     for shape in (processed_shape_hw, input_shape_hw):
         if not isinstance(shape, (list, tuple)) or len(shape) != 2 or any(type(v) is not int or v < 16 for v in shape):
@@ -145,7 +147,7 @@ def project_path(pixels, processed_shape_hw, input_shape_hw, calibration, mount,
             break
         hit = mount.origin - (mount.height_m / ray[2]) * ray
         hit[2] = 0.0
-        if hit[0] <= 0 or np.linalg.norm(hit[:2]) > max_distance_m:
+        if np.linalg.norm(hit[:2]) > max_distance_m:
             reason = "range_clipped"
             break
         if projected and np.linalg.norm(hit - projected[-1]) > max_segment_m:
