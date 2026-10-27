@@ -36,6 +36,7 @@ setup(
         "mapping_scan = husky_drivable_area.mapping_scan_node:main",
         "vision_grid = husky_drivable_area.vision_grid_node:main",
         "navigation_gate = husky_drivable_area.navigation_gate:main",
+        "navigation_preflight = husky_drivable_area.navigation_preflight:main",
         "goal_dispatch = husky_drivable_area.goal_dispatch:main",
         "path_controller = husky_drivable_area.controller_node:main",
         "control_simulator = husky_drivable_area.control_simulator:main",

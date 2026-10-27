@@ -13,14 +13,16 @@ from launch_ros.actions import Node
 
 
 def _nodes(context):
-    from husky_drivable_area.navigation import navigation_parameters
+    from husky_drivable_area.navigation import navigation_parameters, saved_map_metadata
     from husky_drivable_area.ground_geometry import CameraCalibration, CameraMount
-    from husky_drivable_area.robot_profile import load_robot_profile
+    from husky_drivable_area.robot_profile import load_robot_profile, expanded_path
     share = Path(get_package_share_directory("husky_drivable_area"))
     # The layer must actually be installed; absence cannot silently disable AI.
     get_package_share_directory("husky_vision_nav2")
     filename = Path(LaunchConfiguration("profile").perform(context)).expanduser()
     profile = json.loads(filename.read_text())
+    for key in ("calibration_path", "mount_path"):
+        profile["camera"][key] = str(expanded_path(profile["camera"][key]))
     allow = LaunchConfiguration("allow_motion").perform(context).lower() == "true"
     if allow:
         if profile.get("bridge", {}).get("forward_commands") is not True:
@@ -31,12 +33,7 @@ def _nodes(context):
     camera, robot, bridge = profile["camera"], profile["robot"], profile["bridge"]
     CameraCalibration.load(camera["calibration_path"])
     map_file = Path(LaunchConfiguration("map").perform(context)).expanduser().resolve()
-    map_data = yaml.safe_load(map_file.read_text())
-    map_image = Path(map_data["image"])
-    if not map_image.is_absolute():
-        map_image = map_file.parent/map_image
-    if not map_image.is_file():
-        raise ValueError("saved map image is missing: "+str(map_image))
+    saved_map_metadata(map_file)
     template = yaml.safe_load((share/"config/navigation.yaml").read_text())
     params = navigation_parameters(profile,template,map_file,share/"config/navigate_to_pose.xml")
     with tempfile.NamedTemporaryFile("w",prefix="husky-nav2-",suffix=".yaml",delete=False) as target:

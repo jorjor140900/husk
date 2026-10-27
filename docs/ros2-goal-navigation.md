@@ -43,6 +43,69 @@ source install/local_setup.bash
 
 Use the same ROS/workspace sources in every new terminal.
 
+## Prepare now, before a real map is available
+
+You can finish software preparation while the robot/site is unavailable. Run:
+
+```bash
+ros2 run husky_vision navigation_preflight \
+  --profile "$HOME/husky_vision_ws/robot/robot.json"
+```
+
+This default mode checks installed Nav2/SLAM packages, the compiled AI plugin,
+camera calibration/capture dimensions, mount, measured footprint and robot
+frame configuration. It never connects to the robot, starts SLAM, publishes a
+goal, or changes a profile. The expected map path is `maps/site1.yaml`; use
+`--map /path/to/site.yaml` when you choose a different name.
+
+Before mapping, a normal result is:
+
+```text
+PENDING: saved_map | ... site1.yaml ...
+Software prepared: True
+Planning inputs ready: False | Autonomous control verified: False
+```
+
+A missing map does not fail **preparation** if all software/configuration checks
+pass. Missing packages, an unbuilt AI plugin or incomplete measured values do
+fail it. The report is saved under `outputs/navigation-preflight/`. Do not create
+a blank substitute map or set unfinished field flags true to make this pass.
+
+When a real map is saved, the later sequence is already prepared:
+
+1. Stop the mapping launch, old ground/controller nodes and standalone
+   `robot_link`; keep the gateway and tunnel. The navigation launch owns its
+   own bridge and measured ground/camera TF.
+2. Keep one USB webcam and AI detector running with the final calibration/mount.
+3. Start `navigation.launch.py` with the saved map and `allow_motion:=false` as
+   shown below, then use **2D Pose Estimate** at the actual robot location.
+4. Check that laser observations line up with the saved walls, then run the live
+   preview check:
+
+```bash
+ros2 run husky_vision navigation_preflight \
+  --profile "$HOME/husky_vision_ws/robot/robot.json" \
+  --map "$HOME/husky_vision_ws/maps/site1.yaml" \
+  --live --duration 10
+```
+
+Live mode only subscribes and calls lifecycle **GetState**. It checks the active
+map server/AMCL/planner and planning action, real capture-time TF, source ages,
+AI veto grid, saved/live map geometry, publisher counts, and the disabled zero
+command gate. At least three distinct captures and a delivery p95 within the
+300 ms odometry/scan and 500 ms vision budgets are needed; one lucky fresh frame
+cannot hide a slow stream. The check does not depend on the legacy yellow
+reference path and does not require a permission signal to be set true.
+
+`Planning inputs ready: True` means the observed preview inputs met those checks.
+It does not verify physical map accuracy or safe driving. Always inspect wall
+alignment yourself. The command exits with status 2 when a required live check
+is pending and keeps `Autonomous control verified: False` in every mode.
+
+Then select the destination using **2D Goal Pose** and inspect the preview path.
+The existing goal dispatcher accepts the map destination directly; no extra
+calibration or invented destination coordinates are needed during preparation.
+
 ## 1. Survey and save a map
 
 Keep the ROS1 gateway and SSH tunnel running. On Jazzy keep exactly one
@@ -184,7 +247,7 @@ software architecture does not certify those untested hardware conditions.
 ## Software validation and its limits
 
 The implementation was built against ROS 2 Jazzy/Nav2, including the exported
-`husky_vision` and `husky_vision_nav2` packages. Validation includes 194 Python
+`husky_vision` and `husky_vision_nav2` packages. Validation includes 207 Python
 tests and four native C++ layer tests covering obstacle preservation, previous
 mask bounds, stale/invalid masks and frame transforms.
 
@@ -195,6 +258,12 @@ to the straight route after that veto disappeared. A separate native
 requests, zero output from a disabled gate, no global `/cmd_vel` publisher, and
 controller stop when AI data became stale. The navigator's built-in `goal_pose`
 subscriber is remapped so a single RViz goal reaches only our dispatcher.
+
+The preparation/live preflight adds thirteen tests, including preparation
+without a map and rejection of stale AI, duplicate publishers, incomplete
+configuration and inactive localization. Its ROS2 subscriptions, lifecycle
+GetState calls and capture-time TF observations were also exercised in an
+isolated Jazzy container with synthetic data and no robot connection.
 
 These fixtures do not connect a robot bridge and do not test physical goal
 arrival. Real SLAM map quality, AMCL localization, VLP16 motion coverage, local
