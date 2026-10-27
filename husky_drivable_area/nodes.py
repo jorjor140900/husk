@@ -21,6 +21,7 @@ from road_navigation.visualization import draw_result
 from .transport import LatestInput, fill_compressed_image, fill_image, frame_age_seconds, image_to_bgr, status_payload
 from .ground_geometry import CameraCalibration, CameraMount
 from .ground_overlay import robot_axis_pixels
+from .vision_grid import encode_segmentation
 
 
 def image_qos():
@@ -86,6 +87,7 @@ class DrivableAreaNode(Node):
         self._clearance_pub = self.create_publisher(Image, "drivable_area/navigable_mask", image_qos())
         self._reference_pub = self.create_publisher(PolygonStamped, "drivable_area/reference_pixels", 1)
         self._status_pub = self.create_publisher(String, "drivable_area/status", 1)
+        self._segmentation_pub = self.create_publisher(String, "drivable_area/segmentation_packet", 1)
         # Inference and incoming images use separate callback groups/threads.
         # DDS depth=1 AND the application slot=1 prevent an inference backlog.
         self._input_group = MutuallyExclusiveCallbackGroup()
@@ -136,6 +138,9 @@ class DrivableAreaNode(Node):
         )
         payload.update(timings or {})
         self._publish_reference(header, [], payload)
+        publisher = getattr(self, "_segmentation_pub", None)
+        if publisher is not None and publisher.get_subscription_count() > 0:
+            publisher.publish(String(data=json.dumps(dict(protocol=1, valid=False, reason=reason))))
         detail = f", age {age * 1000:.0f}ms" if age is not None else ""
         if timings and "inference_ms" in timings:
             detail += f", inference {timings['inference_ms']:.0f}ms"
@@ -212,6 +217,9 @@ class DrivableAreaNode(Node):
                 return
             payload = status_payload(result, header, age_seconds=age, skipped=skipped)
             payload.update(timings)
+            publisher = getattr(self, "_segmentation_pub", None)
+            if publisher is not None and publisher.get_subscription_count() > 0:
+                publisher.publish(String(data=encode_segmentation(result, header, self._detector.config.horizon_fraction)))
             self._publish_reference(header, result.path, payload)
             self._last_processed_header = header
             self.get_logger().info(

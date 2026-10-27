@@ -1,0 +1,5 @@
+<library path="vision_mask_layer">
+  <class type="husky_vision_nav2::VisionMaskLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>AI veto only, before inflation; never clears mapped or sensed obstacles.</description>
+  </class>
+</library>

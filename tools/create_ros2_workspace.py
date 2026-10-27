@@ -27,7 +27,7 @@ def ros_files():
     files.update({f"{PACKAGE}/{path.name}": path for path in (ROOT / SOURCE_PACKAGE).glob("*.py")
                   if path.name != "__init__.py"})
     files.update({str(path.relative_to(ROOT)): path for directory, pattern in (
-        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"), ("docs", "robot-field-kit.md"), ("docs", "ros2-mount-fit.md"), ("docs", "ros2-charuco.md"),
+        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"), ("docs", "robot-field-kit.md"), ("docs", "ros2-mount-fit.md"), ("docs", "ros2-charuco.md"), ("docs", "ros2-goal-navigation.md"),
     ) for path in (ROOT / directory).glob(pattern) if path.is_file()})
     for path in (ROOT / "husky_link_core").glob("*.py"):
         files[str(path.relative_to(ROOT))] = path
@@ -44,7 +44,40 @@ def renamed_content(source):
     return source.read_text(encoding="utf-8").replace(SOURCE_PACKAGE, PACKAGE).encode("utf-8")
 
 
-def update_workspace_code(destination, *, update_visualization=False):
+def update_navigation_plugin(destination):
+    """Install the companion C++ layer sources, backing up local edits first."""
+    destination = Path(destination).expanduser().resolve()
+    source = ROOT / "nav2_plugins/husky_vision_nav2"
+    package = destination / "src/husky_vision_nav2"
+    if package.exists():
+        manifest = package / "package.xml"
+        if not manifest.is_file() or ET.parse(manifest).findtext("name") != "husky_vision_nav2":
+            raise ValueError("refusing to replace unrelated navigation package: "+str(package))
+    contents = {}
+    for path in source.rglob("*"):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        target = package / path.relative_to(source)
+        if (path.is_symlink() or target.is_symlink() or
+                any(parent.is_symlink() for parent in target.parents) or
+                (target.exists() and not target.is_file())):
+            raise ValueError("expected regular navigation source: "+str(target))
+        contents[str(path.relative_to(source))] = path.read_bytes()
+    backup = destination / ".source-backups" / datetime.now(timezone.utc).strftime("nav2-%Y%m%dT%H%M%S%fZ")
+    backup.mkdir(parents=True, exist_ok=False)
+    (backup.parent / "COLCON_IGNORE").touch()
+    for name in contents:
+        if (package/name).exists():
+            saved = backup/name
+            saved.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copy2(package/name,saved)
+    for name, data in contents.items():
+        (package/name).parent.mkdir(parents=True,exist_ok=True)
+        (package/name).write_bytes(data)
+    return {"package":str(package),"source_backup":str(backup)}
+
+
+def update_workspace_code(destination, *, update_visualization=False, with_navigation=False):
     """Back up ROS files before updating; preserve detector/model/user calibration."""
     destination = Path(destination).expanduser().resolve()
     package = destination / "src" / PACKAGE
@@ -96,7 +129,10 @@ def update_workspace_code(destination, *, update_visualization=False):
             else:
                 shutil.copy2(backup / relative, package / relative)
         raise
-    return {"workspace": str(destination), "updated_files": list(contents), "source_backup": str(backup)}
+    result = {"workspace": str(destination), "updated_files": list(contents), "source_backup": str(backup)}
+    if with_navigation:
+        result["navigation_plugin"] = update_navigation_plugin(destination)
+    return result
 
 
 def create_workspace(destination, model_source):
@@ -186,15 +222,18 @@ def main(argv=None):
     parser.add_argument("--model-source", type=Path, help="existing extracted trained SegFormer directory; required when creating")
     parser.add_argument("--update-code", action="store_true", help="update ROS adapters, packaging and experiment assets after backing up existing files")
     parser.add_argument("--update-visualization", action="store_true", help="also back up and update visualization.py; requires --update-code")
+    parser.add_argument("--with-navigation", action="store_true", help="also install/back up companion Nav2 C++ layer sources; requires --update-code")
     args = parser.parse_args(argv)
     if args.update_visualization and not args.update_code:
         parser.error("--update-visualization requires --update-code")
+    if args.with_navigation and not args.update_code:
+        parser.error("--with-navigation requires --update-code")
     if not args.update_code and args.model_source is None:
         parser.error("--model-source is required when creating a workspace")
     if args.update_code and args.model_source is not None:
         parser.error("--update-code does not use --model-source")
     try:
-        result = update_workspace_code(args.workspace, update_visualization=args.update_visualization) if args.update_code else create_workspace(args.workspace, args.model_source)
+        result = update_workspace_code(args.workspace, update_visualization=args.update_visualization, with_navigation=args.with_navigation) if args.update_code else create_workspace(args.workspace, args.model_source)
     except (OSError, ValueError, ET.ParseError) as exc:
         parser.exit(1, f"Workspace creation failed: {exc}\n")
     print(json.dumps(result, indent=2, ensure_ascii=False))

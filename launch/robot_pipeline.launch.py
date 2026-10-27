@@ -1,4 +1,4 @@
-"""Measured robot profile -> perception/projection/controller/filter/link.
+"""Legacy local-path experiment; use navigation.launch.py for map-frame goals.
 
 Starts disarmed. Independent field permission is required; no fake odometry,
 no synthetic scan and no fallback to an identity odom transform are provided.
