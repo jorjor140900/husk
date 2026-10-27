@@ -19,6 +19,8 @@ from road_navigation import DetectorConfig, RoadDetector
 from road_navigation.capture import LatestFrameCapture
 from road_navigation.visualization import draw_result
 from .transport import LatestInput, fill_compressed_image, fill_image, frame_age_seconds, image_to_bgr, status_payload
+from .ground_geometry import CameraCalibration, CameraMount
+from .ground_overlay import robot_axis_pixels
 
 
 def image_qos():
@@ -33,10 +35,21 @@ class DrivableAreaNode(Node):
             "image_topic": "/camera/image_raw", "model_path": "", "device": "cpu",
             "model_width": 448, "model_height": 256, "config_file": "",
             "max_frame_age_sec": 2.0, "cpu_threads": 2, "overlay_jpeg_quality": 80,
+            "camera_calibration": "", "camera_mount": "",
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         value = lambda name: self.get_parameter(name).value
+        self._axis_geometry = None
+        self._axis_cache = None
+        if bool(value("camera_calibration")) != bool(value("camera_mount")):
+            raise ValueError("overlay requires both camera_calibration and camera_mount")
+        if value("camera_calibration"):
+            import inspect
+            if "robot_axis" not in inspect.signature(draw_result).parameters:
+                raise ValueError("calibrated overlay requires visualization.py update: export with --update-code --update-visualization")
+            self._axis_geometry = (CameraCalibration.load(value("camera_calibration")),
+                                   CameraMount.load(value("camera_mount")))
         self._max_age = float(value("max_frame_age_sec"))
         if not 0 < self._max_age < float("inf"):
             raise ValueError("max_frame_age_sec must be finite and positive")
@@ -100,6 +113,21 @@ class DrivableAreaNode(Node):
         }
         self._status_pub.publish(String(data=json.dumps(payload, allow_nan=False)))
 
+    def _overlay_axis(self, result, header):
+        if getattr(self, "_axis_geometry", None) is None:
+            return None
+        key = (tuple(result.frame_bgr.shape[:2]), tuple(result.input_shape), header.frame_id)
+        if self._axis_cache is not None and self._axis_cache[0] == key:
+            return self._axis_cache[1]
+        try:
+            points = robot_axis_pixels(*self._axis_geometry, *key)
+        except ValueError as exc:
+            self.get_logger().warning(f"Robot axis hidden: {exc}", throttle_duration_sec=2.0)
+            # Configured calibration must never fall back to a centered axis.
+            return []
+        self._axis_cache = (key, points)
+        return points
+
     def _invalidate(self, reason, header=None, age=None, timings=None):
         self._detector.reset()
         _, _, skipped = self._latest.state()
@@ -162,9 +190,11 @@ class DrivableAreaNode(Node):
             timings["overlay_raw_subscribers"] = raw_subscribers
             timings["overlay_compressed_subscribers"] = jpeg_subscribers
             if raw_subscribers > 0 or jpeg_subscribers > 0:
+                axis_options = ({"robot_axis": self._overlay_axis(result, header)}
+                                if getattr(self, "_axis_geometry", None) is not None else {})
                 overlay = draw_result(result, telemetry={
                     "processing_ms": result.processing_ms, "host_frame_age_ms": age * 1000,
-                })
+                }, **axis_options)
                 if raw_subscribers > 0:
                     self._overlay_pub.publish(fill_image(Image(), overlay, header))
                 if jpeg_subscribers > 0:

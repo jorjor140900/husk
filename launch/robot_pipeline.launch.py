@@ -32,6 +32,7 @@ def _nodes(context):
             "model_path": camera["model_path"], "device": camera["device"], "model_width": camera["model_width"],
             "model_height": camera["model_height"], "cpu_threads": camera["cpu_threads"],
             "config_file": str(share / "config/config.example.json"),
+            "camera_calibration": camera["calibration_path"], "camera_mount": camera["mount_path"],
             "image_topic": image_topic}]),
         Node(package="tf2_ros", executable="static_transform_publisher", name="measured_base_to_ground", output="screen",
              arguments=["--x", "0", "--y", "0", "--z", str(robot["base_to_ground_z_m"]),

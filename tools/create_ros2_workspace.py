@@ -44,7 +44,7 @@ def renamed_content(source):
     return source.read_text(encoding="utf-8").replace(SOURCE_PACKAGE, PACKAGE).encode("utf-8")
 
 
-def update_workspace_code(destination):
+def update_workspace_code(destination, *, update_visualization=False):
     """Back up ROS files before updating; preserve detector/model/user calibration."""
     destination = Path(destination).expanduser().resolve()
     package = destination / "src" / PACKAGE
@@ -52,6 +52,8 @@ def update_workspace_code(destination):
     if not manifest.is_file() or ET.parse(manifest).findtext("name") != PACKAGE:
         raise ValueError(f"expected an existing {PACKAGE} package at {package}")
     updates = ros_files()
+    if update_visualization:
+        updates["road_navigation/visualization.py"] = ROOT / "road_navigation/visualization.py"
     required_existing = {f"{PACKAGE}/nodes.py", f"{PACKAGE}/transport.py",
                          "launch/drivable_area.launch.py", "setup.py", "package.xml"}
     contents = {}
@@ -183,13 +185,16 @@ def main(argv=None):
     parser.add_argument("--workspace", type=Path, required=True, help="workspace path; must be NEW unless --update-code is used")
     parser.add_argument("--model-source", type=Path, help="existing extracted trained SegFormer directory; required when creating")
     parser.add_argument("--update-code", action="store_true", help="update ROS adapters, packaging and experiment assets after backing up existing files")
+    parser.add_argument("--update-visualization", action="store_true", help="also back up and update visualization.py; requires --update-code")
     args = parser.parse_args(argv)
+    if args.update_visualization and not args.update_code:
+        parser.error("--update-visualization requires --update-code")
     if not args.update_code and args.model_source is None:
         parser.error("--model-source is required when creating a workspace")
     if args.update_code and args.model_source is not None:
         parser.error("--update-code does not use --model-source")
     try:
-        result = update_workspace_code(args.workspace) if args.update_code else create_workspace(args.workspace, args.model_source)
+        result = update_workspace_code(args.workspace, update_visualization=args.update_visualization) if args.update_code else create_workspace(args.workspace, args.model_source)
     except (OSError, ValueError, ET.ParseError) as exc:
         parser.exit(1, f"Workspace creation failed: {exc}\n")
     print(json.dumps(result, indent=2, ensure_ascii=False))

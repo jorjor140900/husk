@@ -11,6 +11,20 @@ from tools.create_ros2_workspace import create_workspace, update_workspace_code
 
 
 class WorkspaceTests(unittest.TestCase):
+    def test_visualization_update_is_explicit_and_backed_up(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            workspace = root / "fresh"
+            create_workspace(workspace, self.make_model_fixture(root))
+            target = workspace / "src/husky_vision/road_navigation/visualization.py"
+            target.write_text("# local drawing\n")
+            update_workspace_code(workspace)
+            self.assertEqual(target.read_text(), "# local drawing\n")
+            result = update_workspace_code(workspace, update_visualization=True)
+            backup = Path(result["source_backup"]) / "road_navigation/visualization.py"
+            self.assertEqual(backup.read_text(), "# local drawing\n")
+            self.assertIn("robot_axis=None", target.read_text())
+
     def make_model_fixture(self, folder):
         model = folder / "existing-model"
         model.mkdir()

@@ -180,6 +180,37 @@ class CallbackTests(unittest.TestCase):
     def status(self):
         return json.loads(self.node._status_pub.publish.call_args.args[0].data)
 
+    def test_calibrated_axis_cache_invalidates_on_frame_change_without_center_fallback(self):
+        from husky_drivable_area.ground_geometry import CameraCalibration, CameraMount
+        from test_ground_geometry import camera_mapping, mount_mapping
+        self.node._axis_geometry = (
+            CameraCalibration.from_mapping(camera_mapping()),
+            CameraMount.from_mapping(mount_mapping(camera_y_m=0.21)))
+        self.node._axis_cache = None
+        result = SimpleNamespace(frame_bgr=np.zeros((240, 320, 3), np.uint8), input_shape=(480, 640))
+        with mock.patch.object(self.module, "robot_axis_pixels", wraps=self.module.robot_axis_pixels) as project:
+            first = self.node._overlay_axis(result, header())
+            self.assertIs(first, self.node._overlay_axis(result, header()))
+            self.assertEqual(project.call_count, 1)
+            self.assertEqual(self.node._overlay_axis(result, header(frame_id="wrong_camera")), [])
+            self.assertEqual(project.call_count, 2)
+
+    def test_success_draws_calibrated_axis_with_processed_dimensions(self):
+        from husky_drivable_area.ground_geometry import CameraCalibration, CameraMount
+        from test_ground_geometry import camera_mapping, mount_mapping
+        self.node._axis_geometry = (
+            CameraCalibration.from_mapping(camera_mapping()),
+            CameraMount.from_mapping(mount_mapping(camera_y_m=0.21)))
+        self.node._axis_cache = None
+        self.node._detector = RoadDetector(DetectorConfig(max_width=320, use_temporal=False))
+        self.node._latest.put(image_message(np.full((480, 640, 3), 120, np.uint8)))
+        with mock.patch.object(self.module, "draw_result", wraps=self.module.draw_result) as draw:
+            self.node._process_latest()
+        axis = draw.call_args.kwargs["robot_axis"]
+        self.assertEqual(axis.shape, (512, 2))
+        self.assertTrue(np.isfinite(axis).any())
+        self.assertEqual(self.status()["processed_shape_hw"], [240, 320])
+
     def test_success_preserves_header_and_stale_result_clears_previous_path(self):
         message = image_message()
         self.node._latest.put(message)

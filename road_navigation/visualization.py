@@ -18,7 +18,21 @@ def _draw_boundary(image, line):
         cv2.line(image, start, end, (0, 0, 255), 2, cv2.LINE_AA)
 
 
-def draw_result(result: DetectionResult, telemetry=None) -> np.ndarray:
+def axis_x_at_row(points, row):
+    """Find an unambiguous visible crossing, without joining missing segments."""
+    points = np.asarray(points, dtype=float).reshape(-1, 2)
+    crossings = []
+    for a, b in zip(points[:-1], points[1:]):
+        if not np.isfinite([a, b]).all() or a[1] == b[1]:
+            continue
+        if min(a[1], b[1]) <= row <= max(a[1], b[1]):
+            crossings.append(a[0] + (row-a[1]) * (b[0]-a[0]) / (b[1]-a[1]))
+    if crossings and np.ptp(crossings) < 1e-6:
+        return float(crossings[0])
+    return None
+
+
+def draw_result(result: DetectionResult, telemetry=None, *, robot_axis=None) -> np.ndarray:
     image = result.frame_bgr.copy()
     green = np.full_like(image, (0, 200, 0))
     road = result.road_mask > 0
@@ -28,17 +42,26 @@ def draw_result(result: DetectionResult, telemetry=None) -> np.ndarray:
     reference = result.reference_geometry or build_reference_geometry(result.road_mask, result.path)
     _draw_boundary(image, reference.left)
     _draw_boundary(image, reference.right)
-    # Blue is an assumed robot/camera axis, even when perception has no path.
-    # Draw it wider than the yellow reference so alignment remains visible.
-    cv2.line(
-        image, (reference.robot_x, reference.y_bottom),
-        (reference.robot_x, reference.y_top), (255, 0, 0), 3, cv2.LINE_AA,
-    )
+    axis_x = reference.robot_x
+    if robot_axis is None:
+        cv2.line(image, (reference.robot_x, reference.y_bottom),
+                 (reference.robot_x, reference.y_top), (255, 0, 0), 3, cv2.LINE_AA)
+    else:
+        # NaN separates invisible sections; never connect across them.
+        points = np.asarray(robot_axis, dtype=float).reshape(-1, 2)
+        finite = np.isfinite(points).all(axis=1)
+        edges = np.flatnonzero(np.diff(np.r_[False, finite, False].astype(int)))
+        for start, end in zip(edges[::2], edges[1::2]):
+            if end-start >= 2:
+                cv2.polylines(image, [np.rint(points[start:end]).astype(np.int32)],
+                              False, (255, 0, 0), 3, cv2.LINE_AA)
+        axis_x = axis_x_at_row(points, reference.lookahead_y)
     if reference.target_x is not None:
         target = (int(round(reference.target_x)), reference.lookahead_y)
-        axis = (reference.robot_x, reference.lookahead_y)
-        cv2.line(image, axis, target, (240, 240, 240), 1, cv2.LINE_AA)
-        cv2.circle(image, axis, 6, (255, 0, 0), 2, cv2.LINE_AA)
+        if axis_x is not None:
+            axis = (int(round(axis_x)), reference.lookahead_y)
+            cv2.line(image, axis, target, (240, 240, 240), 1, cv2.LINE_AA)
+            cv2.circle(image, axis, 6, (255, 0, 0), 2, cv2.LINE_AA)
     if result.valid_image_path:
         cv2.polylines(image, [result.path], False, (0, 255, 255), 2, cv2.LINE_AA)
         cv2.circle(image, tuple(result.path[-1]), 5, (0, 255, 255), -1)
@@ -48,8 +71,10 @@ def draw_result(result: DetectionResult, telemetry=None) -> np.ndarray:
     cv2.rectangle(image, (0, 0), (image.shape[1], 87 if telemetry else 66), (20, 20, 20), -1)
     cv2.putText(image, f"{state}: {result.reason}", (7, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
     cv2.putText(image, f"{result.backend} | RGB mask is NOT verified traversability", (7, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
-    offset = f"dx {reference.lateral_error_px:+.1f}px" if reference.lateral_error_px is not None else "dx n/a"
-    legend = f"Yellow=reference  Blue=robot  Red=edges | {offset}"
+    dx = reference.target_x-axis_x if reference.target_x is not None and axis_x is not None else None
+    offset = f"dx {dx:+.1f}px" if dx is not None else "dx n/a"
+    axis_label = "robot Y=0" if robot_axis is not None else "assumed axis"
+    legend = f"Yellow=reference  Blue={axis_label}  Red=edges | {offset}"
     scale = min(0.42, max(0.25, image.shape[1] / 1500))
     cv2.putText(image, legend, (7, 58), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 1)
     if telemetry:
