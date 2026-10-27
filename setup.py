@@ -31,6 +31,7 @@ setup(
         "ground_path_node = husky_drivable_area.ground_node:main",
         "import_camera_calibration = husky_drivable_area.calibration:main",
         "fit_camera_mount = husky_drivable_area.mount_fit:main",
+        "check_camera_mount = husky_drivable_area.mount_check:main",
         "path_controller = husky_drivable_area.controller_node:main",
         "control_simulator = husky_drivable_area.control_simulator:main",
         "control_self_test = husky_drivable_area.control_self_test:main",

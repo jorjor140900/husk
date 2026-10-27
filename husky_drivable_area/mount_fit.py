@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import html
 import math
 from pathlib import Path
 import secrets
@@ -109,35 +110,22 @@ def fit_mount(calibration, old_mount, world, pixels, *, fix_origin=False):
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>Camera mount: four floor points</title>
 <style>body{font:18px sans-serif;margin:20px;background:#eee}canvas{max-width:100%;height:auto;cursor:crosshair;display:block}button{font-size:18px;margin:12px 10px 12px 0}pre{white-space:pre-wrap}</style>
-<h2>เลือก 4 จุด: A ซ้ายไกล → B ขวาไกล → C ซ้ายใกล้ → D ขวาใกล้</h2>
-<p>คลิกศูนย์กลางจุดที่วัดไว้บนพื้น ห้ามเลือกมุมกระเบื้องคนละแผ่น ผลจะบันทึกเป็นไฟล์ร่างเท่านั้น</p>
+<h2>INSTRUCTIONS</h2>
+<p>คลิกจุดสัมผัสพื้นของเครื่องหมายแต่ละชิ้น ผลจะบันทึกเป็นรายงานเท่านั้น</p>
 <canvas id="view"></canvas><button id="undo">ย้อนจุดล่าสุด</button><button id="reset">เริ่มใหม่</button><button id="fit">คำนวณและบันทึก</button><pre id="status"></pre>
 <script>
 const canvas=document.querySelector('#view'),ctx=canvas.getContext('2d'),status=document.querySelector('#status');
-const img=new Image(),points=[],names=['A','B','C','D'];
+const img=new Image(),points=[],names=LABELS_JSON;
 function draw(){ctx.drawImage(img,0,0);ctx.font='bold 18px sans-serif';points.forEach((p,i)=>{ctx.strokeStyle='red';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p[0],p[1],6,0,Math.PI*2);ctx.stroke();ctx.fillStyle='red';ctx.fillText(names[i],p[0]+9,p[1]-9)});status.textContent=JSON.stringify(points)}
 img.onload=()=>{canvas.width=img.width;canvas.height=img.height;draw()};img.src='/image.png';
-canvas.onclick=e=>{if(points.length===4)return;const r=canvas.getBoundingClientRect();points.push([(e.clientX-r.left)*canvas.width/r.width,(e.clientY-r.top)*canvas.height/r.height]);draw()};
+canvas.onclick=e=>{if(points.length===names.length)return;const r=canvas.getBoundingClientRect();points.push([(e.clientX-r.left)*canvas.width/r.width,(e.clientY-r.top)*canvas.height/r.height]);draw()};
 document.querySelector('#undo').onclick=()=>{points.pop();draw()};document.querySelector('#reset').onclick=()=>{points.length=0;draw()};
-document.querySelector('#fit').onclick=async()=>{if(points.length!==4){status.textContent='เลือกให้ครบ 4 จุดก่อน';return}try{const r=await fetch('/fit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'TOKEN',pixels:points})});const data=await r.json();status.textContent=JSON.stringify(data,null,2)}catch(e){status.textContent=String(e)}};
+document.querySelector('#fit').onclick=async()=>{if(points.length!==names.length){status.textContent='เลือกจุดให้ครบก่อน';return}try{const r=await fetch('/fit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'TOKEN',pixels:points})});const data=await r.json();status.textContent=JSON.stringify(data,null,2)}catch(e){status.textContent=String(e)}};
 </script>"""
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("image", "camera-calibration", "camera-mount"):
-        parser.add_argument("--"+name, type=Path, required=True)
-    for name in ("near-x", "far-x", "left-y", "right-y"):
-        parser.add_argument("--"+name, type=float, required=True)
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/mount-fit"))
-    parser.add_argument("--fix-origin", action="store_true", help="retain measured height/offsets; fit only angles")
-    args = parser.parse_args(argv)
-    calibration = CameraCalibration.load(args.camera_calibration)
-    mount = CameraMount.load(args.camera_mount)
-    image = cv2.imread(str(args.image.expanduser()))
-    if image is None or image.shape[:2] != (calibration.height, calibration.width):
-        parser.error("image must be the original raw PNG at the calibrated resolution")
-    world = floor_rectangle(args.near_x, args.far_x, args.left_y, args.right_y)
+def serve_points(image, labels, instructions, submit):
+    """Pick original image coordinates locally and invoke a report callback."""
     image_bytes = cv2.imencode(".png", image)[1].tobytes()
     token = secrets.token_urlsafe(24)
     done = []
@@ -152,7 +140,8 @@ def main(argv=None):
 
         def do_GET(self):
             if self.path == "/":
-                self.reply(200, "text/html; charset=utf-8", PAGE.replace("TOKEN", token).encode())
+                page = PAGE.replace("TOKEN", token).replace("LABELS_JSON", json.dumps(labels)).replace("INSTRUCTIONS", html.escape(instructions))
+                self.reply(200, "text/html; charset=utf-8", page.encode())
             elif self.path == "/image.png":
                 self.reply(200, "image/png", image_bytes)
             else:
@@ -166,16 +155,7 @@ def main(argv=None):
                 data = json.loads(self.rfile.read(size))
                 if not secrets.compare_digest(str(data.get("token", "")), token):
                     raise ValueError("invalid session token")
-                report = fit_mount(calibration, mount, world, data["pixels"], fix_origin=args.fix_origin)
-                report.update({"world_xyz_m": world.tolist(), "pixels_xy": data["pixels"],
-                               "previous_mount": asdict(mount),
-                               "calibration": str(args.camera_calibration.expanduser().absolute())})
-                folder = args.output_dir.expanduser() / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-                folder.mkdir(parents=True, exist_ok=False)
-                (folder / "report.json").write_text(json.dumps(report, indent=2))
-                (folder / "mount.candidate.json").write_text(json.dumps(report["candidates"][0]["mount"], indent=2))
-                (folder / "raw.png").write_bytes(image_bytes)
-                result = {"saved_to": str(folder.absolute()), **report}
+                result = submit(data["pixels"])
                 print(json.dumps(result, indent=2), flush=True)
                 self.reply(200, "application/json", json.dumps(result).encode())
                 done.append(True)
@@ -196,3 +176,34 @@ def main(argv=None):
         except KeyboardInterrupt:
             pass
     return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ("image", "camera-calibration", "camera-mount"):
+        parser.add_argument("--"+name, type=Path, required=True)
+    for name in ("near-x", "far-x", "left-y", "right-y"):
+        parser.add_argument("--"+name, type=float, required=True)
+    parser.add_argument("--output-dir", type=Path, default=Path("outputs/mount-fit"))
+    parser.add_argument("--fix-origin", action="store_true", help="retain measured height/offsets; fit only angles")
+    args = parser.parse_args(argv)
+    calibration = CameraCalibration.load(args.camera_calibration)
+    mount = CameraMount.load(args.camera_mount)
+    image = cv2.imread(str(args.image.expanduser()))
+    if image is None or image.shape[:2] != (calibration.height, calibration.width):
+        parser.error("image must be the original raw PNG at the calibrated resolution")
+    world = floor_rectangle(args.near_x, args.far_x, args.left_y, args.right_y)
+
+    def submit(pixels):
+        report = fit_mount(calibration, mount, world, pixels, fix_origin=args.fix_origin)
+        report.update({"world_xyz_m": world.tolist(), "pixels_xy": pixels,
+                       "previous_mount": asdict(mount),
+                       "calibration": str(args.camera_calibration.expanduser().absolute())})
+        folder = args.output_dir.expanduser() / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        folder.mkdir(parents=True, exist_ok=False)
+        (folder / "report.json").write_text(json.dumps(report, indent=2))
+        (folder / "mount.candidate.json").write_text(json.dumps(report["candidates"][0]["mount"], indent=2))
+        cv2.imwrite(str(folder / "raw.png"), image)
+        return {"saved_to": str(folder.absolute()), **report}
+    return serve_points(image, ["A", "B", "C", "D"],
+                        "เลือก A ซ้ายไกล → B ขวาไกล → C ซ้ายใกล้ → D ขวาใกล้", submit)

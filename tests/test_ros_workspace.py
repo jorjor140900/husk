@@ -57,6 +57,8 @@ class WorkspaceTests(unittest.TestCase):
             self.assertTrue((package / "docs/ros2-metric-path.md").is_file())
             self.assertIn("husky_vision.ground_node:main", (package / "setup.py").read_text())
             self.assertIn("husky_vision.mount_fit:main", (package / "setup.py").read_text())
+            self.assertIn("husky_vision.mount_check:main", (package / "setup.py").read_text())
+            self.assertTrue((package / "husky_vision/mount_check.py").is_file())
             self.assertTrue((package / "husky_vision/mount_fit.py").is_file())
             self.assertTrue((package / "docs/ros2-mount-fit.md").is_file())
             self.assertIn("husky_vision.controller_node:main", (package / "setup.py").read_text())

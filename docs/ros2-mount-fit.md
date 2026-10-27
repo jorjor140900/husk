@@ -38,3 +38,24 @@ pitch and yaw. A large remaining pixel residual indicates that the measurements,
 point correspondence, or camera calibration need checking; do not force a
 translation change just to reduce that residual. Omitting the option returns
 the unrestricted planar PnP solutions for comparison.
+
+## Check independent points without fitting
+
+Keep three new markers at E=(1.00,0), F=(1.50,0), G=(1.50,+0.20) meters from
+the robot ground origin. Save a fresh raw image after placing them. Run:
+
+```bash
+ros2 run husky_vision check_camera_mount \
+  --image "$HOME/husky_vision_ws/robot/ground-calibration.png" \
+  --camera-calibration "$HOME/husky_vision_ws/camera_calibration/camera-v2.yaml" \
+  --camera-mount "$HOME/husky_vision_ws/robot/robot-mount.preview.json"
+```
+
+Click E near-center, F far-center, G far-left, at the center of each marker's
+contact with the floor. Use the base of an upright marker, not its top/shadow.
+The report lists measured vs projected XY, signed errors and total distance
+errors in centimeters, under `outputs/mount-check/<timestamp>/report.json`.
+It does not fit any parameters, write a new mount, enable control or publish ROS
+messages. Passing these software calculations is not a physical validation;
+review the measured errors and the measurement uncertainty before applying a
+candidate.
