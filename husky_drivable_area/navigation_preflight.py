@@ -3,6 +3,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+import subprocess
 import time
 from urllib.parse import urlparse
 import uuid
@@ -40,7 +41,24 @@ def checked(checks, name, operation):
         return None
 
 
-def preparation_checks(profile_file, map_file, package_lookup=None, root=None):
+def check_native_library(prefix):
+    """Check relocations without launching a ROS node or changing packages."""
+    library = Path(prefix)/"lib/libnav2_lifecycle_manager_core.so"
+    if not library.is_file():
+        raise ValueError("Nav2 lifecycle manager library missing: "+str(library))
+    try:
+        result = subprocess.run(["ldd", "-r", str(library)], capture_output=True, text=True, timeout=8)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("native dependency check timed out") from exc
+    lines = (result.stdout+"\n"+result.stderr).splitlines()
+    problems = [line.strip() for line in lines if "undefined symbol:" in line or "not found" in line]
+    if problems or result.returncode != 0:
+        raise ValueError("native Nav2 dependency/ABI error: "+("; ".join(problems) or "ldd failed")[:190])
+    diagnostic = [line.strip() for line in lines if "diagnostic_updater" in line]
+    return "relocations resolve; "+("; ".join(diagnostic) if diagnostic else "native dependencies available")
+
+
+def preparation_checks(profile_file, map_file, package_lookup=None, root=None, native_probe=None):
     """Do not require map, robot connection or completed motion flags for setup."""
     checks = {}
     root = Path(root) if root is not None else assets_root()
@@ -94,6 +112,14 @@ def preparation_checks(profile_file, map_file, package_lookup=None, root=None):
                 raise ValueError("AI plugin library missing; build husky_vision_nav2")
             return "installed"
         checked(checks, "package_"+package, locate)
+    def native_runtime():
+        if package_lookup is None:
+            from ament_index_python.packages import get_package_prefix
+            prefix = get_package_prefix("nav2_lifecycle_manager")
+        else:
+            prefix = package_lookup("nav2_lifecycle_manager")
+        return (native_probe or check_native_library)(prefix)
+    checked(checks, "nav2_native_runtime", native_runtime)
     # Missing map is expected during preparation, not a fabricated successful map.
     setup_names = list(checks)
     metadata = checked(checks, "saved_map", lambda: saved_map_metadata(map_file))

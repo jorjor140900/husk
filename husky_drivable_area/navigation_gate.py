@@ -5,6 +5,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from rclpy.time import Time
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Twist, TwistStamped
@@ -117,14 +118,26 @@ class NavigationGate(Node):
             downstream_collision_filter_required=True, ready_for_autonomous_control=False))))
 
 
+def stop_node(node):
+    try:
+        if rclpy.ok():
+            try:
+                node.output.publish(Twist())
+            except Exception:
+                # SIGINT may invalidate the context between ok() and publish.
+                if rclpy.ok():
+                    raise
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
 def main(args=None):
     rclpy.init(args=args)
     node = NavigationGate()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.output.publish(Twist())
-        node.destroy_node()
-        rclpy.try_shutdown()
+        stop_node(node)

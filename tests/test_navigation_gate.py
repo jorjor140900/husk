@@ -20,6 +20,7 @@ class NavigationGateTests(unittest.TestCase):
         ControllerGeometryPreviewTests.setUpClass()
         base = {
             "rclpy":NS(),"rclpy.node":NS(Node=object),"rclpy.time":NS(Time=object),
+            "rclpy.executors":NS(ExternalShutdownException=RuntimeError),
             "rclpy.qos":NS(QoSProfile=object,ReliabilityPolicy=object),
             "geometry_msgs":NS(),"geometry_msgs.msg":NS(Twist=Twist,TwistStamped=object),
             "nav_msgs":NS(),"nav_msgs.msg":NS(Odometry=object),
@@ -61,6 +62,23 @@ class NavigationGateTests(unittest.TestCase):
         self.assertFalse(self.node.enabled)
         self.assertEqual(self.tick()["reason"],"planning_only")
         self.assertEqual(self.node.output.publish.call_args.args[0].linear.x,0)
+
+    def test_shutdown_with_invalid_context_skips_publish_but_cleans_up(self):
+        runtime = NS(ok=mock.Mock(return_value=False),try_shutdown=mock.Mock())
+        node = mock.Mock()
+        with mock.patch.object(self.module,"rclpy",runtime):self.module.stop_node(node)
+        node.output.publish.assert_not_called()
+        node.destroy_node.assert_called_once()
+        runtime.try_shutdown.assert_called_once()
+
+    def test_shutdown_race_is_tolerated_and_valid_context_publish_errors_are_not_hidden(self):
+        runtime = NS(ok=mock.Mock(side_effect=[True,False]),try_shutdown=mock.Mock())
+        node = mock.Mock();node.output.publish.side_effect = RuntimeError("context invalid")
+        with mock.patch.object(self.module,"rclpy",runtime):self.module.stop_node(node)
+        node.destroy_node.assert_called_once()
+        runtime.ok = mock.Mock(return_value=True)
+        with mock.patch.object(self.module,"rclpy",runtime):
+            with self.assertRaises(RuntimeError):self.module.stop_node(node)
 
     def test_live_valid_inputs_only_reach_private_collision_request(self):
         status = self.tick()

@@ -92,6 +92,9 @@ def _nodes(context):
         nodes.append(Node(package="nav2_lifecycle_manager",executable="lifecycle_manager",name="lifecycle_manager_"+name,
                           output="screen",parameters=[{"autostart":True,"node_names":managed,"use_sim_time":False}]))
     nodes.append(Node(package="rviz2",executable="rviz2",arguments=["-d",str(share/"config/navigation.rviz")],
+                      # Importing GUI OpenCV above can replace these variables
+                      # with its bundled Qt. Native RViz must use system Qt.
+                      additional_env={"QT_QPA_PLATFORM_PLUGIN_PATH":"", "QT_QPA_FONTDIR":""},
                       condition=IfCondition(LaunchConfiguration("rviz"))))
     return nodes
 

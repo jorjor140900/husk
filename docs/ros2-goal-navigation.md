@@ -54,7 +54,9 @@ ros2 run husky_vision navigation_preflight \
 
 This default mode checks installed Nav2/SLAM packages, the compiled AI plugin,
 camera calibration/capture dimensions, mount, measured footprint and robot
-frame configuration. It never connects to the robot, starts SLAM, publishes a
+frame configuration. It also checks relocations of the native Nav2 lifecycle
+manager library: a package being installed does not establish ABI compatibility.
+It never connects to the robot, starts SLAM, publishes a
 goal, or changes a profile. The expected map path is `maps/site1.yaml`; use
 `--map /path/to/site.yaml` when you choose a different name.
 
@@ -244,10 +246,40 @@ clearance/stopping checks are still pending for this robot. Do not mark those
 fields true just because a map or a planned path looks correct. Completing this
 software architecture does not certify those untested hardware conditions.
 
+## Startup problems observed on the field computer
+
+If RViz reports `xcb` loaded from a `cv2/qt/plugins` directory, OpenCV has
+overridden the native GUI plugin path. The navigation launch clears OpenCV's Qt
+plugin/font path variables **for RViz only**, preserving the camera/AI process
+environment. After updating code, rebuild and restart the navigation launch.
+
+An `undefined symbol` error in `libnav2_lifecycle_manager_core.so` can indicate
+a mismatched native dependency even when all package-presence checks pass.
+On the field machine Nav2 was newer while `diagnostic_updater` remained at
+4.2.6 with 4.2.7 available. Inspect the actual loaded path and package versions:
+
+```bash
+ldd /opt/ros/jazzy/lib/libnav2_lifecycle_manager_core.so | grep -E 'diagnostic|not found'
+apt-cache policy ros-jazzy-diagnostic-updater ros-jazzy-nav2-lifecycle-manager
+```
+
+When the ROS installation's diagnostic updater is behind the available version,
+stop navigation and update that package on the Jazzy computer:
+
+```bash
+sudo apt update
+sudo apt install --only-upgrade ros-jazzy-diagnostic-updater
+```
+
+Then rerun `navigation_preflight` and check `nav2_native_runtime`. If the loaded
+dependency comes from another workspace, inspect the sourced environment before
+retrying. Keep the robot stationary and the navigation launch in planning-only
+mode while resolving startup failures.
+
 ## Software validation and its limits
 
 The implementation was built against ROS 2 Jazzy/Nav2, including the exported
-`husky_vision` and `husky_vision_nav2` packages. Validation includes 207 Python
+`husky_vision` and `husky_vision_nav2` packages. Validation includes 211 Python
 tests and four native C++ layer tests covering obstacle preservation, previous
 mask bounds, stale/invalid masks and frame transforms.
 

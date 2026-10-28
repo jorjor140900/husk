@@ -12,7 +12,7 @@ import numpy as np
 import yaml
 
 from husky_drivable_area.navigation import saved_map_metadata
-from husky_drivable_area.navigation_preflight import preparation_checks, evaluate_live, main
+from husky_drivable_area.navigation_preflight import preparation_checks, evaluate_live, main, check_native_library
 from test_ground_geometry import camera_mapping, mount_mapping
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +37,24 @@ class NavigationPreparationTests(unittest.TestCase):
         self.map_file = self.root/"site.yaml"
 
     def prepare(self):
-        return preparation_checks(self.profile_file,self.map_file,package_lookup=lambda _:self.root,root=ROOT)
+        return preparation_checks(self.profile_file,self.map_file,package_lookup=lambda _:self.root,root=ROOT,
+                                  native_probe=lambda _: "synthetic native-probe fixture")
+
+    def test_native_check_rejects_undefined_symbols_even_when_ldd_returns_zero(self):
+        (self.root/"lib/libnav2_lifecycle_manager_core.so").touch()
+        with mock.patch("husky_drivable_area.navigation_preflight.subprocess.run",return_value=NS(
+                returncode=0,stdout="undefined symbol: diagnostic_updater_Updater (libnav2.so)",stderr="")):
+            with self.assertRaisesRegex(ValueError,"ABI error"):
+                check_native_library(self.root)
+
+    def test_native_check_rejects_missing_dependency_and_reports_resolved_path(self):
+        (self.root/"lib/libnav2_lifecycle_manager_core.so").touch()
+        with mock.patch("husky_drivable_area.navigation_preflight.subprocess.run",return_value=NS(
+                returncode=0,stdout="libdiagnostic_updater.so => not found",stderr="")):
+            with self.assertRaises(ValueError):check_native_library(self.root)
+        with mock.patch("husky_drivable_area.navigation_preflight.subprocess.run",return_value=NS(
+                returncode=0,stdout="libdiagnostic_updater.so => /opt/ros/jazzy/lib/libdiagnostic_updater.so",stderr="")):
+            self.assertIn("/opt/ros/jazzy",check_native_library(self.root))
 
     def write_map(self):
         image = np.full((10,20),254,np.uint8)
