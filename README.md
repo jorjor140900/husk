@@ -66,6 +66,7 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 บนภาพกล้องด้วย capture-time TF โดยไม่คำนวณ pixel path ซ้ำ
 ถ้าต้องการเส้นเหลืองจากภาพแบบเดิม ใช้ `async_reference_preview:=true` กับ config เดิม
 เพื่อแยก pixel planning ไป process สำหรับจอ โดยส่ง segmentation ให้ Nav2 ก่อน
+จุดเริ่มเส้นในโหมดนี้ใช้แกนหุ่นจาก calibration; ใช้ `navigation_plan_check` ตรวจต้นทุนบนแนวตรงเมื่อแผน Nav2 อ้อม
 ระหว่างยังไม่มีแมพ ใช้ `navigation_preflight --profile ...` ตรวจแพ็กเกจและค่าตั้งไว้ก่อน
 เมื่อมีแมพและเปิด navigation แล้ว เพิ่ม `--live` เพื่อตรวจข้อมูลจริง โดยตัวตรวจไม่ส่ง goal หรือคำสั่งขับ
 ระหว่างรอลงพื้นที่ ใช้ `vision_preview.launch.py` เชื่อม webcam/AI กับการดูค่า v/omega ของ Pure Pursuit

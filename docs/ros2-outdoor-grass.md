@@ -134,6 +134,13 @@ node vision_grid ที่เปิดค้างก่อนอัปเดต
 ที่ priority ต่ำกว่า (`nice +10` บน Linux) และ OpenCV หนึ่ง thread
 คง detector config เดิมสำหรับจอ ไม่เปลี่ยน visualization/ความหนาเส้น/calibration/mount
 แต่ละ overlay ใช้ภาพกับ probability จาก capture เดียวกัน ไม่เอาเส้นเก่าทับภาพใหม่
+เมื่อมี calibration/mount จุดเริ่มเส้นเหลืองจะใช้ตำแหน่งแนวกลางหุ่น Y=0
+ที่แถวเริ่มเดิม (`seed_y_fraction`) แทนการเริ่มกลางภาพเสมอ ซึ่งผิดเมื่อกล้องติดเยื้อง
+ตัวอย่าง mount ที่วัดก่อนหน้า: ภาพ 640×480 แถว 450 เดิมเริ่ม x=320 แต่แกนหุ่นอยู่ x≈408
+ไม่ปรับแถวเริ่ม/threshold/clearance เพื่อหลบ mask ที่ปิดทาง
+ถ้าจุดเริ่มจริงถูก veto หรือ clearance ไม่พอ ยังคงไม่มีเส้นและแสดง X แดงเล็กที่จุดนั้น
+ถ้าแกนจริงอยู่นอกภาพ จะรายงาน `calibrated_reference_start_not_visible`
+และไม่ใช้จุดกลางภาพแทน ข้อมูลจุดเริ่มอยู่ที่ `reference_preview.last_display.start`
 
 หยุด AI เดิม อัปเดต `--update-code` และ build ตามด้านบน แล้วเปิด:
 
@@ -179,6 +186,41 @@ worker เก็บได้เพียงหนึ่งงานกำลั�
 ได้ segmentation 85 captures, ภาพแสดง 10 เฟรมที่มีเส้นเหลืองครบ และ veto grid 81 เฟรม
 segmentation delivery p95 ประมาณ 184 ms ใน fixture นี้ พร้อม original capture stamps
 และไม่มี command publisher ตัวเลขนี้ไม่ใช่ผลวัดคอมภาคสนาม
+
+### เส้นใน RViz อ้อม ทั้งที่ทางเดินจริงตรง
+
+ตรวจ `/husky_nav/goal_status` ก่อน ถ้าเป็น `path_ready_preview_only` แปลว่าสร้างแผนได้แล้ว
+เส้นจาก `/plan` ที่ planner_server เผยแพร่เป็นแผน Nav2 ส่วนเส้นเหลืองแบบ pixel reference
+ใช้ mask ภาพและจุดเริ่มของตัวเอง จึงไม่จำเป็นต้องมีรูปร่างตรงกัน
+หาก goal อยู่ข้างหน้าบนทางตรงและต้นทุนต่ำ แนวควรใกล้ตรง แต่ Navfn พิจารณาต้นทุนสะสม
+จึงอาจอ้อมบริเวณ inflation/สิ่งกีดขวาง/AI veto แม้ saved map จะยังดูเป็นสีขาว
+
+หลังเลือก goal ใหม่ ใช้ตัวตรวจแบบอ่านอย่างเดียว:
+
+```bash
+ros2 run husky_vision navigation_plan_check --duration 4
+```
+
+อ่าน `/husky_nav/goal_plan`, `/global_costmap/costmap` และ `/map` โดยไม่ส่ง goal,
+คำสั่งขับ บริการ หรือแก้ parameter รายงานความยาวแผน ระยะตรง อัตราส่วนการอ้อม
+ระยะเบี่ยงด้านข้างสูงสุด และตัวอย่างพิกัดช่องต้นทุนที่ปิดแนวตรง
+`blocked_cells` นับ cost ≥99 (inscribed/lethal), `soft_cost_cells` เป็น cost 1..98
+และ `blocked_but_free_in_saved_map` ชี้ว่าข้อห้ามมาจาก layer ที่เพิ่มเหนือ saved map
+ยังต้องแยกด้วยภาพ costmap/AI veto/scan ว่าเป็นข้อมูลจริงหรือ projection/localization ผิด
+`unknown_cells` กับ `outside_costmap_cells` แยกไว้ ไม่ถือว่า free
+การสุ่มแนวตรงห่างกันครึ่งเซลล์เป็น diagnostic เท่านั้น ไม่ใช่ swept-footprint collision check
+และ timestamp ของ saved map เป็นเวลา static map ไม่ใช่เงื่อนไขความสดเหมือน mask
+
+ใน RViz เปิด `Global planning costmap` และ `AI veto mask` เพื่อเทียบตำแหน่งหุ่น/goal
+กับบริเวณที่อ้อม ตรวจ laser-to-map alignment และทิศหน้าหุ่นให้ตรงของจริง
+แมพ LiDAR ที่เป็นพื้นที่ขาวกว้างไม่ได้ระบุสนามหญ้าทั้งหมดว่าเป็นพื้นที่ห้ามเข้า
+mask กล้องเป็น veto เฉพาะบริเวณที่เห็น จึงไม่รับรองเส้นทาง global นอกมุมกล้องว่าเป็นทางเดิน
+ถ้าแผนออกนอกทางเดินจริง ต้องแก้ขอบเขต traversability/keepout ของพื้นที่นั้นก่อนเคลื่อนที่
+ไม่บังคับลากเส้นตรง หรือปิด layer/ลด footprint เพียงเพื่อให้รูปดูตรง
+
+ถ้า p95 vision ยังเกิน 500 ms เล็กน้อย ทดลองลดเฉพาะ `reference_preview_fps:=1.0`
+แล้ววัด preflight เดิมใหม่ อัตรานี้จำกัดงานจอ ไม่ลดขนาดโมเดล ไม่เปลี่ยนขนาดหุ่น/threshold
+และไม่ขยาย deadline ของ Nav2 ค่า input model และจำนวน CPU threads ใช้เดิมก่อนเปรียบเทียบ
 
 ### แสดงแผนไปยัง goal บนกล้อง
 

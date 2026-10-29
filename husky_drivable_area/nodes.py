@@ -22,7 +22,7 @@ from road_navigation.capture import LatestFrameCapture
 from road_navigation.visualization import draw_result
 from .transport import LatestInput, fill_compressed_image, fill_image, frame_age_seconds, image_to_bgr, status_payload
 from .ground_geometry import CameraCalibration, CameraMount
-from .ground_overlay import robot_axis_pixels
+from .ground_overlay import robot_axis_pixels, reference_seed
 from .vision_grid import encode_segmentation
 from .nav2_camera_path import project_nav2_path, draw_nav2_plan
 
@@ -85,8 +85,20 @@ class DrivableAreaNode(Node):
             if self._show_nav2_path:
                 raise ValueError("choose either async pixel-reference preview or Nav2 plan overlay")
             from .reference_preview import ReferencePreview
-            self._reference_worker = ReferencePreview(
-                replace(self._detector.config,generate_reference_path=True),float(value("reference_preview_fps")))
+            preview_config = replace(self._detector.config,generate_reference_path=True)
+            self._reference_start_info = dict(source="configured_image_fraction",valid=True)
+            if self._axis_geometry is not None:
+                try:
+                    self._reference_start_info = reference_seed(*self._axis_geometry,preview_config)
+                    preview_config = replace(preview_config,
+                        seed_x_fraction=self._reference_start_info["seed_x_fraction"])
+                except ValueError as exc:
+                    # A display geometry failure must not stop segmentation or
+                    # silently invent a centered robot axis.
+                    self._reference_start_info = dict(source="calibrated_robot_axis",valid=False,reason=str(exc))
+                    preview_config = replace(preview_config,generate_reference_path=False)
+            self._reference_config = preview_config
+            self._reference_worker = ReferencePreview(preview_config,float(value("reference_preview_fps")))
             # Full-resolution, current segmentation remains in the inference
             # process. Legacy temporal flow and pixel planning are display work.
             self._detector = RoadDetector(replace(self._detector.config,
@@ -189,13 +201,24 @@ class DrivableAreaNode(Node):
         age = (self.get_clock().now().nanoseconds-source_ns)/1e9
         if source_ns<=0 or not -.05<=age<=self._max_age:
             return
+        start = getattr(self,"_reference_start_info",dict(source="configured_image_fraction",valid=True)).copy()
+        if not start["valid"]:
+            result.reason = start["reason"]
+        else:
+            configuration = getattr(self,"_reference_config",self._detector.config)
+            height,width = result.frame_bgr.shape[:2]
+            sx,sy = round((width-1)*configuration.seed_x_fraction),round((height-1)*configuration.seed_y_fraction)
+            start.update(seed_xy=[sx,sy],mask_drivable=bool(result.road_mask[sy,sx]),
+                         clearance_passed=bool(result.navigable_mask[sy,sx]),clearance_px=configuration.clearance_px)
         axis = ({"robot_axis":self._overlay_axis(result,header)}
                 if self._axis_geometry is not None else {})
         image = draw_result(result,telemetry={"processing_ms":result.processing_ms,
                                              "host_frame_age_ms":age*1000},**axis)
+        if result.reason=="start_blocked_or_too_narrow" and start["valid"]:
+            cv2.drawMarker(image,tuple(start["seed_xy"]),(0,0,255),cv2.MARKER_TILTED_CROSS,10,1,cv2.LINE_AA)
         self._publish_nav2_display(image,header)
         self._reference_preview_info = dict(reason=result.reason,source_stamp_ns=source_ns,
-                                            source_age_ms=age*1000,display_only=True)
+                                            source_age_ms=age*1000,display_only=True,start=start)
 
     def _receive_nav2_goal_pose(self, message):
         stamp = message.header.stamp

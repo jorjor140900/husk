@@ -44,3 +44,22 @@ def robot_axis_pixels(calibration, mount, processed_shape, input_shape, source_f
     keep = np.unique(np.r_[np.arange(0, len(pixels), 8), boundaries,
                            boundaries+1, len(pixels)-1])
     return pixels[keep]
+
+
+def reference_seed(calibration, mount, config):
+    """First visible reference row on robot Y=0, without relocating a veto.
+
+    The row remains configured. Only its horizontal location follows the
+    measured camera offset. Mask/clearance checks still decide validity.
+    """
+    from road_navigation.visualization import axis_x_at_row
+    scale = min(1.,config.max_width/calibration.width)
+    width,height = round(calibration.width*scale),round(calibration.height*scale)
+    row = round((height-1)*config.seed_y_fraction)
+    axis = robot_axis_pixels(calibration,mount,(height,width),
+                             (calibration.height,calibration.width),mount.camera_frame)
+    x = axis_x_at_row(axis,row)
+    if x is None or not 0<=x<=width-1:
+        raise ValueError("calibrated_reference_start_not_visible")
+    return dict(seed_xy=[round(x),row],seed_x_fraction=x/(width-1),
+                source="calibrated_robot_axis",valid=True)
