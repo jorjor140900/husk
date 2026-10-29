@@ -310,6 +310,13 @@ python3 tools/check_corridor_geometry.py \
 
 - `width_around_robot_axis_m`: ความกว้างช่วง drivable ที่คร่อมแกน Y=0 ถ้าแกนถูก veto/มองไม่เห็น
   จะเป็น null ไม่ย้ายไปเลือกช่วงว่างข้าง ๆ แทน
+- `drivable_intervals_y_m` และ `interior_veto_holes`: แสดงทุกช่วงขาวและช่วงดำที่ถูกขาวขนาบ
+  จึงแยกได้ว่า width เช่น .80 m เป็นช่องว่างที่ถูกจุดดำเล็กตัด หรือขอบทางทั้งหมดแคบจริง
+  ไม่ตีความ width ของช่วงเดียวเป็นความกว้างทางเดินจริงโดยอัตโนมัติ
+- หาก `colour_veto_matches_capture=true` จะเทียบ `/drivable_area/vegetation_veto` ที่ stamp เดียวกัน:
+  `colour_veto_present` บอกว่าตัวกรองสีมีส่วน veto ช่วงนั้นได้ ส่วน
+  `model_veto_without_colour_samples` นับจุดที่ถูกปฏิเสธโดย segmentation โดยไม่มี colour veto
+  ไม่ลบ/เติมช่วงดำ และไม่ได้รับรองว่าเป็น false positive หรือสิ่งกีดขวางจริง
 - `corridor_center_y_m` และขอบซ้าย/ขวา: ดูว่าตัวหุ่นเยื้องจากกลางทางที่ตรวจพบหรือไม่
 - `goal_ground_xy_m`: goal ในแกนหุ่น ณ เวลาภาพ x=หน้า, y=ซ้าย, หน่วยเมตร
   พร้อมมุม `goal_angle_from_robot_forward_deg`
@@ -317,6 +324,10 @@ python3 tools/check_corridor_geometry.py \
   ยังมีความกว้างพอใน mask หรือเลี้ยวออกไปขอบทาง/หญ้า
 - `runtime_costmap_reserved_width_m` และ `runtime_width_matches_profile`:
   แยกว่า profile ใหม่ถูกโหลดเข้า costmap แล้วหรือยัง
+
+ถ้า `goal_ground_xy_m=null` ให้อ่าน `goal_projection_error` และอายุ
+`latest_goal_transform_age_ms` ก่อน ยังสรุปไม่ได้ว่า goal อยู่ตรงแนวหุ่น
+ตัวตรวจไม่ใช้ latest TF แทน capture-time TF สำหรับการแปลง goal
 
 ความกว้างนี้อนุมานจาก RGB และเรขาคณิตที่ตั้งไว้ ไม่ใช่การวัดแทนตลับเมตร และไม่ตรวจ
 swept footprint/ความสูงสิ่งกีดขวาง หากต่างจากทางจริง 1.20 m ให้แยก mask boundary

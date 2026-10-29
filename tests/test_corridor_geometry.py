@@ -55,6 +55,31 @@ class CorridorGeometryTests(unittest.TestCase):
         self.assertTrue(all(row["observed_samples"]==0 and row["width_around_robot_axis_m"] is None
                             and not row["reserved_width_fits_at_axis"] for row in report["sections"]))
 
+    def test_small_interior_hole_is_distinguished_from_the_outer_corridor_boundary(self):
+        def sample(points):
+            labels=corridor(points)
+            labels[(np.abs(points[:,0]-1.5)<1e-6)&(np.abs(points[:,1]-.15)<.026)]=0
+            return labels
+        report=summarize_sections(sample,.33,.15,colour_sample=lambda p:np.ones(len(p),np.uint8))
+        row=report["sections"][2]
+        self.assertEqual(len(row["drivable_intervals_y_m"]),2)
+        self.assertAlmostEqual(row["width_around_robot_axis_m"],.7375,delta=.04)
+        self.assertEqual(len(row["interior_veto_holes"]),1)
+        hole=row["interior_veto_holes"][0]
+        self.assertFalse(hole["colour_veto_present"])
+        self.assertGreater(hole["model_veto_without_colour_samples"],0)
+        json.dumps(report,allow_nan=False)
+
+    def test_colour_veto_at_same_capture_is_reported_without_removing_the_hole(self):
+        def sample(points):
+            labels=corridor(points)
+            labels[np.abs(points[:,1]-.15)<.026]=0
+            return labels
+        report=summarize_sections(sample,.33,.08,colour_sample=sample)
+        self.assertTrue(report["sections"][0]["interior_veto_holes"][0]["colour_veto_present"])
+        self.assertEqual(report["sections"][0]["interior_veto_holes"][0]["model_veto_without_colour_samples"],0)
+        self.assertFalse(report["sections"][0]["reserved_width_fits_at_axis"])
+
     def test_projection_reports_only_visible_consistent_raw_labels(self):
         camera=CameraCalibration.from_mapping(camera_mapping())
         mount=CameraMount.from_mapping(mount_mapping(height_m=.99,pitch_down_deg=20,camera_x_m=-.26,camera_y_m=.21))
