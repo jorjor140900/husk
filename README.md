@@ -58,6 +58,10 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 สำหรับงานที่มีปลายทาง ใช้ [คู่มือเก็บแมพและนำทางด้วย Nav2 + AI](docs/ros2-goal-navigation.md)
 เริ่มจากขับสำรวจเก็บแมพ แล้วระบุตำแหน่งและปลายทางใน RViz; AI เพิ่มพื้นที่ห้ามผ่านใน costmap
 มีโหมดวางเส้นทางอย่างเดียวเป็นค่าเริ่มต้น และแพ็กเกจ C++ `husky_vision_nav2` สำหรับชั้น AI
+หากต้องการให้ **image + AI เป็นตัวสร้างเส้นที่หุ่นติดตามจริง** ใช้
+[`steering_mode:=vision` และคู่มือ image-to-goal](docs/ros2-image-goal.md)
+แผนที่ช่วยเลือกทิศไป goal ส่วนเส้นเหลืองในกล้องคือ metric reference เดียวกับ controller
+เริ่มด้วย `allow_motion:=false` และยังใช้ permission/collision/watchdog เดิมก่อนออกมอเตอร์
 สำหรับหญ้าที่โมเดลนับเป็นทาง มี [ตัวกรองสีเขียวเสริมแบบเปิดแยกสำหรับ outdoor](docs/ros2-outdoor-grass.md)
 ตัดทั้ง mask/path และ AI costmap โดยยังต้องตรวจภาพจริงและข้อจำกัดสี/แสงก่อนใช้งาน
 โหมด Nav2 มี `outdoor-nav2-fast.json` ข้ามงานสร้างเส้นพิกเซลและ optical flow

@@ -11,10 +11,19 @@ from unittest import mock
 class GoalDispatchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        class FakeNode:
+            overrides={}
+            def __init__(self,*args):self.params={}
+            def declare_parameter(self,key,value):self.params[key]=self.overrides.get(key,value)
+            def get_parameter(self,key):return NS(value=self.params[key])
+            def create_subscription(self,*args):return mock.Mock()
+            def create_publisher(self,*args):return mock.Mock()
+            def create_timer(self,*args):return mock.Mock()
+        cls.fake_node=FakeNode
         stubs = {
-            "rclpy": NS(), "rclpy.node": NS(Node=object),
-            "rclpy.action": NS(ActionClient=object),
-            "rclpy.qos": NS(QoSProfile=object, DurabilityPolicy=object, ReliabilityPolicy=object),
+            "rclpy": NS(), "rclpy.node": NS(Node=FakeNode),
+            "rclpy.action": NS(ActionClient=mock.Mock()),
+            "rclpy.qos": NS(QoSProfile=NS, DurabilityPolicy=NS(TRANSIENT_LOCAL=1), ReliabilityPolicy=NS(RELIABLE=1)),
             "geometry_msgs": NS(), "geometry_msgs.msg": NS(PoseStamped=object),
             "nav_msgs": NS(), "nav_msgs.msg": NS(Path=NS),
             "nav2_msgs": NS(), "nav2_msgs.action": NS(ComputePathToPose=object, NavigateToPose=object),
@@ -29,6 +38,8 @@ class GoalDispatchTests(unittest.TestCase):
     def setUp(self):
         self.node = object.__new__(self.module.GoalDispatch)
         self.node.allow_motion = False
+        self.node.guide_only=self.node.native_motion=False
+        self.node.current_goal=None;self.node.request_pending=False;self.node.last_request=0.
         self.node.generation = 2
         self.node.goal_handle = None
         self.node.status = mock.Mock()
@@ -79,3 +90,40 @@ class GoalDispatchTests(unittest.TestCase):
         self.assertEqual(status["error_name"],"TIMEOUT")
         self.assertIn("Costmap timed out",status["error_msg"])
         self.node.path_pub.publish.assert_not_called()
+
+    def test_vision_guidance_success_publishes_reference_without_navigation_action(self):
+        self.node.guide_only=True
+        path=NS(poses=[object(),object()])
+        self.node.finished(NS(result=lambda:NS(status=4,result=NS(path=path))),2)
+        self.node.path_pub.publish.assert_called_once_with(path)
+        status=json.loads(self.node.status.publish.call_args.args[0].data)
+        self.assertEqual(status["reason"],"image_guidance_ready")
+        self.assertTrue(status["guidance_only"])
+
+    def test_failed_vision_guidance_invalidates_old_route(self):
+        self.node.guide_only=True
+        self.node.current_goal=NS(header=NS(frame_id="map"))
+        self.node.finished(NS(result=lambda:NS(status=6,result=NS(error_code=208))),2)
+        self.node.path_pub.publish.assert_called_once()
+
+    def test_periodic_guidance_does_not_overlap_pending_or_active_requests(self):
+        self.node.guide_only=True;self.node.current_goal=object()
+        self.node.request_guide=mock.Mock()
+        self.node.refresh_guide()
+        self.node.request_guide.assert_called_once()
+        self.node.request_guide.reset_mock();self.node.request_pending=True
+        self.node.refresh_guide();self.node.request_guide.assert_not_called()
+
+    def test_motion_permission_does_not_switch_image_guide_to_navigate_action(self):
+        with mock.patch.dict(self.fake_node.overrides,allow_motion=True,guide_only=True):
+            node=self.module.GoalDispatch()
+        self.assertTrue(node.allow_motion)
+        self.assertFalse(node.native_motion)
+        self.assertEqual(self.module.ActionClient.call_args.args[2],"/compute_path_to_pose")
+        node.action_type=NS(Goal=NS)
+        message=NS(pose=NS(position=NS(x=1.,y=0.)))
+        node.request_guide(message,node.generation)
+        request=node.client.send_goal_async.call_args.args[0]
+        self.assertEqual(request.goal,message)
+        self.assertEqual(request.planner_id,"GridBased")
+        self.assertFalse(hasattr(request,"pose"))

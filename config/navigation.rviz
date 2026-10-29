@@ -53,6 +53,15 @@ Visualization Manager:
       Topic:
         Value: /husky_nav/goal
         Durability Policy: Transient Local
+    - Class: rviz_default_plugins/Path
+      Name: Image AI controller reference
+      Enabled: true
+      Color: 255; 255; 0
+      Line Style: Lines
+      Line Width: 0.025
+      Topic:
+        Value: /husky_nav/vision_reference
+        Reliability Policy: Reliable
     - Class: rviz_default_plugins/Map
       Name: AI veto mask
       Enabled: false
