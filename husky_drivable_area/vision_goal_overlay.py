@@ -1,6 +1,7 @@
 """The exact controller reference on the exact source image; no second planner."""
 import cv2
 import numpy as np
+from road_navigation.reference_geometry import estimate_boundaries
 
 from .ground_overlay import robot_axis_pixels
 from .nav2_camera_path import project_nav2_path
@@ -13,6 +14,13 @@ def draw_vision_reference(frame,labels,reference,camera,mount,reason):
     image[mask]=cv2.addWeighted(frame,.65,green,.35,0)[mask]
     contours,_=cv2.findContours(mask.astype(np.uint8)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(image,contours,-1,(255,220,0),1)
+    # These are supported outer-mask fits for display only. Unknown/image-cut
+    # sides remain absent; they never alter labels or the controller reference.
+    for edge in estimate_boundaries(mask.astype(np.uint8)):
+        if edge is not None:
+            first=(int(round(edge.x_at(edge.y_top))),edge.y_top)
+            last=(int(round(edge.x_at(edge.y_bottom))),edge.y_bottom)
+            cv2.line(image,first,last,(0,0,255),2,cv2.LINE_AA)
     axis=robot_axis_pixels(camera,mount,frame.shape[:2],frame.shape[:2],mount.camera_frame)
     paths=[(axis,(255,0,0),3)]
     if len(reference)>=2:
@@ -25,6 +33,6 @@ def draw_vision_reference(frame,labels,reference,camera,mount,reason):
                 cv2.polylines(image,[np.rint(points[start:end]).astype(np.int32)],False,colour,width,cv2.LINE_AA)
     cv2.rectangle(image,(0,0),(image.shape[1],65),(20,20,20),-1)
     for y,text in ((18,"IMAGE + AI: "+reason),(38,"Yellow=controller reference  Blue=robot Y=0"),
-                   (58,"Goal selects direction | downstream safety required")):
+                   (58,"Red=mask edge fits | Goal selects direction")):
         cv2.putText(image,text,(7,y),cv2.FONT_HERSHEY_SIMPLEX,.42,(255,255,255),1)
     return image

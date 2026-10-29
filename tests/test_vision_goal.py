@@ -101,6 +101,29 @@ class VisionGoalTests(unittest.TestCase):
         yellow=(stopped[90:,:,0]<80)&(stopped[90:,:,1]>180)&(stopped[90:,:,2]>180)
         self.assertEqual(np.count_nonzero(yellow),0)
 
+    def test_red_edges_can_show_while_waiting_for_goal_without_inventing_yellow_reference(self):
+        camera=CameraCalibration.from_mapping(camera_mapping())
+        mount=CameraMount.from_mapping(mount_mapping())
+        frame=np.full((480,640,3),140,np.uint8)
+        labels=np.zeros((480,640),np.uint8)
+        for y in range(140,480):
+            left=round(240-.35*(y-140));right=round(400+.35*(y-140))
+            labels[y,left:right]=1
+        labels[270:300,310:325]=0  # Interior veto is never filled by an edge fit.
+        before=labels.copy()
+        image=draw_vision_reference(frame,labels,[],camera,mount,"waiting_for_goal_guide")
+        red=(image[90:,:,0]<60)&(image[90:,:,1]<60)&(image[90:,:,2]>200)
+        yellow=(image[90:,:,0]<80)&(image[90:,:,1]>180)&(image[90:,:,2]>180)
+        self.assertGreater(np.count_nonzero(red),300)
+        self.assertEqual(np.count_nonzero(yellow),0)
+        np.testing.assert_array_equal(labels,before)
+        self.assertTrue(np.all(frame==140))
+        for value in (1,255):
+            # All-green with edges outside view, or all-unknown, has no fitted sides.
+            absent=draw_vision_reference(frame,np.full_like(labels,value),[],camera,mount,"waiting")
+            red=(absent[90:,:,0]<60)&(absent[90:,:,1]<60)&(absent[90:,:,2]>200)
+            self.assertEqual(np.count_nonzero(red),0)
+
 
 if __name__=="__main__":
     unittest.main()

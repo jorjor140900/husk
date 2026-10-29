@@ -214,6 +214,11 @@ class DrivableAreaNode(Node):
                 if self._axis_geometry is not None else {})
         image = draw_result(result,telemetry={"processing_ms":result.processing_ms,
                                              "host_frame_age_ms":age*1000},**axis)
+        # This pixel-only preview may run without goal/TF/robot. Its yellow line
+        # must never be mistaken for the metric reference used by the driver.
+        cv2.rectangle(image,(0,0),(image.shape[1],21),(20,20,20),-1)
+        cv2.putText(image,"IMAGE PREVIEW ONLY: "+result.reason,(7,15),
+                    cv2.FONT_HERSHEY_SIMPLEX,.40,(255,255,255),1)
         if result.reason=="start_blocked_or_too_narrow" and start["valid"]:
             cv2.drawMarker(image,tuple(start["seed_xy"]),(0,0,255),cv2.MARKER_TILTED_CROSS,10,1,cv2.LINE_AA)
         self._publish_nav2_display(image,header)

@@ -39,7 +39,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         with mock.patch.dict("sys.modules",modules): spec.loader.exec_module(self.module)
         self.context = dict(profile=str(self.profile),map="/site/map.yaml",camera_device=str(self.device),
-                            allow_motion="false",rviz="true")
+                            allow_motion="false",rviz="true",camera_only="false")
 
     def test_pipeline_has_one_camera_correct_frame_cuda_and_actual_controller_overlay_mode(self):
         nodes = self.module._nodes(self.context)
@@ -61,4 +61,19 @@ class FieldLaunchTests(unittest.TestCase):
     def test_missing_or_non_video_device_cannot_silently_open_another_camera(self):
         self.device.unlink()
         with self.assertRaisesRegex(ValueError,"camera_device"):
+            self.module._nodes(self.context)
+
+    def test_camera_only_restores_legacy_preview_without_loading_navigation_or_map(self):
+        self.context.update(camera_only="true",map="")
+        nodes = self.module._nodes(self.context)
+        self.assertEqual(len(nodes),3)
+        self.assertEqual(nodes[2].arguments["async_reference_preview"],"true")
+        self.assertEqual(nodes[2].arguments["reference_preview_fps"],"10.0")
+        self.context["allow_motion"]="true"
+        with self.assertRaisesRegex(ValueError,"allow_motion=false"):
+            self.module._nodes(self.context)
+
+    def test_navigation_cannot_silently_launch_without_map(self):
+        self.context["map"]=""
+        with self.assertRaisesRegex(ValueError,"navigation requires map"):
             self.module._nodes(self.context)

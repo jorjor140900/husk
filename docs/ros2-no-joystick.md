@@ -71,6 +71,34 @@ geometry, mount, margins และ camera settings เดิมถูกเก�
 ไฟล์ต้นฉบับไม่ถูกแก้ และเครื่องมือไม่ตั้งผลตรวจใดเป็น true
 หาก output มีอยู่แล้วให้ใช้ไฟล์นั้นหรือเลือกชื่อใหม่ เครื่องมือไม่เขียนทับ
 
+### ตอนหุ่นปิด: ดูกล้องพร้อมเส้นเหลือง/ขอบแดงแบบเดิม
+
+โหมดนี้ไม่ใช้ map, TF, odometry หรือ goal และไม่เปิด controller/navigation:
+
+```bash
+QT_QPA_PLATFORM=xcb ros2 launch husky_vision vision_field.launch.py \
+  profile:="$HOME/husky_vision_ws/robot/robot-nojoy-preview.json" \
+  camera_only:=true
+```
+
+ในอีก Terminal ที่ source environment และ export Cyclone แล้ว:
+
+```bash
+QT_QPA_PLATFORM=xcb ros2 run image_view image_view --ros-args \
+  -r image:=/drivable_area/overlay -p image_transport:=compressed \
+  -p autosize:=false -p width:=960 -p height:=720
+```
+
+ใช้ preview worker 10 FPS ที่ทดลองไว้ หน้าจอระบุ `IMAGE PREVIEW ONLY`
+เส้นเหลืองแสดงเมื่อ mask มีเส้นที่ผ่านเงื่อนไข; ขอบแดงเป็นเส้นประมาณจากขอบ mask ที่มองเห็น
+หยุด launch และ viewer ชุดนี้ก่อนเปิด field navigation เพื่อไม่ให้กล้อง/publisher ซ้ำ
+
+จอ controller `/husky_nav/vision_overlay` ต่างจาก preview นี้: `waiting_for_goal_guide`
+หมายถึงยังรอ goal และเส้น guide ที่ตรงกัน รวมข้อมูลตำแหน่งจริงจากหุ่น
+จึงยังไม่มีเส้นควบคุมสีเหลือง ขอบแดงของจอ controller แสดงได้จาก mask แม้ยังไม่มี goal
+แต่จะไม่สร้างด้านที่อยู่นอกภาพ/ไม่พบขอบขึ้นมาแทน
+ถ้าอยู่ในห้อง ไม่วาง pose/goal บน outdoor map เพื่อฝืนให้เกิดเส้น ใช้ camera_only สำหรับตรวจภาพ
+
 ## 2. หน้างาน: เชื่อมต่อและอัปเดต package บนหุ่น (ครั้งแรกของรุ่นนี้)
 
 เปิดหุ่นตามปกติ ใช้สาย LAN และตั้ง IP คอมตามเครือข่ายที่ใช้งานจริง
@@ -294,7 +322,7 @@ ros2 service call /husky_nav/cancel_vision_goal std_srvs/srv/Trigger "{}"
 
 ## ผลทดสอบซอฟต์แวร์ของการเปลี่ยนนี้
 
-- Python suite 340 tests ผ่าน รวม finite session, expiry, stop, state loss, no-auto-rearm
+- Python suite 343 tests ผ่าน รวม finite session, expiry, stop, state loss, no-auto-rearm
 - ทดสอบปุ่มจริงผ่าน PTY โดยแทน ROS services/messages; g, Space, หมดเวลา และ q ผ่าน
 - ทดสอบ callback gateway ROS1 จริงร่วมกับ command watchdog โดยใช้ ROS message/service stand-ins
   permission หายขณะคำสั่งยังสดต้องออกศูนย์และ disarm
