@@ -1,6 +1,7 @@
 """ROS 2 Jazzy/Humble adapters for the existing detector and local SegFormer."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import time
 
@@ -40,6 +41,7 @@ class DrivableAreaNode(Node):
             "max_frame_age_sec": 2.0, "cpu_threads": 2, "overlay_jpeg_quality": 80,
             "camera_calibration": "", "camera_mount": "",
             "show_nav2_path": False, "nav2_path_topic": "/husky_nav/goal_plan", "overlay_max_fps": 0.0,
+            "async_reference_preview": False, "reference_preview_fps": 2.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -77,6 +79,18 @@ class DrivableAreaNode(Node):
         self._last_overlay_at = float("-inf")
         self._nav2_path = self._nav2_goal_status = None
         self._nav2_goal_start_ns = 0
+        self._async_reference_preview = value("async_reference_preview")
+        self._reference_worker = None
+        if self._async_reference_preview:
+            if self._show_nav2_path:
+                raise ValueError("choose either async pixel-reference preview or Nav2 plan overlay")
+            from .reference_preview import ReferencePreview
+            self._reference_worker = ReferencePreview(
+                replace(self._detector.config,generate_reference_path=True),float(value("reference_preview_fps")))
+            # Full-resolution, current segmentation remains in the inference
+            # process. Legacy temporal flow and pixel planning are display work.
+            self._detector = RoadDetector(replace(self._detector.config,
+                                                  generate_reference_path=False,use_temporal=False))
         if self._show_nav2_path:
             self._max_age = min(self._max_age,.5)
             if self._axis_geometry is None or getattr(self._detector.config,"generate_reference_path",True):
@@ -132,12 +146,16 @@ class DrivableAreaNode(Node):
         if self._show_nav2_path:
             self._route_retry_timer = self.create_timer(.02, self._retry_nav2_display,
                                                        callback_group=self._processing_group)
+        if self._async_reference_preview:
+            self._reference_preview_timer = self.create_timer(.02,self._publish_reference_preview,
+                                                              callback_group=self._processing_group)
         self.get_logger().info(
             f"Ready: {value('image_topic')} -> /drivable_area/*; "
             f"{self._predictor.device}, model input {self._predictor.input_size}, "
             f"torch threads {torch.get_num_threads()}; "
             f"green vegetation veto={getattr(self._detector.config, 'reject_green_vegetation', False)}; "
             f"image reference={getattr(self._detector.config, 'generate_reference_path', True)}. Pixel references only."
+            f" Async image preview={self._async_reference_preview}."
         )
 
     def _publish_reference(self, header, points, payload):
@@ -154,6 +172,30 @@ class DrivableAreaNode(Node):
 
     def _receive_nav2_path(self, message):
         self._nav2_path = message
+
+    def _publish_reference_preview(self):
+        answer = self._reference_worker.take()
+        if answer is None:
+            return
+        _,key,result,error = answer
+        if error is not None:
+            self.get_logger().warning("Reference display worker: "+error,throttle_duration_sec=2.)
+            return
+        if self._overlay_pub.get_subscription_count()+self._compressed_pub.get_subscription_count()==0:
+            return
+        header = Header()
+        header.frame_id,header.stamp.sec,header.stamp.nanosec = key
+        source_ns = header.stamp.sec*10**9+header.stamp.nanosec
+        age = (self.get_clock().now().nanoseconds-source_ns)/1e9
+        if source_ns<=0 or not -.05<=age<=self._max_age:
+            return
+        axis = ({"robot_axis":self._overlay_axis(result,header)}
+                if self._axis_geometry is not None else {})
+        image = draw_result(result,telemetry={"processing_ms":result.processing_ms,
+                                             "host_frame_age_ms":age*1000},**axis)
+        self._publish_nav2_display(image,header)
+        self._reference_preview_info = dict(reason=result.reason,source_stamp_ns=source_ns,
+                                            source_age_ms=age*1000,display_only=True)
 
     def _receive_nav2_goal_pose(self, message):
         stamp = message.header.stamp
@@ -298,6 +340,8 @@ class DrivableAreaNode(Node):
 
     def _invalidate(self, reason, header=None, age=None, timings=None):
         self._detector.reset()
+        if getattr(self,"_reference_worker",None) is not None:
+            self._reference_worker.reset()
         _, _, skipped = self._latest.state()
         payload = status_payload(
             None, header, age_seconds=age, skipped=skipped, reason=reason,
@@ -344,6 +388,8 @@ class DrivableAreaNode(Node):
                 (header.stamp.sec, header.stamp.nanosec) < (previous.stamp.sec, previous.stamp.nanosec)
             ):
                 self._detector.reset()
+                if getattr(self,"_reference_worker",None) is not None:
+                    self._reference_worker.reset()
             frame = image_to_bgr(pending.message)
             if getattr(self,"_show_nav2_path",False):
                 self._camera_preview = (frame,header)
@@ -366,16 +412,27 @@ class DrivableAreaNode(Node):
             # JPEG encoding or GUI transport can add latency to it.
             publisher = getattr(self, "_segmentation_pub", None)
             if publisher is not None and publisher.get_subscription_count() > 0:
-                publisher.publish(String(data=encode_segmentation(result, header, self._detector.config.horizon_fraction)))
+                source_ns = header.stamp.sec*10**9+header.stamp.nanosec
+                source_age = (self.get_clock().now().nanoseconds-source_ns)/1e9
+                if getattr(self,"_async_reference_preview",False) and not (
+                        source_ns>0 and -.05<=source_age<=.5 and age<=.5):
+                    packet = json.dumps(dict(protocol=1,valid=False,reason="stale_segmentation_before_preview"))
+                else:
+                    packet = encode_segmentation(result, header, self._detector.config.horizon_fraction)
+                publisher.publish(String(data=packet))
             raw_subscribers = self._overlay_pub.get_subscription_count()
             jpeg_subscribers = self._compressed_pub.get_subscription_count()
+            if getattr(self,"_async_reference_preview",False) and (raw_subscribers or jpeg_subscribers):
+                self._reference_worker.submit((header.frame_id,header.stamp.sec,header.stamp.nanosec),
+                                               frame,probability,result.processing_ms)
             timings["overlay_raw_subscribers"] = raw_subscribers
             timings["overlay_compressed_subscribers"] = jpeg_subscribers
             route_info = getattr(self,"_nav2_display_info",
                 dict(enabled=getattr(self,"_show_nav2_path",False),drawn=False,reason="viewer_not_rendered"))
             max_fps = getattr(self,"_overlay_max_fps",0)
             render_due = max_fps==0 or time.perf_counter()-getattr(self,"_last_overlay_at",float("-inf"))>=1/max_fps
-            if (raw_subscribers > 0 or jpeg_subscribers > 0) and render_due:
+            if ((raw_subscribers > 0 or jpeg_subscribers > 0) and render_due and
+                    not getattr(self,"_async_reference_preview",False)):
                 axis_options = ({"robot_axis": self._overlay_axis(result, header)}
                                 if getattr(self, "_axis_geometry", None) is not None else {})
                 overlay = draw_result(result, telemetry={
@@ -412,6 +469,9 @@ class DrivableAreaNode(Node):
             payload = status_payload(result, header, age_seconds=age, skipped=skipped)
             payload.update(timings)
             payload["nav2_camera_path"] = route_info
+            if getattr(self,"_async_reference_preview",False):
+                payload["reference_preview"] = dict(enabled=True,display_only=True,
+                    worker=self._reference_worker.stats(),last_display=getattr(self,"_reference_preview_info",None))
             self._publish_reference(header, result.path, payload)
             self._last_processed_header = header
             self.get_logger().info(
@@ -423,6 +483,11 @@ class DrivableAreaNode(Node):
         except Exception as exc:
             self._invalidate("processing_error", header, age, timings)
             self.get_logger().error(f"Frame rejected: {type(exc).__name__}: {exc}")
+
+    def destroy_node(self):
+        if getattr(self,"_reference_worker",None) is not None:
+            self._reference_worker.close()
+        return super().destroy_node()
 
 
 class WebcamNode(Node):

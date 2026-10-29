@@ -125,6 +125,63 @@ node vision_grid ที่เปิดค้างก่อนอัปเดต
 
 ## แสดงเส้นทาง Nav2 บนภาพกล้อง โดยไม่กลับไปสร้างเส้นพิกเซล
 
+### คงภาพและเส้นเหลืองแบบเดิม โดยแยกงานจอออกจาก Nav2
+
+หากต้องการเส้นเหลืองจากภาพเหมือนเดิม **แม้ Nav2 ยังไม่มี goal plan**
+ให้เลือก `async_reference_preview:=true` แทน `show_nav2_path`
+โหมดนี้ทำ inference เพียงครั้งเดียวต่อ capture แล้วส่ง segmentation ปัจจุบัน
+ไป Nav2 ก่อน ส่วน optical flow/DP/curve/boundary ของจอไปทำใน process อีกตัว
+ที่ priority ต่ำกว่า (`nice +10` บน Linux) และ OpenCV หนึ่ง thread
+คง detector config เดิมสำหรับจอ ไม่เปลี่ยน visualization/ความหนาเส้น/calibration/mount
+แต่ละ overlay ใช้ภาพกับ probability จาก capture เดียวกัน ไม่เอาเส้นเก่าทับภาพใหม่
+
+หยุด AI เดิม อัปเดต `--update-code` และ build ตามด้านบน แล้วเปิด:
+
+```bash
+ros2 launch husky_vision drivable_area.launch.py \
+  use_webcam:=false image_topic:=/camera/image_raw \
+  model_path:="$HOME/husky_vision_ws/models/husky-segformer" \
+  device:=cpu model_width:=256 model_height:=160 cpu_threads:=2 \
+  config_file:="$HOME/husky_vision_ws/src/husky_vision/config/outdoor-no-grass.json" \
+  camera_calibration:="$HOME/husky_vision_ws/camera_calibration/camera-active.yaml" \
+  camera_mount:="$HOME/husky_vision_ws/robot/robot-mount.json" \
+  show_nav2_path:=false async_reference_preview:=true reference_preview_fps:=2.0
+```
+
+webcam/navigation/image_view เปิดค้างไว้ได้สำหรับการเปลี่ยนโหมด AI นี้
+main process ใช้ full-resolution current threshold + grass veto โดยไม่ทำ temporal flow
+เหมือน fast Nav2 config ส่วนจอยังใช้ temporal/reference settings เดิมทั้งหมด
+mask ที่ inference ช้าจน capture เกิน 500 ms ยังเป็น invalid ไม่เปลี่ยน timestamp
+และ vision_grid/costmap ยังตรวจอายุซ้ำเหมือนเดิม
+ไม่ต้องเพิ่มเกณฑ์อายุ Nav2 ให้เท่ากับเวลาประมวลผลจอ
+
+worker เก็บได้เพียงหนึ่งงานกำลังทำ หนึ่งเฟรมล่าสุดรอทำ และหนึ่งผลล่าสุด
+เฟรมรอที่ถูกแทนจะถูกทิ้ง ไม่มีคิวสะสม ไม่มี inference ซ้ำหรือ model อีกชุด
+ไม่มี viewer ก็ไม่เริ่ม worker และไม่ส่งงานเส้นเหลืองเพิ่ม
+เมื่อกล้องเปลี่ยน/ย้อนเวลา/timeout จะ reset generation เพื่อไม่รับผลเก่าจาก worker
+ปิด AI แล้วปิดเฉพาะ process ที่ AI สร้างเองด้วย
+
+ภาพจอยังคงใช้เกณฑ์อายุเดิม (`max_frame_age_sec` เริ่มต้น 2 วินาที)
+จึงอาจอัปเดตช้ากว่า mask ที่ส่งให้ Nav2 แต่ไม่สลับระหว่าง raw/overlay ทุกครั้งที่ mask
+พ้นเกณฑ์ 500 ms ถ้าเส้นใน mask ทำไม่ได้จริง จะแสดงเหตุผลเดิมของ detector
+ไม่ได้สร้างเส้นเหลืองปลอมให้ผ่านอุปสรรค เส้นนี้ยังเป็น **image reference สำหรับจอ**
+ไม่ใช่แผนจาก goal หรือคำสั่งมอเตอร์ ในโหมดนี้ `/drivable_area/status` และ
+`reference_pixels` ไม่เผยแพร่เส้นจาก worker เป็นข้อมูลควบคุม
+ข้อมูลจอและ worker อยู่ใน `reference_preview` ของ status; timing หลักเป็น inference/fast segmentation
+
+การแยก process ลดการรอ DP แต่ยังใช้ CPU ร่วมกัน และไม่รับรองว่า inference/transport
+จะผ่าน 500 ms บนเครื่องภาคสนาม ต้องวัดด้วย preflight อีกครั้ง โดยคง `allow_motion:=false`
+การแก้ latency นี้ไม่แก้กรณีโหลด outdoor map ขณะหุ่นอยู่ในห้อง:
+ต้องใช้แผนที่ของพื้นที่จริงและตรวจ scan-to-map alignment ก่อนเลือก goal
+
+ทดสอบ ROS2 แยกเครือข่ายโดยใช้ model/กล้อง/TF จำลอง และ vision_grid เป็น process
+แยกเหมือน launch จริง จงใจหน่วง pixel planner ใน worker เพิ่ม 650 ms:
+ได้ segmentation 85 captures, ภาพแสดง 10 เฟรมที่มีเส้นเหลืองครบ และ veto grid 81 เฟรม
+segmentation delivery p95 ประมาณ 184 ms ใน fixture นี้ พร้อม original capture stamps
+และไม่มี command publisher ตัวเลขนี้ไม่ใช่ผลวัดคอมภาคสนาม
+
+### แสดงแผนไปยัง goal บนกล้อง
+
 คนดูยังต้องเห็นทิศทางที่ระบบตั้งใจไป โหมดเร็วจึงเปิดการฉาย **แผนจาก Nav2**
 ลงบน overlay ได้ เส้นเหลืองนี้มาจาก path ไปยังปลายทางจริง ไม่ได้สร้างจากการหา
 กลาง mask ขึ้นมาใหม่ ใช้ TF จากกรอบ path ไป ground ณ **เวลาถ่ายภาพ** แล้วฉาย
