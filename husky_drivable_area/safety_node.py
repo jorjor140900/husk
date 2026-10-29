@@ -178,6 +178,7 @@ class LaserSafetyNode(Node):
             self.limiter.reset()
         self._publish_command(command)
         self.status.publish(String(data=json.dumps({"reason": reason, "command_allowed": reason == "clear",
+            "scan_input_reason": self.scan_error, "scan_samples_buffered": len(self.scans),
             "linear_x": command.linear.x, "angular_z": command.angular.z,
             "model": "planar_scan_and_command_stop_sweeps", "physical_robot_validated": False})))
         if self.marker.get_subscription_count() > 0:

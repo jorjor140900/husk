@@ -4,6 +4,9 @@
 โหมดเริ่มต้นรับข้อมูลเท่านั้น ตัว controller, gateway และ receiver เริ่ม disabled/disarmed
 การตรวจระยะบนพื้นพักไว้ก่อนได้ แต่ต้องกลับมาตรวจเมื่อยึดกล้องบนหุ่นแล้ว ก่อนเปิดให้เคลื่อนที่
 
+หากไม่ใช้ joystick ดู [คอนโซลเริ่ม/หยุดและคำสั่งหน้างาน](https://github.com/jorjor140900/husk/blob/work/docs/ros2-no-joystick.md)
+ใช้ keyboard session บนหุ่นแทน deadman ของจอย โดยยังคง command watchdog และ collision filter
+
 ## ส่วนที่เตรียมแล้ว
 
 ```text

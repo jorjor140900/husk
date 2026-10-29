@@ -60,6 +60,8 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 มีโหมดวางเส้นทางอย่างเดียวเป็นค่าเริ่มต้น และแพ็กเกจ C++ `husky_vision_nav2` สำหรับชั้น AI
 หากต้องการให้ **image + AI เป็นตัวสร้างเส้นที่หุ่นติดตามจริง** ใช้
 [`steering_mode:=vision` และคู่มือ image-to-goal](docs/ros2-image-goal.md)
+
+เปิดอัตโนมัติโดยไม่ใช้ joystick: [คอนโซลเริ่ม/หยุดและคำสั่งหน้างานครบชุด](docs/ros2-no-joystick.md)
 แผนที่ช่วยเลือกทิศไป goal ส่วนเส้นเหลืองในกล้องคือ metric reference เดียวกับ controller
 เริ่มด้วย `allow_motion:=false` และยังใช้ permission/collision/watchdog เดิมก่อนออกมอเตอร์
 สำหรับหญ้าที่โมเดลนับเป็นทาง มี [ตัวกรองสีเขียวเสริมแบบเปิดแยกสำหรับ outdoor](docs/ros2-outdoor-grass.md)

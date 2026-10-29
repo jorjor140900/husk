@@ -29,6 +29,12 @@ class RobotKitTests(unittest.TestCase):
             self.assertTrue(core.is_file())
             self.assertFalse(any(parent.is_symlink() for parent in core.parents))
             self.assertEqual(core.read_bytes(), (root / "husky_link_core/protocol.py").read_bytes())
+            operator = root / "ros1/husky_vision_bridge/src/husky_link_core/operator_permission.py"
+            self.assertEqual(operator.read_bytes(), (root / "husky_link_core/operator_permission.py").read_bytes())
+            self.assertTrue((root / "ros1/husky_vision_bridge/scripts/operator_console.py").is_file())
+            self.assertIn("operator_console.py", (root / "ros1/husky_vision_bridge/CMakeLists.txt").read_text())
+            self.assertTrue((root / "launch/vision_field.launch.py").is_file())
+            self.assertTrue((root / "docs/ros2-no-joystick.md").is_file())
             setup = (root / "setup.py").read_text()
             self.assertIn("husky_link_core", setup)
             self.assertIn("husky_vision.robot_bridge_node:main", setup)
