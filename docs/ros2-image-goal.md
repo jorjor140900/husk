@@ -153,3 +153,58 @@ fixture อยู่ใน `tests/native_vision_goal_probe.py` ใช้เฉ�
 และตั้ง `HUSKY_ISOLATED_TEST=1` หลัง build/source exported package แล้ว
 ไม่รัน fixture นี้บน ROS graph ที่เชื่อมต่อหุ่นจริง ผลเหล่านี้ไม่ใช่หลักฐานการวิ่ง
 หรือระยะหยุดจริงบนหุ่น และไม่ได้ประเมินคุณภาพ SegFormer กับภาพภาคสนามใหม่
+
+## วัดกล้องและ AI ตอนหุ่นปิด
+
+หากกล้อง USB ยังเสียบคอม เปิดเฉพาะ webcam และ AI ตามปกติได้ ไม่ต้องเปิด
+gateway/tunnel/navigation/RViz หรือเลือก goal ให้รอ AI ขึ้น Ready ก่อนเริ่มวัด
+ใช้ภาพกล้องและหน้าต่าง preview ตามสภาพที่รู้สึกว่าช้า เพื่อให้วัด workload นั้นจริง
+อย่าเปิด webcam ซ้ำถ้ามี node จับอุปกรณ์อยู่แล้ว
+
+ใน Terminal ใหม่ที่ source ROS/venv แล้ว:
+
+```bash
+cd ~/husk-live
+git pull --ff-only origin work
+python3 tools/measure_vision_latency.py --duration 20 \
+  --output-dir "$HOME/husky_vision_ws/outputs/vision-latency"
+```
+
+สคริปต์อยู่ใน Git checkout ไม่ต้อง export/build ใหม่สำหรับการวัดนี้ อ่านเฉพาะ
+header ของภาพดิบ, segmentation packet และตัวเลข status ไม่ decode ภาพหรือรันโมเดล
+ไม่ส่ง command/goal/service และไม่ปรับพารามิเตอร์ บันทึก JSON ใหม่แล้วจบเอง
+มี warmup 2 วินาทีก่อนช่วงวัด การ subscribe packet ทำให้ AI publish PNG ตามปกติ
+จึงรวม overhead ของการส่ง segmentation แต่ไม่ activate งานวาด preview โดยค่าเริ่มต้น
+
+ดู `streams.camera` เทียบ `streams.ai_mask`:
+
+- `delivered_fps`: จำนวน capture ไม่ซ้ำต่อวินาที ไม่ใช้ heartbeat ซ้ำเป็น FPS
+- `source_age_at_receive_ms.p95/max`: อายุจาก timestamp ต้นทางจนถึงตัววัด
+- `unique_capture_delivery_gap_ms.p95/max`: ช่องว่างระหว่างผลคนละ capture
+- `sampled_age_gate_closed_percent`: สัดส่วนเวลาโดยประมาณที่ข้อมูลล่าสุดไม่ผ่าน
+  เกณฑ์อายุ 500 ms รวมช่วงรอผลถัดไป ตรวจทุก 50 ms ค่านี้บอกความเสี่ยงหยุดเพราะอายุ
+  **ไม่ใช่** เปอร์เซ็นต์การหยุดจริง และไม่รวม permission/TF/obstacle gates อื่น
+- `ai_reported_timings_ms`: เวลา input/inference/detector/การส่งภาพที่ AI รายงาน
+
+ตัวอย่าง: camera 15 FPS อายุ 30 ms แต่ mask 2 FPS อายุ 300 ms ตอนส่ง
+อาจมีช่วง mask เกิน 500 ms ระหว่างรอเฟรมถัดไปได้ แม้ p95 ตอนรับจะผ่าน
+ถ้า mask อายุ 1,500–2,500 ms จริง age gate จะปิดแทบตลอด
+
+ถ้าอยากวัดการ publish ภาพ preview เพิ่ม ให้เปิด viewer ตามใช้งานจริงและเพิ่ม:
+
+```bash
+python3 tools/measure_vision_latency.py --duration 20 --with-overlay \
+  --overlay-topic /husky_nav/vision_overlay/compressed
+```
+
+สำหรับ AI overlay เก่า ใช้ `--overlay-topic /drivable_area/overlay/compressed` แทน
+การ subscribe overlay อาจเปิดงานวาด/JPEG/worker หากเดิมไม่มี viewer จึงไม่เปิดเป็น default
+ตัวเลขนี้วัดจนถึงการรับภาพ overlay ยังไม่รวมคิว/การวาดของ image_view และจอจริง
+เมื่อมี navigation/goal/TF สดแล้ว ใช้ `--with-reference` เพื่อวัด reference ของ
+controller เพิ่มได้ ตอนหุ่นปิดไม่มี reference เป็นเรื่องปกติ
+
+timestamp webcam ปัจจุบันประมาณเวลาที่ host อ่านเฟรมสำเร็จ ไม่ใช่เวลา exposure
+จึงยังมองไม่เห็น delay ในกล้อง/USB/backend ก่อน timestamp ถ้าตัวเลขต่ำแต่ตาเห็น
+ดีเลย์ 1–2 วินาที ต้องเทียบ timer ที่อยู่ในภาพกับ timer จริงพร้อมกันอีกขั้น
+โดยคงตำแหน่ง mount ของกล้องไว้ การวัด baseline ขณะหุ่นปิดไม่แทนการวัดพร้อม
+navigation และการเชื่อมต่อจริงในวันใช้งาน
