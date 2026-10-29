@@ -88,6 +88,7 @@ class DrivableAreaNode(Node):
         self._reference_pub = self.create_publisher(PolygonStamped, "drivable_area/reference_pixels", 1)
         self._status_pub = self.create_publisher(String, "drivable_area/status", 1)
         self._segmentation_pub = self.create_publisher(String, "drivable_area/segmentation_packet", 1)
+        self._vegetation_pub = self.create_publisher(Image, "drivable_area/vegetation_veto", image_qos())
         # Inference and incoming images use separate callback groups/threads.
         # DDS depth=1 AND the application slot=1 prevent an inference backlog.
         self._input_group = MutuallyExclusiveCallbackGroup()
@@ -100,7 +101,8 @@ class DrivableAreaNode(Node):
         self.get_logger().info(
             f"Ready: {value('image_topic')} -> /drivable_area/*; "
             f"{self._predictor.device}, model input {self._predictor.input_size}, "
-            f"torch threads {torch.get_num_threads()}. Pixel references only."
+            f"torch threads {torch.get_num_threads()}; "
+            f"green vegetation veto={getattr(self._detector.config, 'reject_green_vegetation', False)}. Pixel references only."
         )
 
     def _publish_reference(self, header, points, payload):
@@ -210,6 +212,10 @@ class DrivableAreaNode(Node):
                                     (self._clearance_pub, result.navigable_mask)):
                 if publisher.get_subscription_count() > 0:
                     publisher.publish(fill_image(Image(), mask, header))
+            vegetation_publisher = getattr(self, "_vegetation_pub", None)
+            vegetation_mask = getattr(result, "vegetation_mask", None)
+            if vegetation_publisher is not None and vegetation_mask is not None and vegetation_publisher.get_subscription_count() > 0:
+                vegetation_publisher.publish(fill_image(Image(), vegetation_mask, header))
             timings["image_output_ms"] = (time.perf_counter() - processed_at) * 1000
             age = frame_age_seconds(pending, self.get_clock().now().nanoseconds)
             if age > self._max_age:

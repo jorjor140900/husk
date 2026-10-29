@@ -66,6 +66,8 @@ def _run_image(args, detector: RoadDetector, output: Path, predictor=None) -> di
     _write_png(output / "raw_mask.png", result.raw_mask)
     _write_png(output / "mask.png", result.road_mask)
     _write_png(output / "navigable_mask.png", result.navigable_mask)
+    if result.vegetation_veto_enabled:
+        _write_png(output / "vegetation_veto.png", result.vegetation_mask)
     np.save(output / "probability.npy", result.probability, allow_pickle=False)
     _write_json(output / "result.json", result.metadata())
     if args.show:

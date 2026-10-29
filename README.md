@@ -58,6 +58,8 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 สำหรับงานที่มีปลายทาง ใช้ [คู่มือเก็บแมพและนำทางด้วย Nav2 + AI](docs/ros2-goal-navigation.md)
 เริ่มจากขับสำรวจเก็บแมพ แล้วระบุตำแหน่งและปลายทางใน RViz; AI เพิ่มพื้นที่ห้ามผ่านใน costmap
 มีโหมดวางเส้นทางอย่างเดียวเป็นค่าเริ่มต้น และแพ็กเกจ C++ `husky_vision_nav2` สำหรับชั้น AI
+สำหรับหญ้าที่โมเดลนับเป็นทาง มี [ตัวกรองสีเขียวเสริมแบบเปิดแยกสำหรับ outdoor](docs/ros2-outdoor-grass.md)
+ตัดทั้ง mask/path และ AI costmap โดยยังต้องตรวจภาพจริงและข้อจำกัดสี/แสงก่อนใช้งาน
 ระหว่างยังไม่มีแมพ ใช้ `navigation_preflight --profile ...` ตรวจแพ็กเกจและค่าตั้งไว้ก่อน
 เมื่อมีแมพและเปิด navigation แล้ว เพิ่ม `--live` เพื่อตรวจข้อมูลจริง โดยตัวตรวจไม่ส่ง goal หรือคำสั่งขับ
 ระหว่างรอลงพื้นที่ ใช้ `vision_preview.launch.py` เชื่อม webcam/AI กับการดูค่า v/omega ของ Pure Pursuit

@@ -13,6 +13,7 @@ import numpy as np
 
 from .planner import plan_path
 from .reference_geometry import ReferenceGeometry, build_reference_geometry
+from .vegetation import green_vegetation_mask
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,13 @@ class DetectorConfig:
     clearance_px: int = 8
     max_lateral_step: int = 2
     min_path_height_fraction: float = 0.25
+    reject_green_vegetation: bool = False
+    vegetation_hue_min: int = 25
+    vegetation_hue_max: int = 95
+    vegetation_saturation_min: int = 45
+    vegetation_value_min: int = 20
+    vegetation_excess_green_min: float = 0.08
+    vegetation_dilation_px: int = 2
 
     def __post_init__(self):
         for name, value in asdict(self).items():
@@ -49,6 +57,16 @@ class DetectorConfig:
             raise ValueError("use_temporal must be boolean")
         if type(self.use_edge_barrier) is not bool:
             raise ValueError("use_edge_barrier must be boolean")
+        if type(self.reject_green_vegetation) is not bool:
+            raise ValueError("reject_green_vegetation must be boolean")
+        for name in ("vegetation_hue_min", "vegetation_hue_max", "vegetation_saturation_min",
+                     "vegetation_value_min", "vegetation_dilation_px"):
+            if type(getattr(self, name)) is not int:
+                raise ValueError(name+" must be an integer")
+        if (not 0 <= self.vegetation_hue_min <= self.vegetation_hue_max <= 179 or
+                not 0 <= self.vegetation_saturation_min <= 255 or not 0 <= self.vegetation_value_min <= 255 or
+                not 0 <= self.vegetation_excess_green_min <= 1 or not 0 <= self.vegetation_dilation_px <= 12):
+            raise ValueError("invalid vegetation colour-veto settings")
         if self.max_width < 64 or not 32 <= self.analysis_width <= self.max_width:
             raise ValueError("require max_width >= 64 and 32 <= analysis_width <= max_width")
         if not 0 <= self.horizon_fraction < self.seed_y_fraction <= 1:
@@ -87,6 +105,8 @@ class DetectionResult:
     processing_ms: float
     input_shape: tuple[int, int]
     reference_geometry: ReferenceGeometry | None = None
+    vegetation_mask: np.ndarray | None = None
+    vegetation_veto_enabled: bool = False
 
     @property
     def valid_image_path(self) -> bool:
@@ -105,6 +125,12 @@ class DetectionResult:
             "path_coordinate_system": "processed_image_pixels_xy_near_to_far",
             "path": self.path.tolist(),
             "reference_geometry": self.reference_geometry.metadata() if self.reference_geometry else None,
+            "vegetation_veto": {
+                "enabled": self.vegetation_veto_enabled,
+                "blocked_pixels": int(np.count_nonzero(self.vegetation_mask)) if self.vegetation_mask is not None else 0,
+                "method": "raw_bgr_green_colour",
+                "verified_grass_classification": False,
+            },
         }
 
 
@@ -257,13 +283,21 @@ class RoadDetector:
             current = cv2.resize(supplied.astype(np.float32), size, interpolation=cv2.INTER_AREA)
             backend = "external_probability"
 
-        blocked = np.zeros((h, w), dtype=bool)
+        vegetation = np.zeros((h, w), dtype=bool)
+        if self.config.reject_green_vegetation:
+            cfg = self.config
+            vegetation = green_vegetation_mask(frame_bgr, hue_min=cfg.vegetation_hue_min,
+                hue_max=cfg.vegetation_hue_max, saturation_min=cfg.vegetation_saturation_min,
+                value_min=cfg.vegetation_value_min, excess_green_min=cfg.vegetation_excess_green_min,
+                dilation_px=cfg.vegetation_dilation_px)
+            vegetation = cv2.resize(vegetation.astype(np.float32), size, interpolation=cv2.INTER_AREA) > 0
+        blocked = vegetation.copy()
         if blocked_mask is not None:
             supplied = np.asarray(blocked_mask)
             if supplied.shape != original_shape or not np.isfinite(supplied).all():
                 raise ValueError("blocked_mask must be finite and match original H,W")
             # Preserve even a subpixel blocked region when reducing a 2K image.
-            blocked = cv2.resize((supplied != 0).astype(np.float32), size, interpolation=cv2.INTER_AREA) > 0
+            blocked |= cv2.resize((supplied != 0).astype(np.float32), size, interpolation=cv2.INTER_AREA) > 0
         y_top = int(h * self.config.horizon_fraction)
         current[:y_top] = 0
         current[blocked] = 0
@@ -309,4 +343,5 @@ class RoadDetector:
             frame, probability, raw_mask, road_mask, plan.navigable_mask,
             plan.points, quality, plan.reason, backend,
             (time.perf_counter() - start) * 1000.0, original_shape, reference,
+            vegetation.astype(np.uint8)*255, self.config.reject_green_vegetation,
         )

@@ -1,0 +1,9 @@
+{
+  "reject_green_vegetation": true,
+  "vegetation_hue_min": 25,
+  "vegetation_hue_max": 95,
+  "vegetation_saturation_min": 45,
+  "vegetation_value_min": 20,
+  "vegetation_excess_green_min": 0.08,
+  "vegetation_dilation_px": 2
+}

@@ -27,7 +27,7 @@ def ros_files():
     files.update({f"{PACKAGE}/{path.name}": path for path in (ROOT / SOURCE_PACKAGE).glob("*.py")
                   if path.name != "__init__.py"})
     files.update({str(path.relative_to(ROOT)): path for directory, pattern in (
-        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"), ("docs", "robot-field-kit.md"), ("docs", "ros2-mount-fit.md"), ("docs", "ros2-charuco.md"), ("docs", "ros2-goal-navigation.md"),
+        ("launch", "*.launch.py"), ("config", "*"), ("docs", "ros2-metric-path.md"), ("docs", "ros2-control.md"), ("docs", "robot-field-kit.md"), ("docs", "ros2-mount-fit.md"), ("docs", "ros2-charuco.md"), ("docs", "ros2-goal-navigation.md"), ("docs", "ros2-outdoor-grass.md"),
     ) for path in (ROOT / directory).glob(pattern) if path.is_file()})
     for path in (ROOT / "husky_link_core").glob("*.py"):
         files[str(path.relative_to(ROOT))] = path
@@ -77,7 +77,7 @@ def update_navigation_plugin(destination):
     return {"package":str(package),"source_backup":str(backup)}
 
 
-def update_workspace_code(destination, *, update_visualization=False, with_navigation=False):
+def update_workspace_code(destination, *, update_visualization=False, with_navigation=False, update_detector=False):
     """Back up ROS files before updating; preserve detector/model/user calibration."""
     destination = Path(destination).expanduser().resolve()
     package = destination / "src" / PACKAGE
@@ -87,6 +87,9 @@ def update_workspace_code(destination, *, update_visualization=False, with_navig
     updates = ros_files()
     if update_visualization:
         updates["road_navigation/visualization.py"] = ROOT / "road_navigation/visualization.py"
+    if update_detector:
+        for name in ("detector.py", "vegetation.py", "cli.py"):
+            updates["road_navigation/"+name] = ROOT / "road_navigation" / name
     required_existing = {f"{PACKAGE}/nodes.py", f"{PACKAGE}/transport.py",
                          "launch/drivable_area.launch.py", "setup.py", "package.xml"}
     contents = {}
@@ -222,10 +225,13 @@ def main(argv=None):
     parser.add_argument("--model-source", type=Path, help="existing extracted trained SegFormer directory; required when creating")
     parser.add_argument("--update-code", action="store_true", help="update ROS adapters, packaging and experiment assets after backing up existing files")
     parser.add_argument("--update-visualization", action="store_true", help="also back up and update visualization.py; requires --update-code")
+    parser.add_argument("--update-detector", action="store_true", help="also back up and update detector/vegetation veto code; requires --update-code")
     parser.add_argument("--with-navigation", action="store_true", help="also install/back up companion Nav2 C++ layer sources; requires --update-code")
     args = parser.parse_args(argv)
     if args.update_visualization and not args.update_code:
         parser.error("--update-visualization requires --update-code")
+    if args.update_detector and not args.update_code:
+        parser.error("--update-detector requires --update-code")
     if args.with_navigation and not args.update_code:
         parser.error("--with-navigation requires --update-code")
     if not args.update_code and args.model_source is None:
@@ -233,7 +239,8 @@ def main(argv=None):
     if args.update_code and args.model_source is not None:
         parser.error("--update-code does not use --model-source")
     try:
-        result = update_workspace_code(args.workspace, update_visualization=args.update_visualization, with_navigation=args.with_navigation) if args.update_code else create_workspace(args.workspace, args.model_source)
+        result = update_workspace_code(args.workspace, update_visualization=args.update_visualization,
+            with_navigation=args.with_navigation, update_detector=args.update_detector) if args.update_code else create_workspace(args.workspace, args.model_source)
     except (OSError, ValueError, ET.ParseError) as exc:
         parser.exit(1, f"Workspace creation failed: {exc}\n")
     print(json.dumps(result, indent=2, ensure_ascii=False))
