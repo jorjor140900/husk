@@ -290,6 +290,41 @@ history สำหรับจอ แต่มาสก์ของ Nav2 ใช�
 หาก veto ไม่ปิดบริเวณนั้นแต่ costmap มีต้นทุน ให้ตรวจ scan/obstacle layer ต่อ
 ไม่ลบจุดหรือเติมรู mask อัตโนมัติเพียงเพื่อให้ได้เส้นตรง
 
+### วัดช่องทางที่ฉายและ goal เทียบกับแนวหน้าหุ่น
+
+หาก mask ภาพขาวต่อเนื่อง แต่ยังไม่รู้ว่าช่องว่างในแมพแคบ/เยื้อง/goal อยู่นอกแนว
+ให้รันตัวตรวจจาก **โฟลเดอร์ Git เดิม** ใน shell ที่ source Jazzy และ venv แล้ว:
+
+```bash
+git pull --ff-only origin work
+python3 tools/check_corridor_geometry.py \
+  --profile "$HOME/husky_vision_ws/robot/robot.json"
+```
+
+ไม่ต้อง build, export, หยุด webcam/AI/navigation หรือเปลี่ยน profile สำหรับคำสั่งนี้
+ตัวตรวจ subscribe segmentation packet และ goal, อ่านค่า footprint ผ่าน GetParameters,
+และ lookup TF ณ capture time เท่านั้น ไม่มี command/goal publisher หรือการเขียน parameter
+ใช้ calibration/mount ใน profile ที่ระบุ พร้อมตรวจ frame/resolution และอายุ capture <=500 ms
+
+รายงานหน้าตัดที่อยู่หน้าแกนหุ่น 0.75, 1, 1.5, 2 และ 2.5 เมตร ตามสมมติฐานพื้นราบ:
+
+- `width_around_robot_axis_m`: ความกว้างช่วง drivable ที่คร่อมแกน Y=0 ถ้าแกนถูก veto/มองไม่เห็น
+  จะเป็น null ไม่ย้ายไปเลือกช่วงว่างข้าง ๆ แทน
+- `corridor_center_y_m` และขอบซ้าย/ขวา: ดูว่าตัวหุ่นเยื้องจากกลางทางที่ตรวจพบหรือไม่
+- `goal_ground_xy_m`: goal ในแกนหุ่น ณ เวลาภาพ x=หน้า, y=ซ้าย, หน่วยเมตร
+  พร้อมมุม `goal_angle_from_robot_forward_deg`
+- `goal_line_y_m` และ `reserved_width_fits_at_goal_line`: ดูว่าแนวตรงไป goal
+  ยังมีความกว้างพอใน mask หรือเลี้ยวออกไปขอบทาง/หญ้า
+- `runtime_costmap_reserved_width_m` และ `runtime_width_matches_profile`:
+  แยกว่า profile ใหม่ถูกโหลดเข้า costmap แล้วหรือยัง
+
+ความกว้างนี้อนุมานจาก RGB และเรขาคณิตที่ตั้งไว้ ไม่ใช่การวัดแทนตลับเมตร และไม่ตรวจ
+swept footprint/ความสูงสิ่งกีดขวาง หากต่างจากทางจริง 1.20 m ให้แยก mask boundary
+กับ calibration/mount/พื้นเอียงก่อนปรับเรขาคณิต ไม่ตั้ง scale ให้ผลตรงโดยไม่มีจุดตรวจอิสระ
+บริเวณนอกภาพหรือไม่วิเคราะห์ยังเป็น unobserved ไม่ถือว่าขับได้
+`capture_still_fresh` กับ source age บอกความสด ณ รายงาน ถ้า false ต้องเก็บใหม่
+ก่อนใช้ตีความสภาพปัจจุบัน รายงานนี้ไม่อนุญาตการเคลื่อนที่
+
 ### แสดงแผนไปยัง goal บนกล้อง
 
 คนดูยังต้องเห็นทิศทางที่ระบบตั้งใจไป โหมดเร็วจึงเปิดการฉาย **แผนจาก Nav2**
