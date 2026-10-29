@@ -159,8 +159,9 @@ def evaluate_live(profile, latest, publishers, lifecycles, transforms, action_re
             if type(stamp.sec) is not int or type(stamp.nanosec) is not int or not 0 <= stamp.nanosec < 10**9:
                 raise ValueError(kind+" invalid source timestamp")
             source_ns = stamp.sec*10**9+stamp.nanosec
-            if source_ns <= 0 or not -.05 <= (ros_ns-source_ns)/1e9 <= timeout:
-                raise ValueError(kind+" source timestamp stale")
+            age = (ros_ns-source_ns)/1e9
+            if source_ns <= 0 or not -.05 <= age <= timeout:
+                raise ValueError(kind+" source timestamp stale; age_ms="+str(round(age*1000,1)))
         return message
 
     def payload(kind, timeout):
@@ -202,7 +203,8 @@ def evaluate_live(profile, latest, publishers, lifecycles, transforms, action_re
         stamp = status.get("source_stamp_ns")
         if (status.get("valid") is not True or type(stamp) is not int or stamp <= 0 or
                 not -.05 <= (ros_ns-stamp)/1e9 <= .5):
-            raise ValueError("AI mask invalid or original capture stamp stale")
+            age_ms = round((ros_ns-stamp)/1e6,1) if type(stamp) is int and stamp>0 else "unknown"
+            raise ValueError("AI mask invalid/stale; reason="+str(status.get("reason","unknown"))+"; source_age_ms="+str(age_ms))
         return "fresh AI source; this does not certify traversability"
 
     checked(checks, "live_vision", vision)

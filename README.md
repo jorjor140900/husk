@@ -62,6 +62,8 @@ python RoadDetection.py --camera 0 --show --output outputs/webcam-gui-01
 ตัดทั้ง mask/path และ AI costmap โดยยังต้องตรวจภาพจริงและข้อจำกัดสี/แสงก่อนใช้งาน
 โหมด Nav2 มี `outdoor-nav2-fast.json` ข้ามงานสร้างเส้นพิกเซลและ optical flow
 เพื่อลดเวลา detector โดยคง segmentation, ตัวกรองหญ้าและเกณฑ์ข้อมูลสดเดิม
+เปิด `show_nav2_path:=true` คู่กับโหมดเร็ว เพื่อฉาย goal plan ของ Nav2 เป็นเส้นเหลือง
+บนภาพกล้องด้วย capture-time TF โดยไม่คำนวณ pixel path ซ้ำ
 ระหว่างยังไม่มีแมพ ใช้ `navigation_preflight --profile ...` ตรวจแพ็กเกจและค่าตั้งไว้ก่อน
 เมื่อมีแมพและเปิด navigation แล้ว เพิ่ม `--live` เพื่อตรวจข้อมูลจริง โดยตัวตรวจไม่ส่ง goal หรือคำสั่งขับ
 ระหว่างรอลงพื้นที่ ใช้ `vision_preview.launch.py` เชื่อม webcam/AI กับการดูค่า v/omega ของ Pure Pursuit

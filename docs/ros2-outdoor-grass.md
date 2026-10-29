@@ -123,6 +123,64 @@ decode, อายุ source ตอนรับ, capture TF, projection, callback
 node vision_grid ที่เปิดค้างก่อนอัปเดตต้องเริ่มใหม่จึงจะแสดง timing เพิ่มเหล่านี้
 แต่ไม่จำเป็นต้องเริ่มใหม่เพียงเพื่อใช้ mask จาก config เร็ว
 
+## แสดงเส้นทาง Nav2 บนภาพกล้อง โดยไม่กลับไปสร้างเส้นพิกเซล
+
+คนดูยังต้องเห็นทิศทางที่ระบบตั้งใจไป โหมดเร็วจึงเปิดการฉาย **แผนจาก Nav2**
+ลงบน overlay ได้ เส้นเหลืองนี้มาจาก path ไปยังปลายทางจริง ไม่ได้สร้างจากการหา
+กลาง mask ขึ้นมาใหม่ ใช้ TF จากกรอบ path ไป ground ณ **เวลาถ่ายภาพ** แล้วฉาย
+ด้วย calibration/mount เดิม สำหรับพื้นราบและ Nav2 แบบ 2D
+
+อัปเดต source/build ตามด้านบน คง navigation ที่ active อยู่ไว้ หยุดและเปิด AI ใหม่:
+
+```bash
+ros2 launch husky_vision drivable_area.launch.py \
+  use_webcam:=false image_topic:=/camera/image_raw \
+  model_path:="$HOME/husky_vision_ws/models/husky-segformer" \
+  device:=cpu model_width:=256 model_height:=160 cpu_threads:=2 \
+  config_file:="$HOME/husky_vision_ws/src/husky_vision/config/outdoor-nav2-fast.json" \
+  camera_calibration:="$HOME/husky_vision_ws/camera_calibration/camera-active.yaml" \
+  camera_mount:="$HOME/husky_vision_ws/robot/robot-mount.json" \
+  show_nav2_path:=true nav2_path_topic:=/husky_nav/goal_plan overlay_max_fps:=2.0
+```
+
+เปิด image_view ของ `/drivable_area/overlay` แบบ compressed ตามคำสั่งด้านบน
+หลังเลือก **2D Goal Pose** ใน RViz และได้ `path_ready_preview_only` จะเห็นเส้น
+เหลืองของ goal plan บนภาพกล้อง เฉพาะช่วงที่อยู่ในมุมมองและไม่เกิน 8 เมตรตามแนวแผน
+จุดเริ่มวาดเป็นจุดใกล้หุ่นบนแผน ไม่สร้างเส้นเชื่อมจากหุ่นไปเส้นทางที่ไม่มีอยู่จริง
+เส้นน้ำเงินยังใช้ตำแหน่งกลางหุ่นที่คาลิเบรตไว้ และขนาดภาพยังเท่าเดิม
+
+ก่อนเลือก goal จะแสดงว่ากำลังรอ goal/plan ไม่มีเส้นทางปลอมให้ดู
+แผนที่ยังไม่สำเร็จ, goal ใหม่ที่ยังไม่มีแผนใหม่, heartbeat ของ goal ขาดเกิน 2 วินาที,
+แผนอายุเกิน 120 วินาที, camera frame/ขนาดไม่ตรง, ภาพเกิน 500 ms หรือไม่มี TF
+จะไม่แสดงเส้นเก่าแทน เส้นที่อยู่นอกมุมมองแยกด้วยช่องว่าง ไม่ลากข้ามส่วนที่มองไม่เห็น
+เมื่อกล้องขาดหรือผลเก่า จะส่งภาพ diagnostic ที่ไม่มีเส้น โดยคง timestamp เดิม
+ไม่ได้ตั้ง timestamp ใหม่ให้ภาพดูสด
+
+หัวภาพระบุ `NAV2 PLAN` พร้อมอายุแผน และ `PLAN DISPLAY ONLY`
+นี่คือแผนที่ controller จะใช้ติดตาม ไม่ใช่ภาพรับรองว่ากำลังมีคำสั่งมอเตอร์หรือปลอดภัย
+ถ้า bridge/gate ยัง disabled หุ่นยังไม่เดิน สำหรับโหมด NavigateToPose ในอนาคต
+เลือก `nav2_path_topic:=/plan` เพื่อดู global plan ของ Nav2 แทน preview action
+ยังต้องตรวจ local collision filter และคำสั่ง v/omega แยกจากภาพแผน
+
+mask ส่งไป Nav2 **ก่อน** วาด/บีบอัด overlay และ `overlay_max_fps` จำกัดเฉพาะ
+ภาพที่แสดง ไม่ลดอัตรา inference หรือ segmentation packet ไม่มีผู้ดูภาพก็ไม่ฉาย
+path หรือบีบอัด JPEG ใน mode นี้ไม่เพิ่ม publisher คำสั่งเคลื่อนที่
+ข้อมูลภาพแสดงอยู่ใน `nav2_camera_path` ของ `/drivable_area/status`
+
+บนภาพสังเคราะห์ 640×480 ของ host ทดสอบ projection/drawing ใช้ median ประมาณ 1 ms
+(ไม่รวม TF, ROS transport และ JPEG) ยังต้องวัดภาคสนามหลังเปิด viewer
+ทดสอบ ROS2 แยกเครือข่ายโดยใช้กล้อง/แผน/TF/model จำลองแล้วว่าแสดงเส้นได้,
+goal ใหม่ไม่ค้างเส้นเก่า, กล้องหยุดล้างภาพเส้น และ mask ยังส่งเร็วกว่าภาพแสดง
+การทดสอบนี้ไม่ยืนยัน geometry จริงหรือการขับหุ่น
+
+### ทำไม p95 ผ่าน แต่ Planning inputs ready ยัง False
+
+preflight ตรวจทั้ง p95 ของช่วงสังเกต และ **mask ล่าสุด ณ เวลาตรวจ**
+เช่น p95=482 ms ผ่าน แต่เฟรมท้ายอายุ 575 ms ต้องขึ้น PENDING ตามเกณฑ์ 500 ms
+การผ่าน p95 ไม่ได้แปลว่าทุกเฟรมผ่าน และไม่ได้อนุญาตใช้เฟรมเก่าขับต่อ
+รายงานใหม่แสดง reason และ source_age_ms ของตัวล่าสุดเพื่อช่วยแยกกรณีนี้
+ต้องลด latency/ความแกว่งให้มี mask ที่สดต่อเนื่องก่อนเปิดเคลื่อนที่จริง
+
 หากต้องคืนพฤติกรรมเดิม ให้หยุด AI และเปิดใหม่โดยใช้ config เดิม
 ค่าเริ่มต้นของ `reject_green_vegetation` เป็น false ไม่ต้องเปลี่ยนโมเดลกลับ
 

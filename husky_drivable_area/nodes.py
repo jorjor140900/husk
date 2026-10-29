@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 import cv2
+import numpy as np
 import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.duration import Duration
@@ -22,6 +23,7 @@ from .transport import LatestInput, fill_compressed_image, fill_image, frame_age
 from .ground_geometry import CameraCalibration, CameraMount
 from .ground_overlay import robot_axis_pixels
 from .vision_grid import encode_segmentation
+from .nav2_camera_path import project_nav2_path, draw_nav2_plan
 
 
 def image_qos():
@@ -37,6 +39,7 @@ class DrivableAreaNode(Node):
             "model_width": 448, "model_height": 256, "config_file": "",
             "max_frame_age_sec": 2.0, "cpu_threads": 2, "overlay_jpeg_quality": 80,
             "camera_calibration": "", "camera_mount": "",
+            "show_nav2_path": False, "nav2_path_topic": "/husky_nav/goal_plan", "overlay_max_fps": 0.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -67,6 +70,34 @@ class DrivableAreaNode(Node):
         if not isinstance(overrides, dict):
             raise ValueError("config_file must contain a DetectorConfig JSON object")
         self._detector = RoadDetector(DetectorConfig(**overrides))
+        self._show_nav2_path = value("show_nav2_path")
+        self._overlay_max_fps = float(value("overlay_max_fps"))
+        if not 0 <= self._overlay_max_fps <= 30:
+            raise ValueError("overlay_max_fps must be 0..30 (0 = uncapped)")
+        self._last_overlay_at = float("-inf")
+        self._nav2_path = self._nav2_goal_status = None
+        self._nav2_goal_start_ns = 0
+        if self._show_nav2_path:
+            self._max_age = min(self._max_age,.5)
+            if self._axis_geometry is None or getattr(self._detector.config,"generate_reference_path",True):
+                raise ValueError("Nav2 camera path requires calibration/mount and generate_reference_path=false")
+            from nav_msgs.msg import Path as RosPath
+            from geometry_msgs.msg import PoseStamped
+            from rclpy.qos import DurabilityPolicy
+            from tf2_ros import Buffer, TransformListener
+            self._route_tf = Buffer()
+            self._route_listener = TransformListener(self._route_tf,self)
+            self._route_topic = value("nav2_path_topic")
+            path_qos = image_qos()
+            path_qos.reliability = ReliabilityPolicy.RELIABLE
+            if self._route_topic == "/husky_nav/goal_plan":
+                path_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+            self._route_sub = self.create_subscription(RosPath,self._route_topic,self._receive_nav2_path,path_qos)
+            self._route_goal_sub = self.create_subscription(String,"/husky_nav/goal_status",self._receive_nav2_goal,1)
+            goal_qos = image_qos()
+            goal_qos.reliability = ReliabilityPolicy.RELIABLE
+            goal_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+            self._route_goal_pose_sub = self.create_subscription(PoseStamped,"/husky_nav/goal",self._receive_nav2_goal_pose,goal_qos)
         from road_navigation.segmentation import SegmentationPredictor
         import torch
         # Leave CPU time for image transport, the ROS executor, and the viewer.
@@ -118,6 +149,96 @@ class DrivableAreaNode(Node):
         }
         self._status_pub.publish(String(data=json.dumps(payload, allow_nan=False)))
 
+    def _receive_nav2_path(self, message):
+        self._nav2_path = message
+
+    def _receive_nav2_goal_pose(self, message):
+        stamp = message.header.stamp
+        self._nav2_goal_start_ns = stamp.sec*10**9+stamp.nanosec
+
+    def _clear_nav2_display(self, header, reason):
+        if getattr(self,"_last_route_clear",None)==reason:
+            return
+        calibration = self._axis_geometry[0]
+        shape = getattr(self,"_last_overlay_shape",(calibration.height,calibration.width,3))
+        blank = np.zeros(shape,np.uint8)
+        draw_nav2_plan(blank,[],"NO LIVE PATH: "+reason)
+        if self._overlay_pub.get_subscription_count()>0:
+            self._overlay_pub.publish(fill_image(Image(),blank,header or Header()))
+        if self._compressed_pub.get_subscription_count()>0:
+            self._compressed_pub.publish(fill_compressed_image(CompressedImage(),blank,header or Header(),self._jpeg_quality))
+        self._last_route_clear = reason
+
+    def _receive_nav2_goal(self, message):
+        try:
+            data = json.loads(message.data)
+            self._nav2_goal_status = (data,time.monotonic()) if isinstance(data,dict) else None
+        except (ValueError,TypeError):
+            self._nav2_goal_status = None
+
+    def _draw_nav2_path(self, overlay, header, raw_shape=None):
+        from rclpy.time import Time
+        from tf2_ros import TransformException
+        from .control import quaternion_matrix
+        pixels = []
+        info = dict(enabled=True,drawn=False,source_topic=self._route_topic)
+        try:
+            calibration,mount = self._axis_geometry
+            if header.frame_id!=mount.camera_frame:
+                raise ValueError("camera_frame_mismatch")
+            if raw_shape is not None and tuple(raw_shape)!=(calibration.height,calibration.width):
+                raise ValueError("camera_size_mismatch")
+            source_ns = header.stamp.sec*10**9+header.stamp.nanosec
+            age = (self.get_clock().now().nanoseconds-source_ns)/1e9
+            if source_ns<=0 or not -.05<=age<=.5:
+                raise ValueError("stale_image_path_hidden")
+            goal = self._nav2_goal_status
+            if goal is None or time.monotonic()-goal[1]>2:
+                raise ValueError("waiting_for_goal_status")
+            state = goal[0]
+            if self._route_topic=="/husky_nav/goal_plan" and state.get("planning_only") is not True:
+                raise ValueError("motion_requires_native_plan_topic")
+            expected = "path_ready_preview_only" if self._route_topic=="/husky_nav/goal_plan" else "goal_submitted"
+            if state.get("reason")!=expected:
+                raise ValueError(str(state.get("reason","no_current_goal")))
+            route = self._nav2_path
+            if route is None or not 2<=len(route.poses)<=4096:
+                raise ValueError("waiting_for_nav2_plan")
+            stamp_ns = route.header.stamp.sec*10**9+route.header.stamp.nanosec
+            plan_age = (self.get_clock().now().nanoseconds-stamp_ns)/1e9
+            if stamp_ns<=0 or not -.05<=plan_age<=120:
+                raise ValueError("plan_expired_select_goal_again")
+            if stamp_ns<getattr(self,"_nav2_goal_start_ns",0):
+                raise ValueError("waiting_for_new_goal_plan")
+            if not route.header.frame_id or any(p.header.frame_id not in ("",route.header.frame_id) for p in route.poses):
+                raise ValueError("plan_frame_mismatch")
+            if any(not np.isfinite(p.pose.position.z) for p in route.poses):
+                raise ValueError("plan_position_invalid")
+            tf = self._route_tf.lookup_transform(self._axis_geometry[1].ground_frame,route.header.frame_id,
+                Time(nanoseconds=source_ns,clock_type=self.get_clock().clock_type))
+            q,t = tf.transform.rotation,tf.transform.translation
+            matrix = np.eye(4)
+            matrix[:3,:3] = quaternion_matrix(q.x,q.y,q.z,q.w)
+            matrix[:3,3] = [t.x,t.y,t.z]
+            points = [[p.pose.position.x,p.pose.position.y] for p in route.poses]
+            pixels = project_nav2_path(points,matrix,*self._axis_geometry)
+            calibration = self._axis_geometry[0]
+            pixels = (pixels+.5)*[overlay.shape[1]/calibration.width,overlay.shape[0]/calibration.height]-.5
+            if not -.05<=(self.get_clock().now().nanoseconds-source_ns)/1e9<=.5:
+                raise ValueError("stale_after_projection")
+            info.update(reason="preview" if state.get("planning_only") else "global_plan",plan_age_sec=plan_age)
+        except (ValueError,TypeError,AttributeError,TransformException,cv2.error) as exc:
+            pixels = []
+            info["reason"] = str(exc)[:90]
+        label = info["reason"]
+        if "plan_age_sec" in info:
+            label += " | plan age %.1fs" % info["plan_age_sec"]
+        info["drawn"] = draw_nav2_plan(overlay,pixels,label)
+        if not info["drawn"] and info["reason"] in ("preview","global_plan"):
+            info["reason"] = "plan_outside_camera_view"
+            draw_nav2_plan(overlay,[],info["reason"])
+        return info
+
     def _overlay_axis(self, result, header):
         if getattr(self, "_axis_geometry", None) is None:
             return None
@@ -144,6 +265,8 @@ class DrivableAreaNode(Node):
         publisher = getattr(self, "_segmentation_pub", None)
         if publisher is not None and publisher.get_subscription_count() > 0:
             publisher.publish(String(data=json.dumps(dict(protocol=1, valid=False, reason=reason))))
+        if getattr(self,"_show_nav2_path",False):
+            self._clear_nav2_display(header,reason)
         detail = f", age {age * 1000:.0f}ms" if age is not None else ""
         if timings and "inference_ms" in timings:
             detail += f", inference {timings['inference_ms']:.0f}ms"
@@ -193,22 +316,35 @@ class DrivableAreaNode(Node):
                 self._invalidate("stale_result", header, age, timings)
                 return
             _, _, skipped = self._latest.state()
+            # Publish the planning input before optional display projection,
+            # JPEG encoding or GUI transport can add latency to it.
+            publisher = getattr(self, "_segmentation_pub", None)
+            if publisher is not None and publisher.get_subscription_count() > 0:
+                publisher.publish(String(data=encode_segmentation(result, header, self._detector.config.horizon_fraction)))
             raw_subscribers = self._overlay_pub.get_subscription_count()
             jpeg_subscribers = self._compressed_pub.get_subscription_count()
             timings["overlay_raw_subscribers"] = raw_subscribers
             timings["overlay_compressed_subscribers"] = jpeg_subscribers
-            if raw_subscribers > 0 or jpeg_subscribers > 0:
+            route_info = dict(enabled=getattr(self,"_show_nav2_path",False),drawn=False,reason="viewer_not_rendered")
+            max_fps = getattr(self,"_overlay_max_fps",0)
+            render_due = max_fps==0 or time.perf_counter()-getattr(self,"_last_overlay_at",float("-inf"))>=1/max_fps
+            if (raw_subscribers > 0 or jpeg_subscribers > 0) and render_due:
                 axis_options = ({"robot_axis": self._overlay_axis(result, header)}
                                 if getattr(self, "_axis_geometry", None) is not None else {})
                 overlay = draw_result(result, telemetry={
                     "processing_ms": result.processing_ms, "host_frame_age_ms": age * 1000,
                 }, **axis_options)
+                if route_info["enabled"]:
+                    route_info = self._draw_nav2_path(overlay,header,result.input_shape)
+                self._last_overlay_shape = overlay.shape
+                self._last_route_clear = None
                 if raw_subscribers > 0:
                     self._overlay_pub.publish(fill_image(Image(), overlay, header))
                 if jpeg_subscribers > 0:
                     self._compressed_pub.publish(fill_compressed_image(
                         CompressedImage(), overlay, header, self._jpeg_quality,
                     ))
+                self._last_overlay_at = time.perf_counter()
             for publisher, mask in ((self._mask_pub, result.road_mask),
                                     (self._clearance_pub, result.navigable_mask)):
                 if publisher.get_subscription_count() > 0:
@@ -224,9 +360,7 @@ class DrivableAreaNode(Node):
                 return
             payload = status_payload(result, header, age_seconds=age, skipped=skipped)
             payload.update(timings)
-            publisher = getattr(self, "_segmentation_pub", None)
-            if publisher is not None and publisher.get_subscription_count() > 0:
-                publisher.publish(String(data=encode_segmentation(result, header, self._detector.config.horizon_fraction)))
+            payload["nav2_camera_path"] = route_info
             self._publish_reference(header, result.path, payload)
             self._last_processed_header = header
             self.get_logger().info(
