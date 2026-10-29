@@ -46,6 +46,8 @@ class DetectorConfig:
     vegetation_value_min: int = 20
     vegetation_excess_green_min: float = 0.08
     vegetation_dilation_px: int = 2
+    vegetation_support_radius_px: int = 0
+    vegetation_support_fraction: float = 0.5
 
     def __post_init__(self):
         for name, value in asdict(self).items():
@@ -63,13 +65,17 @@ class DetectorConfig:
         if type(self.reject_green_vegetation) is not bool:
             raise ValueError("reject_green_vegetation must be boolean")
         for name in ("vegetation_hue_min", "vegetation_hue_max", "vegetation_saturation_min",
-                     "vegetation_value_min", "vegetation_dilation_px"):
+                     "vegetation_value_min", "vegetation_dilation_px", "vegetation_support_radius_px"):
             if type(getattr(self, name)) is not int:
                 raise ValueError(name+" must be an integer")
         if (not 0 <= self.vegetation_hue_min <= self.vegetation_hue_max <= 179 or
                 not 0 <= self.vegetation_saturation_min <= 255 or not 0 <= self.vegetation_value_min <= 255 or
                 not 0 <= self.vegetation_excess_green_min <= 1 or not 0 <= self.vegetation_dilation_px <= 12):
             raise ValueError("invalid vegetation colour-veto settings")
+        if (not 0 <= self.vegetation_support_radius_px <= 12 or
+                type(self.vegetation_support_fraction) not in (int, float) or
+                not 0 < self.vegetation_support_fraction <= 1):
+            raise ValueError("invalid vegetation spatial-support settings")
         if self.max_width < 64 or not 32 <= self.analysis_width <= self.max_width:
             raise ValueError("require max_width >= 64 and 32 <= analysis_width <= max_width")
         if not 0 <= self.horizon_fraction < self.seed_y_fraction <= 1:
@@ -111,6 +117,8 @@ class DetectionResult:
     vegetation_mask: np.ndarray | None = None
     vegetation_veto_enabled: bool = False
     reference_path_enabled: bool = True
+    vegetation_support_radius_px: int = 0
+    vegetation_support_fraction: float = 0.5
 
     @property
     def valid_image_path(self) -> bool:
@@ -134,6 +142,8 @@ class DetectionResult:
                 "enabled": self.vegetation_veto_enabled,
                 "blocked_pixels": int(np.count_nonzero(self.vegetation_mask)) if self.vegetation_mask is not None else 0,
                 "method": "raw_bgr_green_colour",
+                "support_radius_px": self.vegetation_support_radius_px,
+                "support_fraction": self.vegetation_support_fraction,
                 "verified_grass_classification": False,
             },
         }
@@ -294,7 +304,9 @@ class RoadDetector:
             vegetation = green_vegetation_mask(frame_bgr, hue_min=cfg.vegetation_hue_min,
                 hue_max=cfg.vegetation_hue_max, saturation_min=cfg.vegetation_saturation_min,
                 value_min=cfg.vegetation_value_min, excess_green_min=cfg.vegetation_excess_green_min,
-                dilation_px=cfg.vegetation_dilation_px)
+                dilation_px=cfg.vegetation_dilation_px,
+                support_radius_px=cfg.vegetation_support_radius_px,
+                support_fraction=cfg.vegetation_support_fraction)
             vegetation = cv2.resize(vegetation.astype(np.float32), size, interpolation=cv2.INTER_AREA) > 0
         blocked = vegetation.copy()
         if blocked_mask is not None:
@@ -327,7 +339,8 @@ class RoadDetector:
             return DetectionResult(frame, probability, raw_mask, raw_mask.copy(), unknown_clearance,
                 empty, 0., "nav2_segmentation_only", backend, (time.perf_counter()-start)*1000.,
                 original_shape, reference, vegetation.astype(np.uint8)*255,
-                self.config.reject_green_vegetation, False)
+                self.config.reject_green_vegetation, False,
+                self.config.vegetation_support_radius_px, self.config.vegetation_support_fraction)
         sx = int(round((w - 1) * self.config.seed_x_fraction))
         sy = int(round((h - 1) * self.config.seed_y_fraction))
         road_mask = np.zeros((h, w), dtype=np.uint8)
@@ -365,4 +378,5 @@ class RoadDetector:
             plan.points, quality, plan.reason, backend,
             (time.perf_counter() - start) * 1000.0, original_shape, reference,
             vegetation.astype(np.uint8)*255, self.config.reject_green_vegetation,
+            True, self.config.vegetation_support_radius_px, self.config.vegetation_support_fraction,
         )

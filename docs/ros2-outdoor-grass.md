@@ -442,6 +442,73 @@ preflight ตรวจทั้ง p95 ของช่วงสังเกต �
 หากต้องคืนพฤติกรรมเดิม ให้หยุด AI และเปิดใหม่โดยใช้ config เดิม
 ค่าเริ่มต้นของ `reject_green_vegetation` เป็น false ไม่ต้องเปลี่ยนโมเดลกลับ
 
+## ลดจุดห้ามผ่านจากสีเขียวกระจัดกระจายบนพื้น (ทดลองแบบ planning-only)
+
+ผลภาคสนามแยกสาเหตุได้บางส่วน: เส้นตรงมี 20 ช่อง blocked ทั้งที่ saved map ว่าง
+และเมื่อปิด colour veto ชั่วคราว ช่อง blocked เหลือ 0 ความยาวแผนลดจากประมาณ
+10.26 m เป็น 3.20 m จึงต้องแก้หลักฐานสีที่ใส่เข้า costmap ก่อนปรับ planner
+การปิดตัวกรองทั้งหมดไม่ใช่ค่าขับจริง เพราะหญ้าที่โมเดลมองเป็นพื้นจะไม่ถูกตัดแล้ว
+ภาพ overlay ที่ระบายเขียวไม่สามารถใช้ปรับเกณฑ์สีของภาพดิบได้
+
+มี config ทดลอง `config/outdoor-supported-green-preview.json` เพิ่ม spatial support:
+
+- หา candidate สีเขียวจาก **ภาพดิบก่อน resize** ตามเกณฑ์สีเดิม
+- แต่ละกลุ่มสีเขียวที่เชื่อมกันต้องมีอย่างน้อยหนึ่งพิกเซลที่บริเวณ 7×7 รอบตัว
+  เป็น candidate ไม่น้อยกว่า 50% ก่อนจะยอมรับเป็น colour veto
+- ถ้ากลุ่มผ่าน จะเก็บทั้งกลุ่มรวมขอบและใบหญ้าเส้นบางที่เชื่อมกับกลุ่มไว้ แล้วจึง
+  dilate 2 px ตามเดิม ไม่กัดขอบหญ้าด้วย opening และไม่เติมช่องดำใน segmentation
+- การกรองนี้ใช้กับ **สีเท่านั้น** โมเดลที่ปฏิเสธพื้นหรือ blocked mask ที่ระบุชัด
+  ยังคงเป็นข้อห้าม แม้อยู่ตรงจุดสีเขียวที่ถูกตัดออกจาก colour veto
+
+เป็น heuristic ทดลอง ไม่ใช่ตัวจำแนกหญ้าที่ตรวจสอบแล้ว อาจพลาดต้นหญ้าหรือวัตถุเขียว
+เล็ก ๆ ที่แยกเดี่ยว และยังแก้จุดเขียวใหญ่/เงาสีเขียวที่ผ่าน spatial support ไม่ได้
+ค่าเริ่มต้นและ config เดิมไม่เปลี่ยน (`vegetation_support_radius_px=0` ปิด support)
+ต้องเทียบกับภาพดิบหน้างานก่อนเลือกใช้ ไม่มีการลด footprint หรือปิด LiDAR
+
+อัปเดตบนคอม Jazzy ได้ขณะหุ่นปิด:
+
+```bash
+cd ~/husk-live
+git pull --ff-only origin work
+python3 tools/create_ros2_workspace.py \
+  --workspace ~/husky_vision_ws --update-code --update-detector
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+python /usr/bin/colcon build --symlink-install --packages-select husky_vision
+source install/local_setup.bash
+```
+
+เมื่อทดสอบครั้งหน้า ใช้คำสั่ง AI เดิม แต่เปลี่ยนเฉพาะ config เป็น:
+
+```bash
+config_file:="$HOME/husky_vision_ws/src/husky_vision/config/outdoor-supported-green-preview.json" \
+show_nav2_path:=false async_reference_preview:=true reference_preview_fps:=1.0
+```
+
+ยังเก็บเส้นเหลืองจากภาพผ่าน worker เดิมไว้ เส้นนั้นเป็น reference ไม่ใช่แผน goal
+การอัปเดตนี้ไม่เปลี่ยน visualization/calibration/mount/robot profile หรือเปิดมอเตอร์
+ใน `/drivable_area/status` ตรวจ `vegetation_veto.support_radius_px=3` และ
+`support_fraction=0.5` เพื่อแยกจาก config เดิม รัน navigation ด้วย
+`allow_motion:=false` แล้วเลือก goal เดิมใหม่ก่อนเทียบ เพราะเส้นเก่าไม่ replan เอง
+
+ถ้ามีภาพดิบก่อน overlay ที่บันทึกไว้ สามารถเทียบ colour veto แบบ offline
+โดยไม่เปิด ROS/โมเดล/หุ่น (เลือก output directory ใหม่):
+
+```bash
+cd ~/husk-live
+python3 tools/compare_vegetation_veto.py \
+  --image /path/to/raw-camera.png \
+  --output outputs/green-support-comparison
+```
+
+`colour-before.png` / `colour-supported.png` เป็น veto ก่อน/หลัง และ `changes.png`
+แสดงสีแดง=คง veto, ฟ้า=จุด colour-only ที่ถูกเอาออก เครื่องมือนี้ไม่วัด semantic
+accuracy และไม่สร้างเส้นทาง จึงยังยืนยันว่าแก้ภาพภาคสนามนี้แล้วไม่ได้
+เมื่อมีข้อมูลสด ให้เทียบ `navigation_plan_check` และ `check_corridor_geometry.py`
+หลังเลือก goal เดิมใหม่ โดยดูทั้งการคงขอบหญ้าและการหายของจุดห้ามผ่านเทียม
+ไม่บังคับเส้นตรงผ่านข้อห้ามหรือเปลี่ยน unknown นอกกล้องให้เป็นทางปลอดภัย
+
 ## ระยะยาว
 
 เก็บภาพดิบของทางจริงจากตำแหน่งกล้องเดิม ทั้งแดด เงา ทางแยก และหญ้าทั้งสองด้าน
