@@ -102,7 +102,8 @@ class DrivableAreaNode(Node):
             f"Ready: {value('image_topic')} -> /drivable_area/*; "
             f"{self._predictor.device}, model input {self._predictor.input_size}, "
             f"torch threads {torch.get_num_threads()}; "
-            f"green vegetation veto={getattr(self._detector.config, 'reject_green_vegetation', False)}. Pixel references only."
+            f"green vegetation veto={getattr(self._detector.config, 'reject_green_vegetation', False)}; "
+            f"image reference={getattr(self._detector.config, 'generate_reference_path', True)}. Pixel references only."
         )
 
     def _publish_reference(self, header, points, payload):

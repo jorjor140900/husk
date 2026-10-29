@@ -83,6 +83,46 @@ QT_QPA_PLATFORM=xcb ros2 run image_view image_view --ros-args \
 footprint/inflation, ความสดข้อมูล, localization, LiDAR และ permission gate ยังต้องผ่านแยกกัน
 ตัวกรองนี้ไม่ทำให้ส่วน VLP16 runtime หรือการขับอัตโนมัติที่ยังค้างกลายเป็นพร้อมใช้
 
+## ลดเวลา detector เมื่อใช้ Nav2
+
+เมื่อใช้ Nav2 วางเส้นทางไปปลายทาง เส้นเหลืองในภาพเป็น diagnostic เท่านั้น
+มี config `config/outdoor-nav2-fast.json` สำหรับข้าม pixel DP/curve search,
+การ fit เส้นขอบ และ optical-flow history แต่ยังใช้ SegFormer, threshold เดิม,
+green vegetation veto และ blocked mask เดิม ภาพ raw/calibration ยังคง 640×480
+ไม่ลด input model, ขนาดหุ่น, sampling ของ ground grid หรือเกณฑ์อายุ 500 ms
+
+อัปเดตด้วย `--update-code --update-detector` และ build ตามด้านบน หยุด/เปิดเฉพาะ
+AI ใหม่ โดยเปลี่ยนบรรทัด config ของ launch เป็น:
+
+```bash
+  config_file:="$HOME/husky_vision_ws/src/husky_vision/config/outdoor-nav2-fast.json"
+```
+
+ไม่จำเป็นต้องหยุด navigation ที่กำลัง localize ได้แล้วเพื่อรับ mask แบบเร็ว:
+format, timestamp และ topic ของ segmentation packet เหมือนเดิม
+packet จากโหมดเร็วถูกทดสอบว่าเหมือนโหมดสร้างเส้นที่ใช้ segmentation/threshold
+เดียวกันเมื่อปิด temporal history ทั้งคู่ โมเดลไม่ได้ถูกฝึกใหม่
+
+บรรทัด Ready จะมี `green vegetation veto=True; image reference=False`
+ในโหมดนี้ไม่มีเส้นเหลืองพิกเซล; overlay เดิมอาจแสดง
+`NO PATH: nav2_segmentation_only` ซึ่งหมายถึงไม่ได้สร้าง reference ในภาพ
+ไม่ได้หมายความว่า Nav2 หาเส้นทางไป goal ไม่ได้ สีเขียวแสดง segmentation ทุกส่วน
+รวมถึงส่วนที่ไม่เชื่อมกับ seed; Nav2 ใช้ full segmentation เช่นนี้อยู่แล้ว
+ไม่ publish path หรือ clearance ที่อ้างว่าผ่านการตรวจโดยไม่มีการคำนวณ
+อย่าใช้ config นี้กับ controller แบบเก่าที่ต้องรับเส้นเหลือง/ground reference
+
+เริ่มวัดโดยปิด image_view/RViz ไว้ก่อนและคง backend ทำงานอยู่ รัน preflight
+เดิมอีกครั้ง แล้วดู `Frame age`, `inference` และ `detector` จาก AI
+ในการทดสอบภาพสังเคราะห์บน host นี้ detector แบบเดิมมี median ประมาณ 135 ms
+ส่วนโหมดเร็วประมาณ 3 ms (ไม่รวม inference/ROS/ground projection)
+ตัวเลขนี้ไม่ใช่ผลวัดบนคอมภาคสนาม ต้องยืนยัน delivery budget อีกครั้ง
+
+เวอร์ชันใหม่ของ `vision_grid` เพิ่ม `timings_ms` ใน `/husky_nav/vision_status`:
+decode, อายุ source ตอนรับ, capture TF, projection, callback และอายุ source ตอนส่ง
+ช่วยแยกว่าช้าที่ inference/detector หรือการฉาย grid หากยังเกินเกณฑ์
+node vision_grid ที่เปิดค้างก่อนอัปเดตต้องเริ่มใหม่จึงจะแสดง timing เพิ่มเหล่านี้
+แต่ไม่จำเป็นต้องเริ่มใหม่เพียงเพื่อใช้ mask จาก config เร็ว
+
 หากต้องคืนพฤติกรรมเดิม ให้หยุด AI และเปิดใหม่โดยใช้ config เดิม
 ค่าเริ่มต้นของ `reject_green_vegetation` เป็น false ไม่ต้องเปลี่ยนโมเดลกลับ
 

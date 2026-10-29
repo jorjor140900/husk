@@ -35,6 +35,7 @@ class DetectorConfig:
     current_probability_floor: float = 0.50
     temporal_alpha: float = 0.65
     use_temporal: bool = True
+    generate_reference_path: bool = True
     clearance_px: int = 8
     max_lateral_step: int = 2
     min_path_height_fraction: float = 0.25
@@ -55,6 +56,8 @@ class DetectorConfig:
                 raise ValueError(f"{name} must be an integer")
         if type(self.use_temporal) is not bool:
             raise ValueError("use_temporal must be boolean")
+        if type(self.generate_reference_path) is not bool:
+            raise ValueError("generate_reference_path must be boolean")
         if type(self.use_edge_barrier) is not bool:
             raise ValueError("use_edge_barrier must be boolean")
         if type(self.reject_green_vegetation) is not bool:
@@ -107,6 +110,7 @@ class DetectionResult:
     reference_geometry: ReferenceGeometry | None = None
     vegetation_mask: np.ndarray | None = None
     vegetation_veto_enabled: bool = False
+    reference_path_enabled: bool = True
 
     @property
     def valid_image_path(self) -> bool:
@@ -115,6 +119,7 @@ class DetectionResult:
     def metadata(self) -> dict:
         return {
             "valid_image_path": self.valid_image_path,
+            "image_reference_enabled": self.reference_path_enabled,
             "reason": self.reason,
             "backend": self.backend,
             "quality_score": self.quality_score,
@@ -307,6 +312,22 @@ class RoadDetector:
         probability[blocked] = 0
         candidate = (probability >= self.config.probability_threshold) & (current >= self.config.current_probability_floor)
         raw_mask = candidate.astype(np.uint8) * 255
+        if not self.config.generate_reference_path:
+            # Nav2 consumes the full segmentation, not this diagnostic pixel
+            # path. Skip DP, curve search, distance transforms and boundary fits.
+            empty = np.empty((0, 2), dtype=np.int32)
+            unknown_clearance = np.zeros((h, w), dtype=np.uint8)
+            reference = build_reference_geometry(unknown_clearance, empty,
+                robot_center_x_fraction=self.config.robot_center_x_fraction,
+                lookahead_y_fraction=self.config.lookahead_y_fraction,
+                horizon_fraction=self.config.horizon_fraction)
+            self._previous_gray = gray
+            self._previous_probability = probability.copy()
+            self._previous_path = None
+            return DetectionResult(frame, probability, raw_mask, raw_mask.copy(), unknown_clearance,
+                empty, 0., "nav2_segmentation_only", backend, (time.perf_counter()-start)*1000.,
+                original_shape, reference, vegetation.astype(np.uint8)*255,
+                self.config.reject_green_vegetation, False)
         sx = int(round((w - 1) * self.config.seed_x_fraction))
         sy = int(round((h - 1) * self.config.seed_y_fraction))
         road_mask = np.zeros((h, w), dtype=np.uint8)

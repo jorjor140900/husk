@@ -36,31 +36,41 @@ class VisionGridNode(Node):
         self.status = self.create_publisher(String, "/husky_nav/vision_status", 1)
         self.subscription = self.create_subscription(String, "/drivable_area/segmentation_packet", self.receive, 1)
         self.last_source, self.received, self.valid = 0, float("-inf"), False
+        self.last_timings = {}
         self.timer = self.create_timer(.1, self.watchdog)
 
     def report(self, valid, reason, **extra):
         self.valid = valid
         self.status.publish(String(data=json.dumps(dict(valid=valid, reason=reason,
-            source_stamp_ns=self.last_source, motion_safety_validated=False, **extra), allow_nan=False)))
+            source_stamp_ns=self.last_source, motion_safety_validated=False,
+            timings_ms=getattr(self, "last_timings", {}), **extra), allow_nan=False)))
 
     def receive(self, message):
         self.received, self.last_source = time.monotonic(), 0
+        started = time.perf_counter()
+        self.last_timings = {}
         try:
             packet, labels = decode_segmentation(message.data)
+            self.last_timings["decode"] = (time.perf_counter()-started)*1000
             header = packet["source_header"]
             stamp = header["stamp"]
             if header["frame_id"] != self.mount.camera_frame or type(stamp["sec"]) is not int or type(stamp["nanosec"]) is not int or not 0 <= stamp["nanosec"] < 10**9:
                 raise ValueError("invalid_segmentation_source")
             self.last_source = stamp["sec"]*10**9+stamp["nanosec"]
             age = (self.get_clock().now().nanoseconds-self.last_source)/1e9
+            self.last_timings["source_age_at_receive"] = age*1000
             if self.last_source <= 0 or not -.05 <= age <= self.max_age:
                 raise ValueError("stale_segmentation")
+            tf_started = time.perf_counter()
             tf = self.buffer.lookup_transform(self.odom_frame, self.mount.ground_frame, Time(nanoseconds=self.last_source, clock_type=self.get_clock().clock_type))
             q, t = tf.transform.rotation, tf.transform.translation
             matrix = np.eye(4)
             matrix[:3,:3] = quaternion_matrix(q.x,q.y,q.z,q.w)
             matrix[:3,3] = [t.x,t.y,t.z]
+            self.last_timings["capture_tf"] = (time.perf_counter()-tf_started)*1000
+            projection_started = time.perf_counter()
             costs, origin, detail = project_veto_grid(labels, packet["raw_shape_hw"], self.calibration, self.mount, matrix)
+            self.last_timings["projection"] = (time.perf_counter()-projection_started)*1000
             if (self.get_clock().now().nanoseconds-self.last_source)/1e9 > self.max_age:
                 raise ValueError("vision_projection_too_old")
             grid = OccupancyGrid()
@@ -72,8 +82,11 @@ class VisionGridNode(Node):
             grid.info.origin.orientation.w = 1.
             grid.data = costs.reshape(-1).tolist()
             self.output.publish(grid)
+            self.last_timings["callback"] = (time.perf_counter()-started)*1000
+            self.last_timings["source_age_at_publish"] = (self.get_clock().now().nanoseconds-self.last_source)/1e6
             self.report(detail["observed_drivable_cells"] > 0, "ok" if detail["observed_drivable_cells"] else "no_observed_drivable_ground", **detail)
         except (ValueError, KeyError, TypeError, OverflowError, cv2.error, TransformException) as exc:
+            self.last_timings["callback"] = (time.perf_counter()-started)*1000
             self.report(False,str(exc)[:160])
 
     def watchdog(self):
