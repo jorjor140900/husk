@@ -93,7 +93,12 @@ class GoalDispatch(Node):
             self.report("goal_result_error", detail=str(exc)[:160])
             return
         if result.status != 4:
-            self.report("goal_failed",action_status=result.status,error_code=getattr(result.result,"error_code",None))
+            code = getattr(result.result,"error_code",None)
+            names = ("UNKNOWN","INVALID_PLANNER","TF_ERROR","START_OUTSIDE_MAP","GOAL_OUTSIDE_MAP",
+                     "START_OCCUPIED","GOAL_OCCUPIED","NO_VALID_PATH","TIMEOUT")
+            error_name = next((name for name in names if getattr(type(result.result),name,None)==code),"UNKNOWN")
+            self.report("goal_failed",action_status=result.status,error_code=code,error_name=error_name,
+                        error_msg=str(getattr(result.result,"error_msg",""))[:240])
             return
         if not self.allow_motion:
             self.path_pub.publish(result.result.path)

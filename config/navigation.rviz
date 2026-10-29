@@ -60,6 +60,15 @@ Visualization Manager:
         Value: /husky_nav/vision_mask
         Durability Policy: Transient Local
         Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Map
+      Name: Global planning costmap
+      Enabled: false
+      Alpha: 0.65
+      Color Scheme: costmap
+      Topic:
+        Value: /global_costmap/costmap
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
   Tools:
     - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/MoveCamera

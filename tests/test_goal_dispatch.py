@@ -1,5 +1,6 @@
 """Goal replacement must not display or execute a late superseded request."""
 import importlib.util
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace as NS
@@ -66,3 +67,15 @@ class GoalDispatchTests(unittest.TestCase):
         self.node.accepted(future, 2)
         self.assertIn("goal_transport_error", self.node.status.publish.call_args.args[0].data)
         self.assertIsNone(self.node.goal_handle)
+
+    def test_planning_failure_retains_nav2_code_name_and_diagnostic_message(self):
+        class FailedResult:
+            TIMEOUT=207
+            error_code=207
+            error_msg="Costmap timed out waiting for update"
+        self.node.finished(NS(result=lambda:NS(status=6,result=FailedResult())),2)
+        status=json.loads(self.node.status.publish.call_args.args[0].data)
+        self.assertEqual(status["error_code"],207)
+        self.assertEqual(status["error_name"],"TIMEOUT")
+        self.assertIn("Costmap timed out",status["error_msg"])
+        self.node.path_pub.publish.assert_not_called()

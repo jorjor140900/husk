@@ -153,8 +153,19 @@ ros2 launch husky_vision drivable_area.launch.py \
 แผนที่ยังไม่สำเร็จ, goal ใหม่ที่ยังไม่มีแผนใหม่, heartbeat ของ goal ขาดเกิน 2 วินาที,
 แผนอายุเกิน 120 วินาที, camera frame/ขนาดไม่ตรง, ภาพเกิน 500 ms หรือไม่มี TF
 จะไม่แสดงเส้นเก่าแทน เส้นที่อยู่นอกมุมมองแยกด้วยช่องว่าง ไม่ลากข้ามส่วนที่มองไม่เห็น
-เมื่อกล้องขาดหรือผลเก่า จะส่งภาพ diagnostic ที่ไม่มีเส้น โดยคง timestamp เดิม
-ไม่ได้ตั้ง timestamp ใหม่ให้ภาพดูสด
+เมื่อกล้องขาดหรือผลเก่า จะคง **ภาพกล้องดิบล่าสุด** พร้อมคำเตือนและอายุ capture
+ล้าง mask/เส้นจากภาพนั้น ไม่ส่งจอดำสลับกับกล้อง โดยคง timestamp ของภาพที่แสดงจริง
+ไม่ได้ตั้ง timestamp ใหม่ให้ภาพดูสด หากยังไม่เคยได้รับภาพจะไม่สร้างภาพดำขึ้นมา
+สถานะ mask/control ยังคง invalid จนได้ข้อมูลใหม่ที่ผ่านเกณฑ์
+
+ถ้า TF ที่เวลาถ่ายภาพยังมาไม่ถึง จะเก็บเฉพาะ packet ล่าสุดและลองใหม่ทุก 20 ms
+โดยไม่บล็อก callback รับ TF ทั้งการสร้าง veto grid และการฉายเส้นบนภาพ
+ยังต้องได้ **TF ของ capture เดิม** และส่งผลก่อน source อายุเกิน 500 ms
+ไม่ใช้ latest TF แทน ไม่แก้ timestamp และไม่ขยาย timeout
+สถานะ `waiting_for_capture_tf` ระหว่างรอยังเป็น invalid สำหรับ grid
+ถ้า TF ไม่มาทันจะทิ้ง pending frame ตามเกณฑ์เดิม
+การรอ TF ไม่ได้รับรองว่า CPU/DDS จะส่งทันทุกเฟรม ผู้รับยังตรวจอายุ source ซ้ำ
+เพราะ packet ที่ส่งทันอาจมาถึงหลัง 500 ms ได้ โดย preflight/layer ยังต้องปฏิเสธตามเดิม
 
 หัวภาพระบุ `NAV2 PLAN` พร้อมอายุแผน และ `PLAN DISPLAY ONLY`
 นี่คือแผนที่ controller จะใช้ติดตาม ไม่ใช่ภาพรับรองว่ากำลังมีคำสั่งมอเตอร์หรือปลอดภัย
@@ -172,6 +183,40 @@ path หรือบีบอัด JPEG ใน mode นี้ไม่เพิ
 ทดสอบ ROS2 แยกเครือข่ายโดยใช้กล้อง/แผน/TF/model จำลองแล้วว่าแสดงเส้นได้,
 goal ใหม่ไม่ค้างเส้นเก่า, กล้องหยุดล้างภาพเส้น และ mask ยังส่งเร็วกว่าภาพแสดง
 การทดสอบนี้ไม่ยืนยัน geometry จริงหรือการขับหุ่น
+
+การแก้ TF retry ต้อง **หยุด navigation และ AI เดิม**, อัปเดต/build ตามด้านบน
+แล้วเปิด navigation ใหม่ด้วย profile/map เดิมและ `allow_motion:=false`
+คง webcam, ROS1 gateway และ SSH tunnel ไว้ จากนั้นตั้ง **2D Pose Estimate** อีกครั้ง
+เปิด AI ด้วยคำสั่งข้างบน และเลือก goal ใหม่เมื่อ localization/vision กลับมาสด
+ไม่เปิด vision_grid เพิ่มซ้อนกับตัวที่ navigation launch เปิดอยู่
+
+### กด goal แล้วไม่มีเส้นเหลือง
+
+ตรวจสอง topic ก่อน เพื่อแยกกรณีไม่มีแผนออกจากฉายแผนไม่ได้:
+
+```bash
+ros2 topic echo /husky_nav/goal_status --once --full-length
+ros2 topic echo /drivable_area/status --once --full-length --field data
+```
+
+`path_ready_preview_only` จึงมี goal plan ให้ฉาย ถ้า `goal_failed` จะไม่มีแผนให้วาด
+โค้ดใหม่ส่ง `error_name` (อ่านจาก constants ของ action ที่ติดตั้งจริง) และ
+`error_msg` จากผล action เพิ่ม และแสดงสาเหตุในหัวภาพแทนเส้นที่ไม่มีอยู่จริง
+กรณีภาคสนามที่พบรหัส **207** พร้อม log `Costmap timed out waiting for update`
+คือ planner รอ costmap ที่ current ไม่ทัน ต้องแก้ความสดของ mask/TF/ข้อมูลนำเข้า
+ก่อนสรุปว่าปลายทางผิดหรือเส้นทางถูกกีดขวาง ไม่เพิ่ม timeout เพื่อให้ข้อมูลเก่าผ่าน
+พิกัดเริ่ม `(0,0)` ใน warning ที่ล้มก่อนมี start pose ไม่ใช่หลักฐานว่าหุ่นอยู่ origin
+ค่า `nav2_camera_path` จะคงเหตุผลของภาพแสดงล่าสุดไว้แม้เฟรม inference นี้ไม่ได้วาด
+เพราะติด display rate cap จึงไม่ถูกเขียนทับเป็น `viewer_not_rendered` ทุกเฟรม
+
+หลัง vision/TF สดแล้ว ทดลอง goal ใกล้หุ่นประมาณ 1–2 เมตรบนกลางทางเดินจริง
+ตรวจตำแหน่งหุ่นและแนว LiDAR ให้ตรง map ก่อน ถ้าข้อมูลสดแล้วแต่ planner รายงาน
+`NO_VALID_PATH` ให้ดู **global costmap** ประกอบ เพราะพื้นที่สีขาวใน saved map อาจถูก obstacle/AI veto
+หรือ inflation ปิดทางใน costmap ได้ ใน RViz เปิด display `Global planning costmap`
+(ค่าเริ่มต้นปิด) หรือ Add → Map → `/global_costmap/costmap`, เลือก color scheme costmap
+และวาง goal ในพื้นที่ที่เชื่อมต่อกับหุ่นได้จริง ไม่ล้าง obstacle/ปิด AI/ลด footprint
+เพื่อให้ตัวเลขผ่านโดยไม่มีข้อมูลรองรับ ถ้าตัวกรองหญ้า veto พื้นทางเดินจริง ต้องแก้การจำแนก
+จากภาพดิบก่อน ไม่เลื่อน goal หลบข้อผิดพลาดโดยไม่ตรวจบริเวณนั้น
 
 ### ทำไม p95 ผ่าน แต่ Planning inputs ready ยัง False
 

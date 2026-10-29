@@ -122,7 +122,59 @@ class CameraPathCallbackTests(unittest.TestCase):
         self.assertFalse(self.draw()["drawn"])
         self.node._nav2_goal_status[0]["reason"]="path_ready_preview_only"
         self.node._route_tf.lookup_transform.side_effect=RuntimeError("TF missing")
-        info=self.draw();self.assertFalse(info["drawn"]);self.assertIn("TF missing",info["reason"])
+        info=self.draw();self.assertFalse(info["drawn"])
+        self.assertEqual(info["reason"],"waiting_for_capture_tf")
+        self.assertIn("TF missing",info["tf_error"])
+
+    def test_capture_tf_retry_draws_only_when_exact_transform_arrives_within_deadline(self):
+        self.node._route_tf.lookup_transform.side_effect=RuntimeError("future")
+        self.assertFalse(self.draw()["drawn"])
+        self.node._pending_route_display=(self.image.copy(),self.header,(480,640))
+        self.node._publish_nav2_display=mock.Mock()
+        modules={"rclpy.time":NS(Time=lambda **kwargs:NS(**kwargs)),
+                 "tf2_ros":NS(TransformException=RuntimeError)}
+        with mock.patch.dict("sys.modules",modules):
+            self.node._retry_nav2_display()
+            self.node._publish_nav2_display.assert_not_called()
+            self.node._route_tf.lookup_transform.side_effect=None
+            self.node._retry_nav2_display()
+        self.assertTrue(self.node._nav2_display_info["drawn"])
+        self.node._publish_nav2_display.assert_called_once()
+        self.assertIsNone(self.node._pending_route_display)
+        for call in self.node._route_tf.lookup_transform.call_args_list:
+            self.assertEqual(call.args[2].nanoseconds,10*10**9+123)
+
+    def test_expired_capture_cannot_gain_a_route_on_late_tf(self):
+        self.node._pending_route_display=(self.image.copy(),self.header,(480,640))
+        self.node._publish_nav2_display=mock.Mock()
+        self.node.get_clock=lambda:NS(now=lambda:NS(nanoseconds=10_600_000_123),clock_type="ros")
+        with mock.patch.dict("sys.modules",{"rclpy.time":NS(Time=object),"tf2_ros":NS(TransformException=RuntimeError)}):
+            self.node._retry_nav2_display()
+        self.assertFalse(self.node._nav2_display_info["drawn"])
+        self.node._route_tf.lookup_transform.assert_not_called()
+        self.assertIsNone(self.node._pending_route_display)
+
+    def test_invalid_preview_keeps_camera_without_any_cached_route_or_retimestamp(self):
+        self.node._camera_preview=(np.full((480,640,3),120,np.uint8),self.header)
+        self.node._overlay_pub=mock.Mock()
+        self.node._overlay_pub.get_subscription_count.return_value=1
+        self.node._compressed_pub=mock.Mock()
+        self.node._compressed_pub.get_subscription_count.return_value=0
+        self.node._clear_nav2_display(self.header,"stale_result")
+        message=self.node._overlay_pub.publish.call_args.args[0]
+        from husky_drivable_area.transport import image_to_bgr
+        image=image_to_bgr(message)
+        np.testing.assert_array_equal(image[88:],120)
+        self.assertIs(message.header,self.header)
+        self.assertFalse(self.node._nav2_display_info["drawn"])
+        self.assertIsNone(self.node._pending_route_display)
+
+    def test_failed_goal_diagnostic_includes_error_and_never_draws_a_plan(self):
+        self.node._nav2_goal_status[0].update(reason="goal_failed",error_code=207,error_name="TIMEOUT")
+        info=self.draw()
+        self.assertFalse(info["drawn"])
+        self.assertIn("TIMEOUT",info["reason"])
+        self.node._route_tf.lookup_transform.assert_not_called()
 
     def test_new_goal_cannot_show_old_plan_and_no_path_does_not_invent_line(self):
         self.node._nav2_goal_start_ns=10*10**9

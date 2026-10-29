@@ -129,6 +129,9 @@ class DrivableAreaNode(Node):
             callback_group=self._input_group,
         )
         self._timer = self.create_timer(0.02, self._process_latest, callback_group=self._processing_group)
+        if self._show_nav2_path:
+            self._route_retry_timer = self.create_timer(.02, self._retry_nav2_display,
+                                                       callback_group=self._processing_group)
         self.get_logger().info(
             f"Ready: {value('image_topic')} -> /drivable_area/*; "
             f"{self._predictor.device}, model input {self._predictor.input_size}, "
@@ -157,17 +160,49 @@ class DrivableAreaNode(Node):
         self._nav2_goal_start_ns = stamp.sec*10**9+stamp.nanosec
 
     def _clear_nav2_display(self, header, reason):
-        if getattr(self,"_last_route_clear",None)==reason:
+        self._pending_route_display = None
+        preview = getattr(self,"_camera_preview",None)
+        if preview is None:
+            return  # No camera image exists yet; never manufacture a black frame.
+        frame, header = preview
+        age = (self.get_clock().now().nanoseconds-
+               (header.stamp.sec*10**9+header.stamp.nanosec))/1e9
+        key = (reason,header.frame_id,header.stamp.sec,header.stamp.nanosec,int(age))
+        if getattr(self,"_last_route_clear",None)==key:
             return
-        calibration = self._axis_geometry[0]
-        shape = getattr(self,"_last_overlay_shape",(calibration.height,calibration.width,3))
-        blank = np.zeros(shape,np.uint8)
-        draw_nav2_plan(blank,[],"NO LIVE PATH: "+reason)
+        # Remove the route immediately once invalid. Repeated invalid camera
+        # frames obey the display cap, but never keep an old yellow route.
+        max_fps = getattr(self,"_overlay_max_fps",0)
+        if (getattr(self,"_last_route_clear",None) is not None and max_fps and
+                time.perf_counter()-self._last_overlay_at<1/max_fps):
+            return
+        image = frame.copy()  # Raw camera background, without old mask or plan.
+        draw_nav2_plan(image,[],"NO LIVE PLAN: "+reason)
+        cv2.putText(image,"CAMERA CAPTURE AGE %.0fms | DISPLAY ONLY" % (age*1000),
+                    (7,40),cv2.FONT_HERSHEY_SIMPLEX,.43,(0,180,255),1)
+        self._nav2_display_info = dict(enabled=True,drawn=False,reason=reason)
+        self._publish_nav2_display(image,header)
+        self._last_route_clear = key
+
+    def _publish_nav2_display(self, image, header):
         if self._overlay_pub.get_subscription_count()>0:
-            self._overlay_pub.publish(fill_image(Image(),blank,header or Header()))
+            self._overlay_pub.publish(fill_image(Image(),image,header))
         if self._compressed_pub.get_subscription_count()>0:
-            self._compressed_pub.publish(fill_compressed_image(CompressedImage(),blank,header or Header(),self._jpeg_quality))
-        self._last_route_clear = reason
+            self._compressed_pub.publish(fill_compressed_image(CompressedImage(),image,header,self._jpeg_quality))
+        self._last_overlay_at = time.perf_counter()
+
+    def _retry_nav2_display(self):
+        pending = getattr(self,"_pending_route_display",None)
+        if pending is None:
+            return
+        background, header, raw_shape = pending
+        overlay = background.copy()
+        info = self._draw_nav2_path(overlay,header,raw_shape)
+        self._nav2_display_info = info
+        if info["reason"]=="waiting_for_capture_tf":
+            return
+        self._pending_route_display = None
+        self._publish_nav2_display(overlay,header)
 
     def _receive_nav2_goal(self, message):
         try:
@@ -181,7 +216,8 @@ class DrivableAreaNode(Node):
         from tf2_ros import TransformException
         from .control import quaternion_matrix
         pixels = []
-        info = dict(enabled=True,drawn=False,source_topic=self._route_topic)
+        info = dict(enabled=True,drawn=False,source_topic=self._route_topic,
+                    source_stamp_ns=header.stamp.sec*10**9+header.stamp.nanosec)
         try:
             calibration,mount = self._axis_geometry
             if header.frame_id!=mount.camera_frame:
@@ -200,7 +236,10 @@ class DrivableAreaNode(Node):
                 raise ValueError("motion_requires_native_plan_topic")
             expected = "path_ready_preview_only" if self._route_topic=="/husky_nav/goal_plan" else "goal_submitted"
             if state.get("reason")!=expected:
-                raise ValueError(str(state.get("reason","no_current_goal")))
+                reason = str(state.get("reason","no_current_goal"))
+                if reason=="goal_failed":
+                    reason += " | "+str(state.get("error_name",state.get("error_code","unknown")))
+                raise ValueError(reason)
             route = self._nav2_path
             if route is None or not 2<=len(route.poses)<=4096:
                 raise ValueError("waiting_for_nav2_plan")
@@ -227,7 +266,10 @@ class DrivableAreaNode(Node):
             if not -.05<=(self.get_clock().now().nanoseconds-source_ns)/1e9<=.5:
                 raise ValueError("stale_after_projection")
             info.update(reason="preview" if state.get("planning_only") else "global_plan",plan_age_sec=plan_age)
-        except (ValueError,TypeError,AttributeError,TransformException,cv2.error) as exc:
+        except TransformException as exc:
+            pixels = []
+            info.update(reason="waiting_for_capture_tf",tf_error=str(exc)[:160])
+        except (ValueError,TypeError,AttributeError,cv2.error) as exc:
             pixels = []
             info["reason"] = str(exc)[:90]
         label = info["reason"]
@@ -261,6 +303,8 @@ class DrivableAreaNode(Node):
             None, header, age_seconds=age, skipped=skipped, reason=reason,
         )
         payload.update(timings or {})
+        if getattr(self,"_show_nav2_path",False):
+            payload["nav2_camera_path"] = dict(enabled=True,drawn=False,reason=reason)
         self._publish_reference(header, [], payload)
         publisher = getattr(self, "_segmentation_pub", None)
         if publisher is not None and publisher.get_subscription_count() > 0:
@@ -301,6 +345,8 @@ class DrivableAreaNode(Node):
             ):
                 self._detector.reset()
             frame = image_to_bgr(pending.message)
+            if getattr(self,"_show_nav2_path",False):
+                self._camera_preview = (frame,header)
             started = time.perf_counter()
             probability = self._predictor.predict_probability(frame)
             inference_finished = time.perf_counter()
@@ -325,7 +371,8 @@ class DrivableAreaNode(Node):
             jpeg_subscribers = self._compressed_pub.get_subscription_count()
             timings["overlay_raw_subscribers"] = raw_subscribers
             timings["overlay_compressed_subscribers"] = jpeg_subscribers
-            route_info = dict(enabled=getattr(self,"_show_nav2_path",False),drawn=False,reason="viewer_not_rendered")
+            route_info = getattr(self,"_nav2_display_info",
+                dict(enabled=getattr(self,"_show_nav2_path",False),drawn=False,reason="viewer_not_rendered"))
             max_fps = getattr(self,"_overlay_max_fps",0)
             render_due = max_fps==0 or time.perf_counter()-getattr(self,"_last_overlay_at",float("-inf"))>=1/max_fps
             if (raw_subscribers > 0 or jpeg_subscribers > 0) and render_due:
@@ -335,7 +382,11 @@ class DrivableAreaNode(Node):
                     "processing_ms": result.processing_ms, "host_frame_age_ms": age * 1000,
                 }, **axis_options)
                 if route_info["enabled"]:
+                    background = overlay.copy()
                     route_info = self._draw_nav2_path(overlay,header,result.input_shape)
+                    self._nav2_display_info = route_info
+                    self._pending_route_display = ((background,header,result.input_shape)
+                        if route_info["reason"]=="waiting_for_capture_tf" else None)
                 self._last_overlay_shape = overlay.shape
                 self._last_route_clear = None
                 if raw_subscribers > 0:
