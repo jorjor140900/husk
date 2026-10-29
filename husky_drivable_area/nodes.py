@@ -10,7 +10,7 @@ import numpy as np
 import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.duration import Duration
-from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor, SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point32, PolygonStamped
@@ -519,6 +519,7 @@ class WebcamNode(Node):
         for name, value in {
             "camera_index": 2, "width": 640, "height": 480, "fps": 15.0,
             "frame_id": "camera_optical_frame", "image_topic": "/camera/image_raw",
+            "capture_status_topic": "/camera/capture_status",
         }.items():
             self.declare_parameter(name, value)
         value = lambda name: self.get_parameter(name).value
@@ -536,7 +537,13 @@ class WebcamNode(Node):
         self._capture = LatestFrameCapture(camera)
         self._frame_id = value("frame_id")
         self._publisher = self.create_publisher(Image, value("image_topic"), image_qos())
+        self._capture_status_pub = self.create_publisher(String, value("capture_status_topic"), 1)
+        self._capture_report_at = time.perf_counter()
+        self._capture_report_frames = self._capture.diagnostics()["captured_frames"]
+        self._publish_last_at = None
+        self._delivery_window = {}
         self._timer = self.create_timer(1.0 / fps, self._publish_frame)
+        self._capture_status_timer = self.create_timer(1.0, self._publish_capture_status)
         self.get_logger().info(
             f"Camera {value('camera_index')}: "
             f"{int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
@@ -544,7 +551,9 @@ class WebcamNode(Node):
         )
 
     def _publish_frame(self):
+        started = time.perf_counter()
         ok, frame = self._capture.read()
+        after_read = time.perf_counter()
         if not ok:
             raise OSError("webcam stopped delivering frames")
         # Approximate HOST read completion, not hardware exposure time.
@@ -552,17 +561,48 @@ class WebcamNode(Node):
         now = self.get_clock().now()
         stamp = now - Duration(nanoseconds=min(delay_ns, max(0, now.nanoseconds)))
         header = Header(stamp=stamp.to_msg(), frame_id=self._frame_id)
-        self._publisher.publish(fill_image(Image(), frame, header))
+        message = fill_image(Image(), frame, header)
+        after_copy = time.perf_counter()
+        self._publisher.publish(message)
+        finished = time.perf_counter()
+        window = self._delivery_window
+        window["published_frames"] = window.get("published_frames", 0) + 1
+        for key, seconds in (
+            ("slot_wait_max_ms", after_read - started),
+            ("message_copy_max_ms", after_copy - after_read),
+            ("dds_publish_max_ms", finished - after_copy),
+            ("callback_max_ms", finished - started),
+            ("publish_gap_max_ms", finished - self._publish_last_at if self._publish_last_at is not None else 0),
+        ):
+            window[key] = max(window.get(key, 0.0), seconds * 1000)
+        self._publish_last_at = finished
+
+    def _publish_capture_status(self):
+        now = time.perf_counter()
+        elapsed = max(1e-9, now - self._capture_report_at)
+        stats = self._capture.diagnostics()
+        payload = dict(
+            window_sec=elapsed,
+            capture_fps=(stats["captured_frames"] - self._capture_report_frames) / elapsed,
+            published_fps=self._delivery_window.get("published_frames", 0) / elapsed,
+            capture=stats, delivery=dict(self._delivery_window),
+            executor="single_threaded", read_only=True,
+            note="Host read completion, not exposure; capture maxima are session-wide, delivery maxima are per window.",
+        )
+        self._capture_status_pub.publish(String(data=json.dumps(payload, allow_nan=False)))
+        self._capture_report_at = now
+        self._capture_report_frames = stats["captured_frames"]
+        self._delivery_window.clear()
 
     def destroy_node(self):
         self._capture.release()
         return super().destroy_node()
 
 
-def _run(node_type, args=None):
+def _run(node_type, args=None, *, single_threaded=False):
     rclpy.init(args=args)
     node = None
-    executor = MultiThreadedExecutor(num_threads=2)
+    executor = SingleThreadedExecutor() if single_threaded else MultiThreadedExecutor(num_threads=2)
     try:
         node = node_type()
         executor.add_node(node)
@@ -581,4 +621,6 @@ def detector_main(args=None):
 
 
 def camera_main(args=None):
-    _run(WebcamNode, args)
+    # Capture already runs in its own native-read worker. All ROS callbacks are
+    # mutually exclusive, so a worker-pool handoff adds contention, not parallelism.
+    _run(WebcamNode, args, single_threaded=True)

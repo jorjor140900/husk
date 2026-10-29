@@ -85,6 +85,8 @@ def update_workspace_code(destination, *, update_visualization=False, with_navig
     if not manifest.is_file() or ET.parse(manifest).findtext("name") != PACKAGE:
         raise ValueError(f"expected an existing {PACKAGE} package at {package}")
     updates = ros_files()
+    # The webcam adapter's diagnostics require the matching capture worker.
+    updates["road_navigation/capture.py"] = ROOT / "road_navigation/capture.py"
     if update_visualization:
         updates["road_navigation/visualization.py"] = ROOT / "road_navigation/visualization.py"
     if update_detector:

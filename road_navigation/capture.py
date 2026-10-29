@@ -19,6 +19,7 @@ class LatestFrameCapture:
         self._sequence = self._delivered = 0
         self._frame = None
         self._timestamp = self._position_ms = 0.0
+        self._max_capture_gap = self._max_read_seconds = 0.0
         self._ended = not self._opened
         self._error = None
         self.last_frame_timestamp = None
@@ -39,12 +40,16 @@ class LatestFrameCapture:
     def _run(self):
         try:
             while not self._stop.is_set():
+                read_started = time.perf_counter()
                 ok, frame = self._capture.read()
                 timestamp = time.perf_counter()
                 if not ok:
                     break
                 position_ms = self._capture.get(cv2.CAP_PROP_POS_MSEC)
                 with self._condition:
+                    if self._sequence:
+                        self._max_capture_gap = max(self._max_capture_gap, timestamp - self._timestamp)
+                    self._max_read_seconds = max(self._max_read_seconds, timestamp - read_started)
                     self._frame = frame
                     self._timestamp = timestamp
                     self._position_ms = position_ms
@@ -86,6 +91,22 @@ class LatestFrameCapture:
 
     def get(self, property_id):
         return self._properties.get(property_id, 0.0)
+
+    def diagnostics(self):
+        """Snapshot host read completion, independent of the ROS publisher.
+
+        Maxima cover this capture session, not just the latest report window.
+        This does not measure hardware exposure or pre-read buffering.
+        """
+        with self._condition:
+            return dict(
+                captured_frames=self._sequence,
+                capture_age_ms=(max(0.0, time.perf_counter() - self._timestamp) * 1000
+                                if self._sequence else None),
+                capture_gap_max_ms=self._max_capture_gap * 1000,
+                device_read_max_ms=self._max_read_seconds * 1000,
+                skipped_capture_frames=self.dropped_frames,
+            )
 
     def release(self):
         self._stop.set()

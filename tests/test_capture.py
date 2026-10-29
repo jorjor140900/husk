@@ -78,6 +78,15 @@ class LatestFrameTests(unittest.TestCase):
             self.assertGreater(capture.last_frame_timestamp, 0)
             self.assertEqual(capture.get(cv2.CAP_PROP_POS_MSEC), 132)
             self.assertFalse(capture.read()[0])  # No stale frame on disconnect.
+            diagnostics = capture.diagnostics()
+            self.assertEqual(diagnostics["captured_frames"], 4)
+            self.assertEqual(diagnostics["skipped_capture_frames"], 2)
+            self.assertGreaterEqual(diagnostics["capture_gap_max_ms"], 0)
+            self.assertGreaterEqual(diagnostics["device_read_max_ms"], 0)
+            # Reporting is observational: no new read, drain or timestamp reset.
+            with mock.patch("road_navigation.capture.time.perf_counter", return_value=capture.last_frame_timestamp + 2):
+                self.assertAlmostEqual(capture.diagnostics()["capture_age_ms"], 2000)
+            self.assertEqual(capture.last_frame_index, 3)
         finally:
             capture.release()
 
@@ -91,6 +100,18 @@ class LatestFrameTests(unittest.TestCase):
         try:
             with self.assertRaisesRegex(OSError, "capture failed"):
                 capture.read()
+            self.assertTrue(source.released.wait(timeout=2))
+        finally:
+            capture.release()
+
+    def test_diagnostics_before_first_capture_does_not_claim_a_fresh_frame(self):
+        source = FakeCamera()
+        capture = LatestFrameCapture(source)
+        try:
+            stats = capture.diagnostics()
+            self.assertEqual(stats["captured_frames"], 0)
+            self.assertIsNone(stats["capture_age_ms"])
+            source.frames.put(None)
             self.assertTrue(source.released.wait(timeout=2))
         finally:
             capture.release()

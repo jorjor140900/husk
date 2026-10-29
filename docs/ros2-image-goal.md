@@ -208,3 +208,40 @@ timestamp webcam ปัจจุบันประมาณเวลาที่
 ดีเลย์ 1–2 วินาที ต้องเทียบ timer ที่อยู่ในภาพกับ timer จริงพร้อมกันอีกขั้น
 โดยคงตำแหน่ง mount ของกล้องไว้ การวัด baseline ขณะหุ่นปิดไม่แทนการวัดพร้อม
 navigation และการเชื่อมต่อจริงในวันใช้งาน
+
+### แยกกล้อง USB ออกจากการส่งภาพ ROS
+
+`webcam_node` ใช้ SingleThreadedExecutor สำหรับ callback ROS และยังอ่าน USB
+ต่อเนื่องใน latest-frame worker แยกต่างหาก ไม่มีการเพิ่มคิวภาพ เปลี่ยนขนาดภาพ
+หรือตั้ง timestamp ใหม่ให้ภาพเก่า ส่วน AI ยังใช้ executor สองเธรดตามเดิม
+การเปลี่ยนนี้ลด handoff ของ callback กล้อง แต่ไม่ได้ยืนยันว่าแก้อาการค้างบนเครื่องจริงแล้ว
+
+หลัง update/export/build แล้ว ใช้คำสั่งเปิดกล้องเดิม และอ่านรายงาน:
+
+```bash
+ros2 topic echo /camera/capture_status --once --full-length
+```
+
+- `capture_fps` มาจากจำนวนครั้งที่ OpenCV อ่านเฟรมสำเร็จใน worker
+- `published_fps` มาจากจำนวนครั้งที่ publisher ส่งคืนสำเร็จ ไม่รับรองว่า subscriber ได้รับครบ
+- `capture.capture_gap_max_ms`, `capture.device_read_max_ms` เป็นค่าสูงสุดตั้งแต่เปิดกล้อง
+- `delivery.slot_wait_max_ms`, `message_copy_max_ms`, `dds_publish_max_ms`,
+  `callback_max_ms`, `publish_gap_max_ms` เป็นค่าสูงสุดในช่วงรายงานล่าสุด
+- `window_sec` อาจเกินหนึ่งวินาทีถ้า callback ถูกบล็อก จึงใช้ช่วงเวลาจริงคำนวณ FPS
+
+ถ้า capture สม่ำเสมอแต่ published FPS ต่ำ ให้ดูเวลา callback/publish และ scheduling
+ถ้าทั้งสองสม่ำเสมอแต่ตัววัดหรือ AI รับไม่ครบ ให้ตรวจ DDS/เครื่องมือวัด/subscriber ต่อ
+ถ้า capture เองมีช่องว่าง ให้ตรวจ V4L2/OpenCV/USB/การตั้งกล้องและ scheduling ของ worker
+รายงานนี้ไม่มีคำสั่งเคลื่อนหุ่นและไม่เปลี่ยนเกณฑ์ freshness
+
+หากทดสอบ V4L2 โดยตรง ต้องปิดทุกโปรแกรมที่จับกล้องก่อน ตัวอย่างรับ 300 เฟรม
+โดยไม่เปลี่ยน format หรือ calibration:
+
+```bash
+time timeout 30s v4l2-ctl \
+  -d /dev/v4l/by-id/usb-Generic_Web_Camera_200901010001-video-index0 \
+  --stream-mmap=4 --stream-count=300 --stream-to=/dev/null
+```
+
+ดู FPS ที่รับจริงร่วมกับเวลารัน แม้ `--get-parm` จะโฆษณา 30 FPS ก็อาจรับจริง 15 FPS
+และถ้ากด Ctrl+C ก่อนจบจะยังไม่ได้รับครบ 300 เฟรม

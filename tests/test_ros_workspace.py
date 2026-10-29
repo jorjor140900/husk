@@ -141,6 +141,8 @@ class WorkspaceTests(unittest.TestCase):
             config.write_text('{"clearance_px": 12}')
             core = package / "road_navigation/detector.py"
             core.write_text("# local detector edits\n")
+            capture = package / "road_navigation/capture.py"
+            capture.write_text("# old capture worker\n")
             result = update_workspace_code(workspace)
             self.assertEqual((Path(result["source_backup"]) / "husky_vision/nodes.py").read_text(), "# local ROS edits\n")
             self.assertIn("class DrivableAreaNode", target.read_text())
@@ -148,6 +150,9 @@ class WorkspaceTests(unittest.TestCase):
             self.assertNotIn("husky_drivable_area", (package / "launch/drivable_area.launch.py").read_text())
             self.assertEqual(config.read_text(), '{"clearance_px": 12}')
             self.assertEqual(core.read_text(), "# local detector edits\n")
+            self.assertEqual((Path(result["source_backup"]) / "road_navigation/capture.py").read_text(),
+                             "# old capture worker\n")
+            self.assertIn("def diagnostics(self)", capture.read_text())
             self.assertEqual((workspace / "models/husky-segformer/model.safetensors").read_bytes(), (model / "model.safetensors").read_bytes())
 
     def test_upgrade_adds_projection_to_an_older_export(self):
