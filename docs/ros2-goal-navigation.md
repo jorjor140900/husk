@@ -175,6 +175,9 @@ Check `robot/robot.json` uses the chosen `camera-active.yaml`, current mount,
 `odom`/`base_link`, real footprint (0.50 m front, 0.56 m rear, 0.33 m half-width
 for this robot, plus its configured margin) and loopback bridge URL. Preview
 does not require the unfinished motion-check flags to be set true.
+An optional positive `footprint.lateral_margin_m` overrides only the side
+clearance; `margin_m` still applies in front and rear. Omitting it preserves
+the original uniform margin. Nav2 and the downstream sweep filter share it.
 
 ```bash
 QT_QPA_PLATFORM=xcb ros2 launch husky_vision navigation.launch.py \

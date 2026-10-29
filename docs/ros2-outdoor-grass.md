@@ -222,6 +222,74 @@ mask กล้องเป็น veto เฉพาะบริเวณที่
 แล้ววัด preflight เดิมใหม่ อัตรานี้จำกัดงานจอ ไม่ลดขนาดโมเดล ไม่เปลี่ยนขนาดหุ่น/threshold
 และไม่ขยาย deadline ของ Nav2 ค่า input model และจำนวน CPU threads ใช้เดิมก่อนเปรียบเทียบ
 
+### ปรับระยะเผื่อเฉพาะด้านข้าง
+
+`footprint.margin_m` เดิมเป็นค่ารอบตัว ถ้าต้องเปลี่ยนเฉพาะข้างให้เพิ่ม
+`footprint.lateral_margin_m` เป็นจำนวนบวก หน่วยเมตร ถ้าไม่ใส่จะใช้ margin_m
+ทั้ง Nav2 footprint, stop-sweep sampling, collision bounds และ marker ใช้ค่าเดียวกัน
+ROS safety node ใช้ค่าเริ่มต้น `lateral_margin_m=0` เพื่อสืบทอด margin_m เดิม
+โดย robot profile ที่ระบุ field นี้ต้องใส่ค่าบวกชัดเจน ไม่ใช้ 0 เป็นระยะเผื่อจริง
+
+ตัวอย่างที่ผู้ใช้ขอ: หุ่นจริงกว้าง .66 m, หน้า .50 m, หลัง .56 m,
+margin_m=.15 และ lateral_margin_m=.08 จะได้ Nav2 footprint
+`[[.65,.41],[.65,-.41],[-.71,-.41],[-.71,.41]]` กว้าง .82 m
+ไม่แก้ half_width_m=.33 หรือระยะหน้า/หลังที่วัดจริง ระยะหน้า/หลังยังเผื่อ .15 m
+ตัวตรวจ swept geometry เพิ่ม sample spacing .01 m ตามเดิม จึงกว้าง .84 m ใน marker
+inflation_radius ยัง .81 m เพราะขนาดแนวยาวเท่าเดิม เป็นรัศมีแผ่ต้นทุนรอบนอก
+ไม่ใช่ความกว้างระยะเผื่อด้านข้างโดยตรง จึงไม่ตั้ง inflation_radius=.08 แทน field นี้
+
+หยุด navigation, อัปเดต source ด้วย `--update-code`, build และ source workspace ตามด้านบน
+ไม่ต้องหยุด webcam/AI เพื่อเปลี่ยน margin นี้ แล้วสำรองและแก้ profile จริงบนคอม Jazzy:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+from datetime import datetime, timezone
+import json
+import shutil
+
+p = Path.home()/"husky_vision_ws/robot/robot.json"
+data = json.loads(p.read_text())
+backup = p.with_name("robot-before-side08-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")+".json")
+shutil.copy2(p, backup)
+data["footprint"]["lateral_margin_m"] = 0.08
+p.write_text(json.dumps(data, indent=2)+"\n")
+print("Backup:", backup)
+print("Footprint:", data["footprint"])
+PY
+```
+
+เปิด navigation ด้วย robot.json เดิมและ `allow_motion:=false`, ตั้ง 2D Pose Estimate ใหม่
+ตรวจ footprint แล้วเลือก goal ใหม่เพื่อให้เทียบกับ costmap ล่าสุด:
+
+```bash
+ros2 param get /global_costmap/global_costmap footprint
+ros2 param get /husky_control/laser_safety lateral_margin_m
+ros2 run husky_vision navigation_plan_check --duration 4
+```
+
+กรณีทางจริงกว้าง 1.20 m แม้ margin ข้างเดิม .15 ก็มีความกว้างเหลือ .24 m
+การอ้อมมากจึงไม่ได้พิสูจน์ว่า margin เป็นสาเหตุเดียว การเปลี่ยนเป็น .08 เป็นการทดลอง
+วางแผนตามที่ผู้ใช้เลือก ไม่ใช่การรับรองความปลอดภัยในการวิ่ง ต้องวัดความกว้าง/ความคลาดเคลื่อนจริง
+และแยกว่าจุดต้นทุนผิดมาจาก AI, LiDAR หรือ projection/localization ก่อนเปิดเคลื่อนที่
+
+ถ้าภาพ overlay ดูเป็นทางว่างแต่ costmap ปิดทาง ให้ตรวจมาสก์ปัจจุบันที่ส่ง Nav2:
+
+```bash
+QT_QPA_PLATFORM=xcb ros2 run image_view image_view --ros-args \
+  -r image:=/drivable_area/mask -p image_transport:=raw \
+  -p autosize:=false -p width:=640 -p height:=480
+```
+
+สีขาวคือ drivable ที่ผ่าน threshold ปัจจุบัน สีดำบนพื้นคือ veto/non-drivable
+ส่วนเหนือ horizon เป็นส่วนที่ไม่ได้วิเคราะห์ ในโหมด async ภาพ overlay แบบเดิมยังมี temporal
+history สำหรับจอ แต่มาสก์ของ Nav2 ใช้เฟรมปัจจุบัน จึงอาจเห็นต่างกัน โดยเฉพาะบริเวณคะแนนใกล้ threshold
+เปิด `AI veto mask` ใน RViz และซ่อนเฉพาะ display `Global planning costmap` ชั่วคราว
+เพื่อดู veto ก่อน inflation โดยไม่ปิด layer ใน Nav2 หากพิกัด veto อยู่ผิดเมื่อเทียบกับภาพ/ทางจริง
+ต้องตรวจ calibration/mount/TF; หากมาสก์ปัจจุบันมีช่องดำบนพื้นจริง ต้องแก้การจำแนก
+หาก veto ไม่ปิดบริเวณนั้นแต่ costmap มีต้นทุน ให้ตรวจ scan/obstacle layer ต่อ
+ไม่ลบจุดหรือเติมรู mask อัตโนมัติเพียงเพื่อให้ได้เส้นตรง
+
 ### แสดงแผนไปยัง goal บนกล้อง
 
 คนดูยังต้องเห็นทิศทางที่ระบบตั้งใจไป โหมดเร็วจึงเปิดการฉาย **แผนจาก Nav2**

@@ -22,14 +22,32 @@ class CollisionConfig:
     max_linear_mps: float = 0.25
     max_angular_rps: float = 0.6
     sweep_step_m: float = 0.01
+    # Zero inherits margin_m for existing ROS configurations. Robot profiles
+    # omit this optional field unless explicitly setting a positive side margin.
+    lateral_margin_m: float = 0.0
 
     def __post_init__(self):
         for name in self.__dataclass_fields__:
             value = getattr(self, name)
-            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be finite and positive")
+            if (type(value) not in (int, float) or not math.isfinite(value) or
+                    (value < 0 if name=="lateral_margin_m" else value <= 0)):
+                bound = "nonnegative (0 inherits margin_m)" if name=="lateral_margin_m" else "positive"
+                raise ValueError(f"{name} must be finite and {bound}")
         if self.sweep_step_m > 0.05:
             raise ValueError("sweep_step_m must be <= 0.05")
+
+    @property
+    def side_margin_m(self):
+        return self.lateral_margin_m or self.margin_m
+
+    def padded_corners(self):
+        """Inflate separately by axis and by swept-pose sampling spacing."""
+        longitudinal = self.margin_m+self.sweep_step_m
+        lateral = self.side_margin_m+self.sweep_step_m
+        return np.array([[self.front_m+longitudinal,self.half_width_m+lateral],
+                         [self.front_m+longitudinal,-self.half_width_m-lateral],
+                         [-self.rear_m-longitudinal,-self.half_width_m-lateral],
+                         [-self.rear_m-longitudinal,self.half_width_m+lateral]])
 
 
 def scan_points(ranges, angle_min, angle_max, angle_increment, range_min, range_max, time_increment=0.0):
@@ -69,7 +87,7 @@ def stop_sweep(velocity, config, extra_reaction_sec=0.0):
     brake_time = max(v/config.braking_deceleration_mps2, abs(w)/config.braking_angular_deceleration_rps2)
     effective_time = config.reaction_sec + extra_reaction_sec + brake_time/2
     radius = math.hypot(max(config.front_m, config.rear_m) + config.margin_m,
-                        config.half_width_m + config.margin_m)
+                        config.half_width_m + config.side_margin_m)
     count = max(1, int(math.ceil(effective_time * (v + radius*abs(w)) / config.sweep_step_m))) + 1
     if count > 2048:
         raise ValueError("sweep_exceeds_limit")
@@ -91,19 +109,17 @@ def check_sweep(points_base, requested, measured, config, *, extra_reaction_sec=
     poses = np.vstack([stop_sweep(velocity, config, extra_reaction_sec)
                        for velocity in (requested, measured, *additional_velocities)])
     # Inflate by sample spacing so a return cannot slip between sample poses.
-    m = config.margin_m + config.sweep_step_m
-    corners = np.array([[config.front_m+m, config.half_width_m+m],
-                        [config.front_m+m, -config.half_width_m-m],
-                        [-config.rear_m-m, -config.half_width_m-m],
-                        [-config.rear_m-m, config.half_width_m+m]])
+    longitudinal = config.margin_m+config.sweep_step_m
+    lateral = config.side_margin_m+config.sweep_step_m
+    corners = config.padded_corners()
     for x, y, yaw in poses:
         c, s = math.cos(yaw), math.sin(yaw)
         rotation = np.array([[c, -s], [s, c]])
         if (np.linalg.norm(corners @ rotation.T + [x, y] - origin, axis=1) > sensor_range_m).any():
             return "sweep_outside_scan_range", poses
         local = (points - [x, y]) @ rotation
-        inside = ((local[:, 0] <= config.front_m+m) & (local[:, 0] >= -config.rear_m-m) &
-                  (np.abs(local[:, 1]) <= config.half_width_m+m))
+        inside = ((local[:, 0] <= config.front_m+longitudinal) & (local[:, 0] >= -config.rear_m-longitudinal) &
+                  (np.abs(local[:, 1]) <= config.half_width_m+lateral))
         if inside.any():
             return "obstacle_in_sweep", poses
     return "clear", poses

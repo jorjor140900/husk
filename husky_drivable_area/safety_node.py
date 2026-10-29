@@ -201,11 +201,7 @@ class LaserSafetyNode(Node):
         marker.scale.x = 0.015
         marker.color.r, marker.color.g, marker.color.a = (0.1 if reason == "clear" else 1.0), (1.0 if reason == "clear" else 0.1), 0.8
         if poses is not None:
-            m = self.config.margin_m + self.config.sweep_step_m
-            corners = np.array([[self.config.front_m+m, self.config.half_width_m+m],
-                                [self.config.front_m+m, -self.config.half_width_m-m],
-                                [-self.config.rear_m-m, -self.config.half_width_m-m],
-                                [-self.config.rear_m-m, self.config.half_width_m+m]])
+            corners = self.config.padded_corners()
             for x, y, yaw in poses[::max(1, len(poses)//20)]:
                 c, s = math.cos(yaw), math.sin(yaw)
                 polygon = corners @ np.array([[c, s], [-s, c]]) + [x, y]

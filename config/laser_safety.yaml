@@ -5,6 +5,7 @@
     rear_m: 0.45
     half_width_m: 0.30
     margin_m: 0.15
+    lateral_margin_m: 0.0  # Inherit margin_m; explicit positive value overrides sides only.
     reaction_sec: 0.30
     braking_deceleration_mps2: 0.4
     braking_angular_deceleration_rps2: 0.8

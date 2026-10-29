@@ -45,6 +45,21 @@ class CollisionTests(unittest.TestCase):
         self.assertEqual(self.check([[0.75, 0]]), "clear")
         self.assertEqual(self.check([[0.75, 0]], extra_reaction_sec=0.3), "obstacle_in_sweep")
 
+    def test_eight_cm_side_margin_preserves_body_and_front_rear_margin(self):
+        config=CollisionConfig(front_m=.5,rear_m=.56,half_width_m=.33,margin_m=.15,lateral_margin_m=.08)
+        check=lambda points:check_sweep(points,(0,0),(0,0),config)[0]
+        self.assertEqual(check([[0,.44]]),"clear")
+        self.assertEqual(check([[0,.40]]),"obstacle_in_sweep")
+        self.assertEqual(check([[0,.32]]),"obstacle_in_sweep")
+        self.assertEqual(check([[.63,0]]),"obstacle_in_sweep")
+        self.assertEqual(check([[-.68,0]]),"obstacle_in_sweep")
+        np.testing.assert_allclose(config.padded_corners(),[[.66,.42],[.66,-.42],[-.72,-.42],[-.72,.42]])
+
+    def test_old_margin_default_and_invalid_side_margin(self):
+        self.assertEqual(self.config.side_margin_m,self.config.margin_m)
+        for value in (-.01,float("nan"),float("inf"),True,None):
+            with self.assertRaises(ValueError):CollisionConfig(lateral_margin_m=value)
+
     def test_sensor_range_limits_apply_to_whole_footprint(self):
         self.assertEqual(self.check([], sensor_range_m=0.5), "sweep_outside_scan_range")
         self.assertEqual(self.check([], sensor_range_m=8.0), "clear")

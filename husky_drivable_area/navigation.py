@@ -70,7 +70,10 @@ def navigation_parameters(profile, template, map_file, tree_file):
             any(char.isspace() for char in frame) for frame in (base, odom)) or base == odom):
         raise ValueError("distinct real base_frame/odom_frame required, without whitespace or leading slash")
     margin = footprint["margin_m"]
-    front, rear, half = footprint["front_m"]+margin, footprint["rear_m"]+margin, footprint["half_width_m"]+margin
+    side_margin = footprint.get("lateral_margin_m",margin)
+    if type(side_margin) not in (int,float) or not math.isfinite(side_margin) or side_margin<=0:
+        raise ValueError("footprint.lateral_margin_m must be finite and positive when provided")
+    front, rear, half = footprint["front_m"]+margin, footprint["rear_m"]+margin, footprint["half_width_m"]+side_margin
     polygon = str([[front, half], [front, -half], [-rear, -half], [-rear, half]])
     data["map_server"]["ros__parameters"]["yaml_filename"] = str(Path(map_file).expanduser().resolve())
     amcl = data["amcl"]["ros__parameters"]

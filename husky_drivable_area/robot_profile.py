@@ -82,6 +82,10 @@ def load_robot_profile(filename):
         value = data["footprint"].get(key)
         if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
             problems.append("footprint."+key)
+    if "lateral_margin_m" in data["footprint"]:
+        value = data["footprint"]["lateral_margin_m"]
+        if type(value) not in (int,float) or not math.isfinite(value) or value<=0:
+            problems.append("footprint.lateral_margin_m")
     if problems:
         raise ValueError("Complete measured robot profile first: "+", ".join(problems))
     calibration = CameraCalibration.load(camera["calibration_path"])

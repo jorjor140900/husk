@@ -81,6 +81,17 @@ class RobotKitTests(unittest.TestCase):
             profile["footprint"].update(front_m=0.5, rear_m=0.5, half_width_m=0.35)
             path.write_text(json.dumps(profile))
             self.assertFalse(load_robot_profile(path)[0]["bridge"]["forward_commands"])
+            profile["footprint"]["lateral_margin_m"]=.08
+            path.write_text(json.dumps(profile))
+            loaded=load_robot_profile(path)[0]["footprint"]
+            self.assertEqual(loaded["margin_m"],.15)
+            self.assertEqual(loaded["lateral_margin_m"],.08)
+            for value in (0,-.01,None,True,float("nan")):
+                profile["footprint"]["lateral_margin_m"]=value
+                path.write_text(json.dumps(profile))
+                with self.assertRaisesRegex(ValueError,"lateral_margin_m"):
+                    load_robot_profile(path)
+            profile["footprint"]["lateral_margin_m"]=.08
             profile["bridge"].update(forward_commands=True, expected_output_topic="/verified/autonomy_input")
             path.write_text(json.dumps(profile))
             with self.assertRaisesRegex(ValueError, "pending"):
