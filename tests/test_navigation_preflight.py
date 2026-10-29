@@ -38,7 +38,31 @@ class NavigationPreparationTests(unittest.TestCase):
 
     def prepare(self):
         return preparation_checks(self.profile_file,self.map_file,package_lookup=lambda _:self.root,root=ROOT,
-                                  native_probe=lambda _: "synthetic native-probe fixture")
+                                  native_probe=lambda _: "synthetic native-probe fixture",
+                                  typesupport_probe=lambda *args: "synthetic transport-probe fixture")
+
+    def test_typesupport_fastcdr_failure_cannot_hide_behind_successful_manager_check(self):
+        def broken(prefix, library):
+            if "geographic_msgs" in library:
+                raise ValueError("undefined symbol: eprosima_fastcdr_Cdr_serialize")
+            return "resolves"
+        with mock.patch.dict("os.environ",{"RMW_IMPLEMENTATION":"rmw_fastrtps_cpp"}):
+            _, _, checks, setup = preparation_checks(self.profile_file,self.map_file,
+                package_lookup=lambda _:self.root, root=ROOT,native_probe=lambda _:"manager resolves",
+                typesupport_probe=broken)
+        self.assertTrue(checks["nav2_native_runtime"]["ok"])
+        self.assertTrue(checks["nav2_msgs_transport_cpp"]["ok"])
+        self.assertFalse(checks["geographic_msgs_transport_c"]["ok"])
+        self.assertFalse(checks["geographic_msgs_transport_cpp"]["ok"])
+        self.assertFalse(all(checks[name]["ok"] for name in setup))
+
+    def test_transport_probe_uses_selected_cyclone_introspection_without_changing_rmw(self):
+        probe = mock.Mock(return_value="introspection resolves")
+        with mock.patch.dict("os.environ",{"RMW_IMPLEMENTATION":"rmw_cyclonedds_cpp"}):
+            preparation_checks(self.profile_file,self.map_file,package_lookup=lambda _:self.root,
+                root=ROOT,native_probe=lambda _:"manager resolves",typesupport_probe=probe)
+        self.assertEqual(probe.call_count,4)
+        self.assertTrue(all("__rosidl_typesupport_introspection_" in call.args[1] for call in probe.call_args_list))
 
     def test_native_check_rejects_undefined_symbols_even_when_ldd_returns_zero(self):
         (self.root/"lib/libnav2_lifecycle_manager_core.so").touch()

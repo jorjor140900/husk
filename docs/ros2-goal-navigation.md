@@ -276,10 +276,41 @@ dependency comes from another workspace, inspect the sourced environment before
 retrying. Keep the robot stationary and the navigation launch in planning-only
 mode while resolving startup failures.
 
+Another field failure came from dynamically loaded Nav2 typesupport:
+`libgeographic_msgs__rosidl_typesupport_fastrtps_cpp.so` could not resolve
+`eprosima::fastcdr::Cdr::serialize`, and the C typesupport failed similarly.
+This is outside the manager library's direct dependency graph, so checking
+only the AMCL executable or manager core does not detect it. Preflight now
+also checks both C/C++ transport libraries for `nav2_msgs` and `geographic_msgs`
+using the selected RMW (Fast DDS by default, introspection for Cyclone DDS).
+It does not switch RMW or alter library paths to hide the error.
+
+Inspect the loaded Fast CDR path and package versions:
+
+```bash
+ldd /opt/ros/jazzy/lib/libgeographic_msgs__rosidl_typesupport_fastrtps_cpp.so | grep -E 'fastcdr|not found'
+apt-cache policy ros-jazzy-fastcdr ros-jazzy-geographic-msgs
+```
+
+For outdated packages loaded from the ROS installation, stop navigation and
+update the affected pair, then verify relocations again:
+
+```bash
+sudo apt update
+sudo apt install --only-upgrade ros-jazzy-fastcdr ros-jazzy-geographic-msgs
+ldd -r /opt/ros/jazzy/lib/libgeographic_msgs__rosidl_typesupport_fastrtps_cpp.so 2>&1 | grep -E 'undefined symbol|not found'
+```
+
+An empty final grep result means no such relocation errors were reported for
+that library. Restart navigation to load the updated libraries; an existing
+process may retain libraries from before the update. If dependencies load from
+`/usr/local` or another workspace, inspect that environment first instead of
+assuming the apt packages are the libraries actually in use.
+
 ## Software validation and its limits
 
 The implementation was built against ROS 2 Jazzy/Nav2, including the exported
-`husky_vision` and `husky_vision_nav2` packages. Validation includes 211 Python
+`husky_vision` and `husky_vision_nav2` packages. Validation includes 221 Python
 tests and four native C++ layer tests covering obstacle preservation, previous
 mask bounds, stale/invalid masks and frame transforms.
 
