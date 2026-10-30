@@ -22,7 +22,7 @@ nav=NavigationGate(parameter_overrides=[Parameter('allow_motion',value=True),Par
 def args():
  return ['--ros-args','-r','odom:=/husky_link/odom','-r','scan:=/husky_link/scan',
  '-r','motion_permitted:=/husky_control/motion_permitted','-r','control/requested_cmd_vel:=/husky_nav/guarded_request']
-safety=LaserSafetyNode(namespace='husky_control',cli_args=args(),parameter_overrides=[Parameter('supervised_trial',value=True),Parameter('release_hold_sec',value=.05)])
+safety=LaserSafetyNode(namespace='husky_control',cli_args=args(),parameter_overrides=[Parameter('supervised_trial',value=True),Parameter('release_hold_sec',value=.5)])
 normal=LaserSafetyNode(namespace='normal_trial_test',cli_args=args())
 f=Node('isolated_supervised_fixture');ex=SingleThreadedExecutor()
 for node in (nav,safety,normal,f):ex.add_node(node)
@@ -80,14 +80,21 @@ def restart():
 try:
  spin(.6)
  assert call('/husky_nav/set_enabled',SetBool,SetBool.Request(data=True)).success
- state['permission']=True;spin(.9)
+ state['permission']=True;spin(.2)
+ assert stopped(),'Output during initial clear hold'
+ assert not safety.trial.active,'Motion budget started before any command left the filter'
+ state['vision']=False;spin(.15)
+ assert safety.trial.fault=='','A startup gate closure latched before movement'
+ state['vision']=True;spin(.9)
  assert any(v>.005 for _,v,w in commands),statuses[-8:]
  assert max(v for _,v,w in commands)<=.030001
  assert all(v==0 and w==0 for v,w in normal_commands),'Normal mode passed invalid scan'
  assert statuses[-1]['lidar_checked'] is False
  assert not call('/husky_nav/reset_trial',Trigger,Trigger.Request()).success
  state['vision']=False;spin(.35);assert stopped(),statuses[-5:]
+ assert safety.trial_fault_context['navigation_gate']['reason']=='vision_invalid',safety.trial_fault_context
  state['vision']=True;spin(.4);assert stopped(),'Vision recovery resumed a latched trial'
+ assert safety.trial_fault_context['navigation_gate']['reason']=='vision_invalid','Fault context overwritten on recovery'
  restart();state['odom']=False;spin(.6);assert stopped(),statuses[-5:]
  state['odom']=True;spin(.4);assert stopped(),'Odometry recovery resumed a latched trial'
  restart();start_x=state['x']
@@ -99,6 +106,8 @@ try:
  assert statuses[-1]['reason']=='trial_time_limit'
  assert f.count_publishers('/cmd_vel')==0
  report=dict(passed=True,physical_robot=False,synthetic_inputs_and_operator=True,
+  startup_gate_closure_before_motion_does_not_latch=True,clear_hold_before_first_motion=True,
+  first_fault_context_survives_recovery=True,
   trial_moves_with_explicit_lidar_bypass=True,normal_mode_rejects_same_invalid_scan=True,
   vision_loss_stops_and_latches=True,odometry_loss_stops_and_latches=True,
   reset_rejected_while_permission_true=True,distance_limit_stops=True,time_limit_stops=True,

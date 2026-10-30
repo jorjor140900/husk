@@ -506,3 +506,28 @@ profile และ ROS1 gateway เดิมใช้ได้ ไม่ต้อ
 ทดสอบร่วมกับ CommandWatchdog ฝั่งหุ่นจริงใน Python: สะดุดก่อน arm ไม่ส่งคำสั่งเก่า,
 arm แล้วรับคำสั่งศูนย์แรก ตามด้วย .03 m/s, ขาดข้อมูลหลัง arm ต้องหยุด และ arm รอบใหม่ไม่ทำให้ link เปิดเอง
 การทดสอบนี้ไม่ใช่การขยับหุ่นจริง
+
+
+### Filter ค้าง trial_navigation_gate_closed ทั้งที่ link active
+
+รุ่นถัดจาก be34b2f เริ่ม motion budget ฝั่ง ROS2 เมื่อความเร็วที่ไม่เป็นศูนย์ออกจาก filter ครั้งแรก
+หลังผ่าน clear hold .5 s แล้ว ช่วงก่อนหน้านั้น gate ที่ยังไม่พร้อมยังทำให้ความเร็วศูนย์และเริ่มรอใหม่
+แต่ไม่ latch ว่าเสียระหว่างวิ่ง ทั้ง watchdog และงบ 20 s ฝั่งหุ่นนับตั้งแต่ arm ตามเดิม
+เมื่อมีความเร็วออกแล้ว ข้อมูล/permission/gate หายยังหยุดค้างและต้อง reset ขณะ STOP
+
+status filter มี `navigation_gate_reason` (ปัจจุบัน) และ `trial_fault_context.navigation_gate.reason`
+(เหตุครั้งแรกที่ทำให้หยุดหลังเริ่มส่งความเร็ว เก็บไว้จน reset) จึงตรวจหลัง session expired ได้
+ไม่ต้องกด g อีกรอบเพียงเพื่ออ่านเหตุเก่า
+
+ตัวจับทั้งรอบเปิดก่อน enable/g บนคอมใน ROS2 environment ใช้จาก checkout ได้โดยไม่ build:
+
+```bash
+python3 ~/husk-live/tools/trace_trial_session.py --duration 60
+```
+
+เป็น subscriber อย่างเดียว ไม่มี publisher ความเร็ว/permission และไม่มีการ enable/reset ให้อัตโนมัติ
+ในอีก terminal reset/enable ตามขั้น 8 แล้วกด g บนหุ่นหนึ่งรอบ
+ตัวจับจะจบหลังเห็น disarm 1 วินาที หรือครบ 60 วินาที แล้วพิมพ์ `REPORT:` พร้อมไฟล์ .json
+ส่งไฟล์รายงานนั้นได้แม้ session จบแล้ว รายงานมีเหตุ gate ขณะ armed,
+ครั้งแรกที่ gate ปิดหลังเคยผ่าน และค่าสูงสุดของ filtered command ส่วน .jsonl เป็นข้อความทุก sample
+ไม่มีภาพกล้อง และไม่ได้รับรองการขยับ/ระยะหยุดจริง

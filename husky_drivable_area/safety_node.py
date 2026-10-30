@@ -46,6 +46,7 @@ class LaserSafetyNode(Node):
         self.trial=TrialBudget() if self.supervised_trial else None
         self.request_invalid=False
         self.navigation_status=None
+        self.trial_fault_context=None
         self.odom_frame, self.base_frame = value("odom_frame"), value("base_frame")
         if not self.odom_frame or not self.base_frame or self.odom_frame == self.base_frame:
             raise ValueError("distinct odom_frame/base_frame required")
@@ -95,6 +96,7 @@ class LaserSafetyNode(Node):
         if self.permitted and time.monotonic()-self.permission_received<=.3:
             response.success=False;response.message="stop operator permission before resetting trial";return response
         self.trial=TrialBudget()
+        self.trial_fault_context=None
         if self.odom is not None:
             self.trial.observe(odometry_sample(self.odom[0],self.odom_frame,self.base_frame),self.odom[1])
         self.limiter.reset();self.request=(0.,0.);self.proposed=(0.,0.)
@@ -172,7 +174,6 @@ class LaserSafetyNode(Node):
                 return "trial_navigation_gate_stale",None
             if not self.navigation_status[0]["request_allowed"]:
                 return "trial_navigation_gate_closed",None
-            if not self.trial.active and any(self.request):self.trial.reset(now)
             return self.trial.check(now,ros_ns),None
         if not self.scans:
             return self.scan_error, None
@@ -207,11 +208,15 @@ class LaserSafetyNode(Node):
         dt, self.last_tick = max(1e-6, now-self.last_tick), now
         demand = Demand(*self.request, "tracking") if any(self.request) else Demand(reason="zero_request")
         self.proposed = self.limiter.step(demand, dt)
+        was_active=self.trial is not None and self.trial.active
         try:
             reason, poses = self._check()
         except (ValueError, TypeError, OverflowError, FloatingPointError):
             reason, poses = "invalid_geometry_or_motion", None
-        if self.trial is not None and self.trial.active and reason != "clear":
+        if was_active and reason != "clear":
+            if self.trial_fault_context is None:
+                self.trial_fault_context=dict(reason=reason,navigation_gate=(
+                    self.navigation_status[0].copy() if self.navigation_status else None))
             self.trial.stop(reason)
         if reason == "clear":
             if self.clear_since is None:
@@ -223,6 +228,12 @@ class LaserSafetyNode(Node):
         command = Twist()
         if reason == "clear":
             command.linear.x, command.angular.z = self.proposed
+            # Begin the ROS2 motion budget only when a nonzero command can
+            # actually leave the filter, after the full clear hold. Startup
+            # gates may still settle while output is zero. After this point,
+            # any lost gate latches until an explicit stopped reset.
+            if self.trial is not None and not self.trial.active and any(self.proposed):
+                self.trial.reset(now)
         else:
             self.limiter.reset()
         self._publish_command(command)
@@ -234,6 +245,8 @@ class LaserSafetyNode(Node):
             "trial_distance_m": self.trial.distance if self.trial else None,
             "trial_rotation_rad": self.trial.rotation if self.trial else None,
             "trial_limits": LIMITS if self.supervised_trial else None,
+            "navigation_gate_reason": self.navigation_status[0].get("reason") if self.navigation_status else None,
+            "trial_fault_context": self.trial_fault_context,
             "physical_robot_validated": False})))
         if self.marker.get_subscription_count() > 0:
             self._draw(poses, reason)
