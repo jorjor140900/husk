@@ -79,3 +79,72 @@ python -m tools.inspect_vlp16_bag \
 
 กล้องของงานนี้ผู้ใช้แจ้งว่าติดหุ่นแล้วและเสียบ USB กับคอม ROS1
 ต้องตรวจ device/driver, ใช้ camera.source=ros1_compressed และวัด mount ใหม่ก่อนเชื่อม image-to-metric path
+
+## Runtime observed-return transport and deskew
+
+`/velodyne_points` is now supported as an **opt-in** PointCloud2 transport:
+ROS1 `cloud_json` preserves the header, fields, strides, endianness and every data
+byte in bounded base64. The telemetry worker rate-limits the latest cloud to 5 Hz;
+the local command watchdog never performs cloud serialization. The default topic
+is empty, so existing deployments do not acquire extra cloud/network load.
+
+Update/export/build Jazzy and copy the newly exported ROS1 package to
+`~/husky_ws/src/husky_vision_bridge` on the robot, then `catkin_make --pkg husky_vision_bridge`.
+Use the existing no-joystick **preview** profile:
+
+```bash
+roslaunch husky_vision_bridge bridge.launch \
+  profile_path:="$HOME/husky-nojoy-preview.json" \
+  odom_topic:=/odometry/filtered scan_topic:=/scan base_frame:=base_link \
+  cloud_topic:=/velodyne_points cloud_max_fps:=5.0 \
+  allow_robot_output:=false
+```
+
+After updating, restart the gateway and the planning-only navigation so both
+load the new bridge code. Keep `allow_motion=false` and the SSH tunnel running. In a
+Jazzy terminal sourced with ROS/venv/workspace and Cyclone DDS:
+
+```bash
+ros2 run husky_vision vlp16_observer
+```
+
+Inspect:
+
+```bash
+ros2 topic echo /husky_nav/vlp16_status --once --full-length
+```
+
+Default `input_mode=inspect` checks raw layout, signed point times and source
+freshness and reports `source_timing_mode_required`; it does not deskew or publish
+geometry until the input timing convention has been verified. Inspect the robot's
+`rosparam get /velodyne_nodelet_manager_transform`, especially `fixed_frame` and
+`target_frame`, to avoid applying motion compensation twice. After confirming
+that the input consists of raw sensor returns at their per-point times, run:
+
+```bash
+ros2 run husky_vision vlp16_observer --ros-args -p input_mode:=raw_timed
+```
+
+In this explicit mode, the observer uses the measured sensor-to-base TF at the cloud stamp and waits
+for odometry brackets over **all** signed point times. It never extrapolates or
+replaces the source stamp with receipt time. Old/malformed clouds, missing TF,
+nonplanar odometry, missing brackets and odometry gaps remain invalid. It publishes
+only deskewed measured returns at `/husky_nav/vlp16_observed_points` in `base_link`.
+In RViz a PointCloud2 display may use this topic with a short decay time; always
+check the status as well. No points are synthesized for missing rays.
+
+`valid=true` and `deskewed_observed_returns_only` mean that transport and geometric
+motion compensation succeeded. **They do not mean a safe command is allowed.**
+Ground/body filtering, obstacle-height coverage, the near-field blind region and
+physical stopping checks are still required before a cloud-based control filter
+can replace the rejected planar scan. The observer has no velocity publisher,
+permission publisher or arm client. It deliberately leaves the existing final
+filter and the pending field measurements unchanged. This step does not repair
+`invalid_scan_metadata` or enable autonomous motion.
+
+Live transform-node configuration supplied on 2026-10-30:
+`fixed_frame=''`, `target_frame=''`, `min_range=0.4`, `max_range=130.0`,
+`organize_cloud=false`, VLP16db calibration, full horizontal view.
+This configuration supports choosing `input_mode=raw_timed` for this deployment;
+recheck it after driver changes. These cloud-source limits differ from the
+LaserScan's reported 0..200 m and do not establish free-space/low-obstacle coverage.

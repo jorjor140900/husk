@@ -4,6 +4,7 @@ import json
 import math
 import threading
 import time
+from array import array
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -12,14 +13,14 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 from rosidl_runtime_py.set_message import set_message_fields
-from sensor_msgs.msg import Image, LaserScan
+from sensor_msgs.msg import Image, LaserScan, PointCloud2
 from std_msgs.msg import Bool, Header, String
 from std_srvs.srv import SetBool
 from tf2_msgs.msg import TFMessage
 
 from husky_link_core.protocol import finite, frame_id, stamp_ns
+from husky_link_core.cloud_wire import decode_cloud
 from .robot_link import RosbridgeLink
-from .robot_camera import decode_camera
 from .transport import fill_image
 
 
@@ -47,6 +48,7 @@ class RobotBridgeNode(Node):
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.odom_pub = self.create_publisher(Odometry, "odom", qos)
         self.scan_pub = self.create_publisher(LaserScan, "scan", qos)
+        self.cloud_pub = self.create_publisher(PointCloud2, "points", qos)
         self.image_pub = self.create_publisher(Image, "image_raw", qos)
         self.camera_width, self.camera_height = value("expected_camera_width"), value("expected_camera_height")
         self.tf_pub = self.create_publisher(TFMessage, "/tf", 10)
@@ -97,7 +99,20 @@ class RobotBridgeNode(Node):
             if kind == "state":
                 continue
             try:
+                if kind == "cloud":
+                    fields, raw = decode_cloud(packet["msg"])
+                    message = PointCloud2()
+                    set_message_fields(message, ros2_fields(fields))
+                    message.data = array("B", raw)
+                    source = message.header.stamp.sec*10**9+message.header.stamp.nanosec
+                    if source <= 0 or not -.05 <= (self.get_clock().now().nanoseconds-source)/1e9 <= .3:
+                        raise ValueError("stale_cloud_transport")
+                    self.cloud_pub.publish(message)
+                    with self.command_lock:
+                        self.decode_errors.pop(kind, None)
+                    continue
                 if kind == "image":
+                    from .robot_camera import decode_camera
                     started = time.monotonic()
                     image = decode_camera(packet["msg"], self.camera_width, self.camera_height)
                     header = Header()

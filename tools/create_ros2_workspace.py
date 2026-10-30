@@ -24,6 +24,7 @@ SOURCE_PACKAGE = "husky_drivable_area"
 
 def ros_files():
     files = {name: ROOT / name for name in ("setup.py", "package.xml", "requirements-bridge.txt")}
+    files["docs/vlp16-field-review.md"] = ROOT / "docs/vlp16-field-review.md"
     files.update({f"{PACKAGE}/{path.name}": path for path in (ROOT / SOURCE_PACKAGE).glob("*.py")
                   if path.name != "__init__.py"})
     files.update({str(path.relative_to(ROOT)): path for directory, pattern in (

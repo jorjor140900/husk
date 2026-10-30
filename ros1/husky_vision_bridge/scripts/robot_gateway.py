@@ -12,12 +12,13 @@ import math
 import rospy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import CompressedImage, Joy, LaserScan
+from sensor_msgs.msg import CompressedImage, Joy, LaserScan, PointCloud2
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool, SetBoolResponse
 from tf2_msgs.msg import TFMessage
 
 from husky_link_core.protocol import CommandWatchdog, PROTOCOL, dumps, joy_permitted, loads, stamp_dict, wire
+from husky_link_core.cloud_wire import encode_cloud
 
 try:
     monotonic = time.monotonic
@@ -51,7 +52,7 @@ class RobotGateway(object):
         self.output = rospy.Publisher(self.output_topic, Twist, queue_size=1)
         self.state = rospy.Publisher("state", String, queue_size=1)
         self.publishers = dict((kind, rospy.Publisher(kind + "_json", String, queue_size=1, latch=kind == "tf_static"))
-                               for kind in ("odom", "scan", "tf", "tf_static", "permission", "image"))
+                               for kind in ("odom", "scan", "tf", "tf_static", "permission", "image", "cloud"))
         self.pending, self.transforms, self.static = {}, {}, {}
         self.local_bool = (False, float("-inf"))
         self.local_joy = None
@@ -70,6 +71,14 @@ class RobotGateway(object):
             topic = robot.get(kind + "_topic") or rospy.get_param("~" + kind + "_topic", "")
             if topic:
                 self.subs.append(rospy.Subscriber(topic, cls, self.telemetry, callback_args=kind, queue_size=1))
+        cloud_topic = rospy.get_param("~cloud_topic", "")
+        self.cloud_max_fps = float(rospy.get_param("~cloud_max_fps", 5.0))
+        if not 1 <= self.cloud_max_fps <= 10:
+            raise ValueError("cloud_max_fps must be 1..10")
+        self.last_cloud_sent = float("-inf")
+        if cloud_topic:
+            self.subs.append(rospy.Subscriber(cloud_topic, PointCloud2, self.telemetry, callback_args="cloud",
+                queue_size=1, buff_size=2*1024*1024, tcp_nodelay=True))
         if self.permission_topic:
             self.subs.append(rospy.Subscriber(self.permission_topic, Bool, self.permission, queue_size=1))
         if self.joy_topic:
@@ -186,12 +195,19 @@ class RobotGateway(object):
                 # The callback overwrites this slot with a newer image. Never
                 # build a FIFO of camera frames while limiting transport rate.
                 self.pending["image"] = pending.pop("image")
+            if "cloud" in pending and monotonic()-self.last_cloud_sent < 1.0/self.cloud_max_fps:
+                self.pending["cloud"] = pending.pop("cloud")
         for kind, message in pending.items():
             try:
                 received_stamp = None
                 if kind == "permission":
                     message, received_stamp = message
-                if kind == "image":
+                if kind == "cloud":
+                    age = (rospy.Time.now().to_nsec()-message.header.stamp.to_nsec())/1e9
+                    if not -.05 <= age <= .3:
+                        raise ValueError("stale_cloud_input")
+                    value = encode_cloud(message)
+                elif kind == "image":
                     age = (rospy.Time.now().to_nsec()-message.header.stamp.to_nsec())/1e9
                     if not -0.05 <= age <= self.image_max_age:
                         raise ValueError("stale_camera_input")
@@ -207,6 +223,8 @@ class RobotGateway(object):
                 self.publishers[kind].publish(String(data=dumps(packet)))
                 if kind == "image":
                     self.last_image_sent = monotonic()
+                elif kind == "cloud":
+                    self.last_cloud_sent = monotonic()
             except (ValueError, TypeError, OverflowError) as exc:
                 rospy.logwarn_throttle(2.0, "Telemetry packet rejected: " + kind + " (" + str(exc) + ")")
 

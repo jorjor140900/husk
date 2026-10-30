@@ -40,7 +40,7 @@ class GatewayMediaTests(unittest.TestCase):
         modules = {"rospy": ros}
         for name, types in {
             "geometry_msgs": {"Twist": Twist}, "nav_msgs": {"Odometry": object},
-            "sensor_msgs": {"CompressedImage": object, "Joy": object, "LaserScan": object},
+            "sensor_msgs": {"CompressedImage": object, "Joy": object, "LaserScan": object, "PointCloud2": object},
             "std_msgs": {"Bool": lambda data: NS(data=data), "String": lambda data: NS(data=data)},
             "std_srvs": {"SetBool": object, "SetBoolResponse": object}, "tf2_msgs": {"TFMessage": object},
         }.items():
@@ -112,6 +112,33 @@ class GatewayMediaTests(unittest.TestCase):
         for image in (self.image(stamp=9_000_000_000), self.image(stamp=11_000_000_000), self.image(b"x"*1048577)):
             g.telemetry(image, "image"); g.flush_telemetry()
         self.assertEqual(g.publishers["image"].messages, [])
+
+    def test_blocked_cloud_encoding_does_not_block_command_stop_deadline(self):
+        g=self.gateway
+        g.cloud_max_fps,g.last_cloud_sent=5.,float("-inf")
+        g.publishers["cloud"]=Publisher()
+        g.gate.set_enabled(True,self.clock[0])
+        self.assertTrue(g.gate.accept(dict(protocol=1,lease=g.gate.lease,sequence=1,
+            stamp=stamp_dict(self.clock[1]),base_frame="base_link",linear_x=.05,angular_z=0.),
+            self.clock[1],self.clock[0]))
+        g.telemetry(NS(header=Header(self.clock[1])),"cloud")
+        entered,release=threading.Event(),threading.Event()
+        def blocked(message):
+            entered.set()
+            if not release.wait(2):raise RuntimeError("encoder not released")
+            return dict(test_fixture=True)
+        with mock.patch.object(self.module,"encode_cloud",side_effect=blocked):
+            worker=threading.Thread(target=g.flush_telemetry)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                self.clock[:]=[2.3,10_300_000_000]
+                g.tick(None)
+                self.assertFalse(g.gate.armed)
+                self.assertEqual(g.output.messages[-1].linear.x,0.)
+            finally:
+                release.set();worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
 
 
 if __name__ == "__main__": unittest.main()

@@ -9,7 +9,7 @@ from husky_link_core.protocol import PROTOCOL, dumps, finite, frame_id, loads, s
 
 
 class RosbridgeLink:
-    KINDS = ("odom", "scan", "tf", "tf_static", "permission", "image", "state")
+    KINDS = ("odom", "scan", "tf", "tf_static", "permission", "image", "cloud", "state")
 
     def __init__(self, url, *, prefix="/husky_vision", forward_commands=False, base_frame="",
                  expected_output_topic="", command_provider=None, ros_clock=None):
