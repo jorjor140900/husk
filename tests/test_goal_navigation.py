@@ -114,6 +114,25 @@ class NavigationConfigTests(unittest.TestCase):
             result = update_workspace_code(workspace,with_navigation=True)
             self.assertEqual((Path(result["navigation_plugin"]["source_backup"])/"src/vision_mask_layer.cpp").read_text(),"local edits")
 
+    def test_lateral_inflation_extent_is_separate_from_hull_and_ai_margin(self):
+        hull=dict(front_m=.5,rear_m=.56,half_width_m=.33,margin_m=.15,lateral_margin_m=.08)
+        profile=dict(robot=dict(base_frame="base_link",odom_frame="odom"),footprint=hull,
+                     navigation=dict(inflation_side_clearance_m=.15))
+        before=copy.deepcopy(profile)
+        template=yaml.safe_load((ROOT/"config/navigation.yaml").read_text())
+        data=navigation_parameters(profile,template,"/tmp/site.yaml","/tmp/tree.xml")
+        self.assertEqual(profile,before)
+        for name in ('global_costmap','local_costmap'):
+            parameters=data[name][name]['ros__parameters']
+            radius=parameters['inflation_layer']['inflation_radius']
+            self.assertAlmostEqual(radius,.48)
+            self.assertAlmostEqual(radius-hull['half_width_m'],.15)
+            corners=np.array(ast.literal_eval(parameters['footprint']))
+            np.testing.assert_allclose(corners,[[.65,.41],[.65,-.41],[-.71,-.41],[-.71,.41]])
+        for value in (0,-.1,True,None,float('nan'),float('inf'),.01):
+            profile['navigation']['inflation_side_clearance_m']=value
+            with self.assertRaises(ValueError):navigation_parameters(profile,template,'/tmp/site.yaml','/tmp/tree.xml')
+
     def test_side_margin_changes_only_width_and_matches_collision_filter(self):
         from husky_drivable_area.collision import CollisionConfig
         footprint=dict(front_m=.5,rear_m=.56,half_width_m=.33,margin_m=.15,lateral_margin_m=.08)

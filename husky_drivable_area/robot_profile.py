@@ -90,6 +90,9 @@ def load_robot_profile(filename, *, allow_supervised_trial=False):
             problems.append("footprint.lateral_margin_m")
     if problems:
         raise ValueError("Complete measured robot profile first: "+", ".join(problems))
+    if "navigation" in data:
+        from .navigation import inflation_radius
+        inflation_radius(data)
     calibration = CameraCalibration.load(camera["calibration_path"])
     mount = CameraMount.load(camera["mount_path"])
     if [camera["width"], camera["height"]] != [calibration.width, calibration.height]:

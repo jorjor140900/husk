@@ -57,6 +57,30 @@ def mapping_scan_geometry(scan):
                 range_min=max(scan.range_min, float(np.finfo(np.float32).eps)))
 
 
+def inflation_radius(profile):
+    """Optional outer lateral extent relative to the measured hull half-width.
+
+    Nav2 inflation is a radial cost field, not a certified footprint sweep or
+    an extra margin added outside the padded footprint. Keep its radius at
+    least the padded polygon's inscribed radius.
+    """
+    hull=profile['footprint']
+    front=hull['front_m']+hull['margin_m']
+    rear=hull['rear_m']+hull['margin_m']
+    half=hull['half_width_m']+hull.get('lateral_margin_m',hull['margin_m'])
+    settings=profile.get('navigation',{})
+    if not isinstance(settings,dict):raise ValueError('navigation must be an object')
+    if 'inflation_side_clearance_m' not in settings:
+        return max(front,rear,half)+.1
+    clearance=settings['inflation_side_clearance_m']
+    if type(clearance) not in (int,float) or not math.isfinite(clearance) or clearance<=0:
+        raise ValueError('navigation.inflation_side_clearance_m must be finite and positive')
+    radius=hull['half_width_m']+clearance
+    if radius+1e-9<min(front,rear,half):
+        raise ValueError('inflation side clearance must cover the padded footprint inscribed radius')
+    return radius
+
+
 def navigation_parameters(profile, template, map_file, tree_file):
     """Render native Nav2 parameters using the measured robot footprint."""
     data = copy.deepcopy(template)
@@ -74,6 +98,7 @@ def navigation_parameters(profile, template, map_file, tree_file):
     if type(side_margin) not in (int,float) or not math.isfinite(side_margin) or side_margin<=0:
         raise ValueError("footprint.lateral_margin_m must be finite and positive when provided")
     front, rear, half = footprint["front_m"]+margin, footprint["rear_m"]+margin, footprint["half_width_m"]+side_margin
+    radius=inflation_radius(profile)
     polygon = str([[front, half], [front, -half], [-rear, -half], [-rear, half]])
     data["map_server"]["ros__parameters"]["yaml_filename"] = str(Path(map_file).expanduser().resolve())
     amcl = data["amcl"]["ros__parameters"]
@@ -83,5 +108,5 @@ def navigation_parameters(profile, template, map_file, tree_file):
     for name, frame in (("local_costmap", odom), ("global_costmap", "map")):
         params = data[name][name]["ros__parameters"]
         params.update(robot_base_frame=base, global_frame=frame, footprint=polygon, footprint_padding=0.)
-        params["inflation_layer"]["inflation_radius"] = max(front, rear, half)+.1
+        params["inflation_layer"]["inflation_radius"] = radius
     return data

@@ -675,3 +675,54 @@ Native ROS2 ใน container ที่ตัด network ใช้ controller+gat
 จึงผ่านขีดจำกัดเก่า .5m/20s และหยุดด้วย goal จริงใน fixture
 TF หน่วง 120 ms, legacy grid invalid ตลอด, ไม่มี publisher /cmd_vel และไม่มีการเชื่อมต่อหุ่นจริง
 ดู `tests/native_goal_session_probe.py`; ไม่ใช่ผลทดสอบการเคลื่อน/หยุดบนหุ่นจริง
+
+
+## 10. ลดขอบต้นทุนด้านข้างของ costmap เหลือ 15 ซม. นอกตัวหุ่น
+
+สีฟ้า/ม่วงใน global planning costmap เป็น cost field รอบสิ่งกีดขวาง ไม่ใช่ polygon ขนาดหุ่นทั้งหมด
+เดิม inflation radius คำนวณจากด้านยาว+margin ทำให้ได้ .81 m สำหรับ profile นี้
+ใช้ `navigation.inflation_side_clearance_m=.15` เพื่อเลือก radius จากครึ่งความกว้างจริง:
+.33+.15=.48 m ซึ่งครอบคลุม padded inscribed radius .41 m เดิม
+ไม่มีการเปลี่ยน footprint, ขนาดตัวหุ่น หรือ AI side margin .08 m/ความกว้างตรวจ .82 m
+รัศมีนี้บอกขอบนอกในแนวข้าง ไม่รับรองระยะห่างของ footprint ทั้งสี่มุมในทุกทิศ
+profile ที่ไม่ระบุ field ใหม่ยังใช้ค่าเดิม
+
+### ทดลอง runtime โดยยังไม่เปลี่ยนไฟล์
+
+กด Space ให้ console เป็น STOP แล้วบนคอมใน ROS2 environment/Cyclone:
+
+```bash
+ros2 param set /global_costmap/global_costmap inflation_layer.inflation_radius 0.48
+ros2 param get /global_costmap/global_costmap inflation_layer.inflation_radius
+```
+
+รอ costmap อัปเดตแล้วเลือก goal ใหม่ เปลี่ยนนี้มีผลกับ guide ไม่ใช่การทำให้ mask ที่ไม่ผ่านกลายเป็นผ่าน
+ถ้าใช้ full Nav2 ที่มี local_costmap เปิดอยู่ ให้ตั้งค่าเดียวกันที่ /local_costmap/local_costmap ด้วย
+vision steering ไม่ได้เปิด native controller/local_costmap จึงไม่ต้องเรียก node ที่ไม่มีอยู่
+คำสั่ง runtime ต้องตอบ set สำเร็จ
+
+### เก็บค่าไว้หลัง restart
+
+หยุด field launch แล้วอัปเดต source/export/build ตามขั้น 1 (เฉพาะคอม ไม่ต้องเปลี่ยน gateway หุ่น)
+แก้เฉพาะ profile ที่เปิดใช้จริง พร้อมสำรองไฟล์:
+
+```bash
+python3 - <<'PYPROFILE'
+import json
+import shutil
+from pathlib import Path
+p=Path.home()/"husky_vision_ws/robot/robot-nojoy-goal.json"
+backup=p.with_suffix('.json.before-inflation.bak')
+if not backup.exists():
+    shutil.copy2(p,backup)
+data=json.loads(p.read_text())
+data.setdefault('navigation',{})['inflation_side_clearance_m']=0.15
+p.write_text(json.dumps(data,indent=2)+'\n')
+print('Updated:',p)
+PYPROFILE
+```
+
+เปิด field ด้วย profile เดิมแล้ว param get ต้องเป็น .48
+ถ้าต้องย้อนค่าทดลอง runtime ใช้ radius .81 หรือเอา field ใหม่ออกจาก profile แล้ว restart
+AI ที่รายงาน start_blocked_narrow_or_unobserved ยังต้องตรวจ mask/ตำแหน่ง/calibration ต่อ
+ไม่เปลี่ยน lateral_margin_m เป็น .15 เพื่อแก้แถบสี เพราะจะเพิ่มความกว้างตรวจ AI จาก .82 เป็น .96 m
