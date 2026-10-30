@@ -177,7 +177,7 @@ centerline its height above the declared plane is approximately:
 
 In the observed 1.2 m wide front strip there are no returns before X=1.5 m,
 and no returns within 5 cm of the declared floor below X=3 m. This is **not** a
-free-space measurement. Returns at X=1.5..2.5 m have heights roughly .31..63 m;
+free-space measurement. Returns at X=1.5..2.5 m have heights roughly 0.31 to 0.63 m;
 without synchronized imagery they cannot be identified as particular objects.
 Ground-height candidates occur around X=3..5 m, about 2..3 cm below the declared
 plane. No ground-class or passability decision is made from height alone.
