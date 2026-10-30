@@ -53,6 +53,19 @@ class OperatorProfileTests(unittest.TestCase):
         self.assertNotIn("camera", minimal)
         self.assertEqual(actual["robot"], minimal["robot"])
 
+    def test_supervised_goal_generates_matching_profiles_and_preserves_pending_facts(self):
+        from husky_link_core.supervised_trial import GOAL_LIMITS
+        before=self.source.read_bytes()
+        report=prepare_operator_profile(self.source,self.output,self.robot_output,supervised_goal=True)
+        laptop=json.loads(self.output.read_text());robot=json.loads(self.robot_output.read_text())
+        self.assertEqual(laptop['trial_limits'],GOAL_LIMITS)
+        self.assertEqual(robot['trial_limits'],GOAL_LIMITS)
+        self.assertEqual(report['trial_limits'],GOAL_LIMITS)
+        self.assertEqual(laptop['field_measurements'],self.profile['field_measurements'])
+        self.assertEqual(self.source.read_bytes(),before)
+        load_robot_profile(self.output,allow_supervised_trial=True)
+        with self.assertRaises(ValueError):load_robot_profile(self.output)
+
     def test_motion_rejected_without_creating_files_when_field_checks_are_pending(self):
         with self.assertRaisesRegex(ValueError, "pending"):
             self.prepare(True)

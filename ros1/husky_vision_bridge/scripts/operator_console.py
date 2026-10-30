@@ -15,7 +15,7 @@ from std_srvs.srv import SetBool
 
 from husky_link_core.operator_permission import OperatorSession, operator_settings
 from husky_link_core.protocol import loads
-from husky_link_core.supervised_trial import trial_mode, LIMITS
+from husky_link_core.supervised_trial import trial_mode, profile_trial_limits
 
 
 def main():
@@ -27,9 +27,9 @@ def main():
     allow = rospy.get_param("~allow_robot_output", False)
     trial=trial_mode(profile,rospy.get_param("~supervised_trial",False))
     topic, expected = operator_settings(profile, allow, trial)
-    duration=rospy.get_param("~session_sec",30.0)
+    duration=rospy.get_param("~session_sec",profile_trial_limits(profile)['max_duration_sec'] if trial else 30.0)
     if trial:
-        duration=min(float(duration),LIMITS['max_duration_sec'])
+        duration=min(float(duration),profile_trial_limits(profile)['max_duration_sec'])
         print("SUPERVISED TRIAL: LiDAR NOT CHECKED. Operator must watch robot and keep hardware e-stop available.")
     session = OperatorSession(duration, expected, allow)
     # A single console owns this local permission topic. No latching/background

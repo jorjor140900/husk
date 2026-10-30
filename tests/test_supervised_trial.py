@@ -15,6 +15,30 @@ class TrialBudgetTests(unittest.TestCase):
             with self.assertRaises(ValueError):trial_mode(p,flag)
         self.assertFalse(trial_mode({}))
 
+    def test_goal_session_is_explicit_and_old_profile_limits_stay_unchanged(self):
+        from husky_link_core.supervised_trial import GOAL_LIMITS, profile_trial_limits
+        profile=dict(operation_mode=MODE,trial_limits=GOAL_LIMITS.copy())
+        self.assertTrue(trial_mode(profile,True))
+        self.assertEqual(profile_trial_limits(profile)['max_linear_mps'],.05)
+        self.assertEqual(LIMITS['max_linear_mps'],.03)
+        self.assertEqual(LIMITS['max_duration_sec'],20.)
+        with self.assertRaises(ValueError):trial_mode(profile,False)
+        for key,value in (('max_linear_mps',.8),('max_distance_m',100.),('max_duration_sec',float('inf'))):
+            bad=dict(profile,trial_limits=dict(GOAL_LIMITS,**{key:value}))
+            with self.assertRaises(ValueError):trial_mode(bad,True)
+
+    def test_goal_command_and_budget_pass_old_limits_but_keep_backup_limits(self):
+        from husky_link_core.supervised_trial import GOAL_LIMITS
+        self.assertEqual(bounded_command(.05,0.,GOAL_LIMITS),(.05,0.))
+        budget=TrialBudget(GOAL_LIMITS);budget.observe((0,0,0,10_000_000_000),1.);budget.reset(1.)
+        budget.observe((.8,0,0,31_000_000_000),22.)
+        self.assertEqual(budget.check(22.,31_000_000_000),'clear')
+        budget.observe((3.01,0,0,32_000_000_000),23.)
+        self.assertEqual(budget.check(23.,32_000_000_000),'trial_distance_limit')
+        budget=TrialBudget(GOAL_LIMITS);budget.observe((0,0,0,10_000_000_000),1.);budget.reset(1.)
+        budget.observe((0,0,0,130_000_000_000),121.)
+        self.assertEqual(budget.check(121.,130_000_000_000),'trial_time_limit')
+
     def test_command_scaling_preserves_curvature_and_rejects_invalid(self):
         v,w=bounded_command(.05,.2)
         self.assertAlmostEqual(v,.03);self.assertAlmostEqual(w/v,4)

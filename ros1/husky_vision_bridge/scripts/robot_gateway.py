@@ -19,7 +19,7 @@ from tf2_msgs.msg import TFMessage
 
 from husky_link_core.protocol import CommandWatchdog, PROTOCOL, dumps, joy_permitted, loads, stamp_dict, wire
 from husky_link_core.cloud_wire import encode_cloud
-from husky_link_core.supervised_trial import trial_mode, TrialBudget, LIMITS, odometry_sample
+from husky_link_core.supervised_trial import trial_mode, TrialBudget, profile_trial_limits, odometry_sample
 
 try:
     monotonic = time.monotonic
@@ -38,11 +38,12 @@ class RobotGateway(object):
             profile = {}
         robot = profile.get("robot", {})
         self.supervised_trial = trial_mode(profile, rospy.get_param("~supervised_trial", False))
-        self.trial = TrialBudget() if self.supervised_trial else None
+        self.trial_limits = profile_trial_limits(profile) if self.supervised_trial else None
+        self.trial = TrialBudget(self.trial_limits) if self.supervised_trial else None
         self.odom_frame = robot.get("odom_frame") or "odom"
         self.gate = CommandWatchdog(robot.get("base_frame") or rospy.get_param("~base_frame", "base_link"),
-            max_linear=LIMITS['max_linear_mps'] if self.supervised_trial else .10,
-            max_angular=LIMITS['max_angular_rps'] if self.supervised_trial else .30)
+            max_linear=self.trial_limits['max_linear_mps'] if self.supervised_trial else .10,
+            max_angular=self.trial_limits['max_angular_rps'] if self.supervised_trial else .30)
         self.allow_output = rospy.get_param("~allow_robot_output", False)
         if type(self.allow_output) is not bool:
             raise ValueError("allow_robot_output must be bool")
@@ -211,7 +212,7 @@ class RobotGateway(object):
             if getattr(self,"trial_status",None) is not None:
                 self.trial_status.publish(String(data=dumps(dict(mode="supervised_vision_trial",lidar_checked=False,
                     armed=self.gate.armed,reason=self.gate.reason,distance_m=self.trial.distance,
-                    rotation_rad=self.trial.rotation,limits=LIMITS))))
+                    rotation_rad=self.trial.rotation,limits=self.trial.limits))))
             self.state.publish(String(data=dumps({"protocol": PROTOCOL, "stamp": stamp_dict(ros_ns),
                 "armed": self.gate.armed, "lease": self.gate.lease, "reason": self.gate.reason,
                 "driver_output_enabled": self.allow_output, "output_topic": self.output_topic,

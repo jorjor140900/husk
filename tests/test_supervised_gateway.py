@@ -22,12 +22,24 @@ class SupervisedGatewayTests(unittest.TestCase):
             position=NS(x=float(x),y=0.,z=0.),orientation=NS(x=0.,y=0.,z=0.,w=1.))))
         self.g.telemetry(message,'odom')
 
-    def command(self):
+    def command(self,v=.03):
         self.sequence+=1
         self.g.permission(NS(data=True))
         self.g.command(NS(data=dumps(dict(protocol=1,lease=self.g.gate.lease,sequence=self.sequence,
-            stamp=stamp_dict(self.clock[1]),base_frame='base_link',linear_x=.03,angular_z=0.))))
+            stamp=stamp_dict(self.clock[1]),base_frame='base_link',linear_x=v,angular_z=0.))))
         self.g.tick(None)
+
+    def test_goal_preset_robot_watchdog_accepts_faster_commands_and_keeps_backups(self):
+        from husky_link_core.supervised_trial import GOAL_LIMITS
+        self.g.trial=TrialBudget(GOAL_LIMITS);self.g.gate.max_linear=.05
+        self.pose();self.g.trial.reset(self.clock[0]);self.command(.05)
+        self.assertEqual(self.g.output.messages[-1].linear.x,.05)
+        self.fixture.advance(21.);self.pose(.8);self.command(.05)
+        self.assertTrue(self.g.gate.armed)
+        self.assertEqual(self.g.output.messages[-1].linear.x,.05)
+        self.fixture.advance(.05);self.pose(3.01);self.command(.05)
+        self.assertFalse(self.g.gate.armed)
+        self.assertEqual(self.g.gate.reason,'trial_distance_limit')
 
     def test_robot_local_distance_limit_overrides_fresh_commands(self):
         self.command();self.assertTrue(self.g.gate.armed)

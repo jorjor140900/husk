@@ -25,8 +25,9 @@ def _nodes(context):
         profile["camera"][key] = str(expanded_path(profile["camera"][key]))
     allow = LaunchConfiguration("allow_motion").perform(context).lower() == "true"
     trial = LaunchConfiguration("supervised_trial").perform(context).lower() == "true"
-    from husky_link_core.supervised_trial import trial_mode
+    from husky_link_core.supervised_trial import trial_mode, profile_trial_limits, GOAL_LIMITS
     trial_mode(profile, trial)
+    goal_session=trial and profile_trial_limits(profile)==GOAL_LIMITS
     mode = LaunchConfiguration("steering_mode").perform(context)
     if mode not in ("nav2", "vision"):
         raise ValueError("steering_mode must be nav2 or vision")
@@ -85,7 +86,7 @@ def _nodes(context):
              parameters=[{"allow_motion":allow,"guide_only":vision}]),
         Node(package="husky_drivable_area",executable="laser_safety",namespace="husky_control",output="screen",
              parameters=[str(share/"config/laser_safety.yaml"),profile["footprint"],
-                         {"base_frame":base,"odom_frame":odom,"max_linear_mps":.05,"max_angular_rps":.2,"supervised_trial":trial}],
+                         {"base_frame":base,"odom_frame":odom,"max_linear_mps":.05,"max_angular_rps":.2,"supervised_trial":trial,"trial_goal_session":goal_session}],
              remappings=[("odom","/husky_link/odom"),("scan","/husky_link/scan"),
                          ("control/requested_cmd_vel","/husky_nav/guarded_request"),
                          ("control/cmd_vel","/husky_nav/filtered_cmd_vel"),
@@ -96,7 +97,7 @@ def _nodes(context):
             "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],
             "base_frame":base,"odom_frame":odom,"half_width_m":profile["footprint"]["half_width_m"],
             "side_margin_m":profile["footprint"].get("lateral_margin_m",profile["footprint"]["margin_m"]),
-            "image_topic":LaunchConfiguration("image_topic").perform(context),"supervised_trial":trial}]))
+            "image_topic":LaunchConfiguration("image_topic").perform(context),"supervised_trial":trial,"trial_goal_session":goal_session}]))
     if camera.get("publish_camera_tf",True):
         q = mount.quaternion_xyzw
         nodes.append(Node(package="tf2_ros",executable="static_transform_publisher",name="navigation_camera_mount",

@@ -5,6 +5,17 @@ from .protocol import finite, frame_id, stamp_ns
 MODE = 'supervised_vision_trial'
 LIMITS = dict(max_linear_mps=.03, max_angular_rps=.15, max_distance_m=.5,
               max_duration_sec=20., max_rotation_rad=.35)
+GOAL_LIMITS = dict(LIMITS, max_linear_mps=.05, max_distance_m=3., max_duration_sec=120.)
+
+
+def checked_limits(value):
+    if not isinstance(value,dict) or value not in (LIMITS,GOAL_LIMITS):
+        raise ValueError('supervised trial limits must match a fixed bounded configuration')
+    return value.copy()
+
+
+def profile_trial_limits(profile):
+    return checked_limits(profile.get('trial_limits'))
 
 
 def trial_mode(profile, requested=False):
@@ -17,16 +28,16 @@ def trial_mode(profile, requested=False):
         raise ValueError('unknown operation_mode')
     if requested != (declared == MODE):
         raise ValueError('trial profile and explicit supervised_trial flag must match')
-    if requested and profile.get('trial_limits') != LIMITS:
-        raise ValueError('supervised trial limits must match the fixed bounded configuration')
+    if requested:profile_trial_limits(profile)
     return requested
 
 
-def bounded_command(v, w):
+def bounded_command(v, w, limits=None):
+    limits=checked_limits(LIMITS if limits is None else limits)
     if not finite(v) or not finite(w) or not 0 <= v <= .050001 or abs(w) > .200001:
         raise ValueError('invalid_trial_request')
-    scale = min(1., LIMITS['max_linear_mps']/max(v,1e-12),
-                LIMITS['max_angular_rps']/max(abs(w),1e-12))
+    scale = min(1., limits['max_linear_mps']/max(v,1e-12),
+                limits['max_angular_rps']/max(abs(w),1e-12))
     return v*scale, w*scale
 
 
@@ -47,7 +58,8 @@ def odometry_sample(message, odom, base):
 
 
 class TrialBudget(object):
-    def __init__(self):
+    def __init__(self, limits=None):
+        self.limits=checked_limits(LIMITS if limits is None else limits)
         self.pose=None
         self.active=False
         self.fault=''
@@ -84,8 +96,8 @@ class TrialBudget(object):
             reason='trial_odometry_stale'
         if self.active:
             if now < self.started:reason='trial_clock_reversed'
-            elif now-self.started >= LIMITS['max_duration_sec']:reason='trial_time_limit'
-            elif self.distance >= LIMITS['max_distance_m']:reason='trial_distance_limit'
-            elif self.rotation >= LIMITS['max_rotation_rad']:reason='trial_rotation_limit'
+            elif now-self.started >= self.limits['max_duration_sec']:reason='trial_time_limit'
+            elif self.distance >= self.limits['max_distance_m']:reason='trial_distance_limit'
+            elif self.rotation >= self.limits['max_rotation_rad']:reason='trial_rotation_limit'
         if reason and self.active:self.stop(reason)
         return reason or 'clear'

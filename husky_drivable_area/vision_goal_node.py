@@ -32,11 +32,12 @@ class VisionGoalNode(Node):
     def __init__(self):
         super().__init__("vision_goal_controller")
         defaults=dict(camera_calibration="",camera_mount="",base_frame="base_link",odom_frame="odom",
-            image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,supervised_trial=False)
+            image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,supervised_trial=False,trial_goal_session=False)
         for key,value in defaults.items():
             self.declare_parameter(key,value)
         value=lambda key:self.get_parameter(key).value
         self.supervised_trial=value("supervised_trial")
+        self.trial_goal_session=value("trial_goal_session")
         self.camera=CameraCalibration.load(value("camera_calibration"))
         self.mount=CameraMount.load(value("camera_mount"))
         self.base,self.odom_frame=value("base_frame"),value("odom_frame")
@@ -250,7 +251,8 @@ class VisionGoalNode(Node):
                 return
             frame=image_to_bgr(message)
             image=draw_vision_reference(frame,labels,reference,self.camera,self.mount,reason,
-                supervised_trial=getattr(self,"supervised_trial",False))
+                supervised_trial=getattr(self,"supervised_trial",False),
+                trial_goal_session=getattr(self,"trial_goal_session",False))
             result=fill_compressed_image(CompressedImage(),image,message.header,80)
             self.overlay_pub.publish(result);self.last_overlay_stamp=ns
             self.last_display=(ns,labels)

@@ -20,7 +20,7 @@ from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker
 from std_srvs.srv import Trigger
-from husky_link_core.supervised_trial import TrialBudget, LIMITS, bounded_command, odometry_sample
+from husky_link_core.supervised_trial import TrialBudget, LIMITS, GOAL_LIMITS, bounded_command, odometry_sample
 
 from .collision import CollisionConfig, check_sweep, scan_points
 from .control import CommandLimiter, ControllerConfig, Demand, fresh_stamp, quaternion_matrix
@@ -30,7 +30,7 @@ from .controller_node import stamp_ns
 class LaserSafetyNode(Node):
     def __init__(self, **kwargs):
         super().__init__("laser_safety", **kwargs)
-        for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link", "supervised_trial": False,
+        for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link", "supervised_trial": False, "trial_goal_session": False,
                             "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,
                             "request_timeout_sec": 0.3, "permission_timeout_sec": 0.3,
                             "release_hold_sec": 0.5, "output_acceleration_mps2": 0.25,
@@ -39,11 +39,15 @@ class LaserSafetyNode(Node):
         value = lambda name: self.get_parameter(name).value
         self.supervised_trial = value("supervised_trial")
         if type(self.supervised_trial) is not bool:raise ValueError("supervised_trial must be bool")
+        goal_session=value("trial_goal_session")
+        if type(goal_session) is not bool or goal_session and not self.supervised_trial:
+            raise ValueError("trial_goal_session requires explicit supervised_trial")
+        self.trial_limits=GOAL_LIMITS.copy() if goal_session else LIMITS.copy()
         configuration={name: value(name) for name in CollisionConfig.__dataclass_fields__}
         if self.supervised_trial:
-            configuration.update(max_linear_mps=LIMITS['max_linear_mps'],max_angular_rps=LIMITS['max_angular_rps'])
+            configuration.update(max_linear_mps=self.trial_limits['max_linear_mps'],max_angular_rps=self.trial_limits['max_angular_rps'])
         self.config = CollisionConfig(**configuration)
-        self.trial=TrialBudget() if self.supervised_trial else None
+        self.trial=TrialBudget(self.trial_limits) if self.supervised_trial else None
         self.request_invalid=False
         self.navigation_status=None
         self.trial_fault_context=None
@@ -83,7 +87,7 @@ class LaserSafetyNode(Node):
         if self.supervised_trial:
             self.navigation_sub=self.create_subscription(String,"/husky_nav/control_status",self._navigation_status,1)
             self.reset_service=self.create_service(Trigger,"/husky_nav/reset_trial",self._reset_trial)
-            self.get_logger().warning("SUPERVISED TRIAL: LiDAR NOT CHECKED; 0.03 m/s, 0.5 m, 20 s, rotation <=0.35 rad")
+            self.get_logger().warning("SUPERVISED: LiDAR NOT CHECKED; limits="+json.dumps(self.trial_limits))
 
     def _navigation_status(self, message):
         try:
@@ -95,7 +99,7 @@ class LaserSafetyNode(Node):
     def _reset_trial(self, request, response):
         if self.permitted and time.monotonic()-self.permission_received<=.3:
             response.success=False;response.message="stop operator permission before resetting trial";return response
-        self.trial=TrialBudget()
+        self.trial=TrialBudget(self.trial_limits)
         self.trial_fault_context=None
         if self.odom is not None:
             self.trial.observe(odometry_sample(self.odom[0],self.odom_frame,self.base_frame),self.odom[1])
@@ -144,7 +148,7 @@ class LaserSafetyNode(Node):
     def _request(self, message):
         self.request_invalid=False
         try:
-            self.request = bounded_command(message.linear.x,message.angular.z) if self.supervised_trial else (message.linear.x,message.angular.z)
+            self.request = bounded_command(message.linear.x,message.angular.z,self.trial_limits) if self.supervised_trial else (message.linear.x,message.angular.z)
         except ValueError:
             self.request=(0.,0.);self.request_invalid=True
         self.request_received = time.monotonic()
@@ -244,7 +248,7 @@ class LaserSafetyNode(Node):
             "lidar_checked": not self.supervised_trial,
             "trial_distance_m": self.trial.distance if self.trial else None,
             "trial_rotation_rad": self.trial.rotation if self.trial else None,
-            "trial_limits": LIMITS if self.supervised_trial else None,
+            "trial_limits": self.trial_limits if self.supervised_trial else None,
             "navigation_gate_reason": self.navigation_status[0].get("reason") if self.navigation_status else None,
             "trial_fault_context": self.trial_fault_context,
             "physical_robot_validated": False})))

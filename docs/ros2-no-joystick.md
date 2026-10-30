@@ -554,3 +554,124 @@ status gate เพิ่ม vision_reason เพื่อบอกเหตุ�
 controller+gate+filter จริงส่ง filtered command .03 m/s ได้แม้ legacy grid invalid ตลอดและ TF ช้า 120 ms
 ภาพหมดอายุและ mask ถูกบล็อกยังให้ศูนย์และ latch ไม่กลับไปเคลื่อนเองหลังข้อมูลกลับมา
 ไม่มี publisher `/cmd_vel` ใน fixture และไม่ได้ขยับหุ่นจริง
+
+
+## 9. วิ่งถึง goal ใกล้ด้วยความเร็ว 0.05 m/s (มีคนเฝ้า)
+
+ใช้ profile ใหม่ `--supervised-goal` สำหรับ goal ใกล้ประมาณ 1–2 m ที่กำลังทดลอง
+หยุดที่ goal ตาม controller (ระยะคลาดเคลื่อนยอมรับ .15 m) ไม่ถูกตัดที่ .5 m/20 s ของชุดเดิม
+มีเพดานสำรองระยะสะสม 3 m, 120 s, มุมเลี้ยวสะสม .35 rad และเลี้ยวสูงสุด .15 rad/s ทั้งคอมและหุ่น
+ยังข้ามการตรวจ LiDAR; คนเฝ้าต้องเห็นเส้นทางและพร้อมใช้ hardware e-stop
+ภาพเก่า/mask ใช้ไม่ได้/odom/TF/permission/คำสั่งขาดยังหยุด ไม่มี auto-restart หลัง fault
+เพดานนี้ไม่ใช่การรับรองระยะหยุดทางกายภาพหรือว่าผ่านสิ่งกีดขวางได้
+
+profile trial เดิมยังเป็น .03 m/s, .5 m/20 s ตามเดิม ไม่มีการแอบเปลี่ยนค่าของไฟล์เก่า
+ต้องอัปเดต **ทั้งคอมและ gateway บนหุ่น** แล้วใช้ profile ใหม่ที่คู่กัน
+
+### อัปเดตและสร้างไฟล์บนคอม
+
+กด Space แล้ว q ใน console หุ่น หยุด field launch และ gateway เดิมก่อนเปลี่ยน package
+SSH tunnel ไป `10.82.12.199` เปิดค้างไว้ได้ ใช้ IP Wi-Fi ของหุ่นที่ยืนยันล่าสุด
+
+```bash
+cd ~/husk-live
+git pull --ff-only origin work
+python3 tools/create_ros2_workspace.py \
+  --workspace "$HOME/husky_vision_ws" --update-code
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+python /usr/bin/colcon build --symlink-install --packages-select husky_vision
+source install/local_setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+ros2 run husky_vision prepare_operator_profile \
+  --profile "$HOME/husky_vision_ws/robot/robot-nojoy-trial.json" \
+  --output "$HOME/husky_vision_ws/robot/robot-nojoy-goal.json" \
+  --robot-output "$HOME/husky_vision_ws/robot/ros1-nojoy-goal.json" \
+  --supervised-goal
+
+scp -r "$HOME/husky_vision_ws/src/husky_vision/ros1/husky_vision_bridge" \
+  administrator@10.82.12.199:~/husky_ws/src/
+scp "$HOME/husky_vision_ws/robot/ros1-nojoy-goal.json" \
+  administrator@10.82.12.199:~/husky-nojoy-goal.json
+```
+
+ถ้า output มีอยู่แล้ว ใช้ไฟล์ที่สร้างด้วยรุ่นนี้หรือเลือกชื่อใหม่ เครื่องมือไม่เขียนทับ
+ไม่แก้ผล field measurements เป็น true
+
+### Build และเปิด gateway บนหุ่น
+
+```bash
+ssh administrator@10.82.12.199
+source /opt/ros/noetic/setup.bash
+cd ~/husky_ws
+catkin_make --pkg husky_vision_bridge
+source devel/setup.bash
+export ROS_MASTER_URI=http://127.0.0.1:11311
+unset ROS_HOSTNAME
+export ROS_IP=10.82.12.199
+
+roslaunch husky_vision_bridge bridge.launch \
+  profile_path:="$HOME/husky-nojoy-goal.json" \
+  odom_topic:=/odometry/filtered scan_topic:=/scan base_frame:=base_link \
+  allow_robot_output:=true supervised_trial:=true
+```
+
+### เปิด field และ console
+
+บนคอม terminal ที่ source environment/Cyclone ตามขั้น 1 แล้ว:
+
+```bash
+QT_QPA_PLATFORM=xcb ros2 launch husky_vision vision_field.launch.py \
+  profile:="$HOME/husky_vision_ws/robot/robot-nojoy-goal.json" \
+  map:="$HOME/husky_vision_ws/maps/outdoor1.yaml" \
+  allow_motion:=true supervised_trial:=true
+```
+
+ภาพ `/husky_nav/vision_overlay` ต้องมีแถบ `SUPERVISED GOAL` และ .05 m/s, backup 3m/120s
+ตั้ง pose และ goal ใหม่ตรงตำแหน่งจริง รอเส้นเหลือง
+
+บนหุ่น terminal อีกอันที่ source Noetic/devel และ ROS_MASTER_URI/ROS_IP เหมือน gateway:
+
+```bash
+rosrun husky_vision_bridge operator_console.py \
+  _profile_path:="$HOME/husky-nojoy-goal.json" \
+  _allow_robot_output:=true _supervised_trial:=true _session_sec:=120.0
+```
+
+console ต้องแสดง `one 120s session` เปิดค้างไว้ที่ STOP ก่อน
+อย่าใช้คำสั่งเก่าที่มี `_session_sec:=20.0` เพราะจะยังหมดเวลา 20 s ตามที่ระบุเอง
+
+บนคอมเปิดตัวเก็บรอบใน terminal แยกก่อนเริ่ม:
+
+```bash
+python3 ~/husk-live/tools/trace_trial_session.py --duration 90
+```
+
+จาก terminal คอมอีกอัน:
+
+```bash
+ros2 service call /husky_nav/reset_trial std_srvs/srv/Trigger "{}"
+ros2 service call /husky_nav/set_enabled std_srvs/srv/SetBool "{data: true}"
+ros2 service call /husky_link/set_enabled std_srvs/srv/SetBool "{data: true}"
+```
+
+ทุกคำสั่งต้อง success=true แล้วกด g ครั้งเดียวใน console ภายในช่วงเตรียม 20 s
+ช่วงเตรียมนี้เป็นเวลารอเริ่ม ยังไม่ใช่อายุ session วิ่ง 120 s
+ถึง goal controller จะให้ศูนย์และ latch goal_reached ไม่เริ่ม goal ใหม่เอง
+console อาจยังแสดง active ขณะที่ความเร็วเป็นศูนย์ ให้กด Space/q เพื่อจบรอบ
+หากชนเพดานสำรองหรือเกิด fault ต้อง STOP/reset/enable ก่อนเริ่มรอบใหม่
+สถานะ gateway ควรแสดง max_linear_mps=.05 และ safety/status มี trial_limits 3m/120s
+ถ้ายังเห็น .03 หรือ .5m/20s แปลว่ายังใช้ package/profile ฝั่งใดฝั่งหนึ่งเก่า อย่าปรับไฟล์แบบสุ่ม
+
+### ผลทดสอบ
+
+Python 374 tests ผ่าน รวมเก็บ trial เดิมไม่เปลี่ยน, ปฏิเสธ preset ที่แก้เอง,
+profile สองฝั่งตรงกัน, callback gateway รับ .05 m/s และหยุดที่ backup limit
+syntax shared core/scripts ผ่าน Python 3.8
+Native ROS2 ใน container ที่ตัด network ใช้ controller+gate+filter จริงและภาพ/odom จำลอง
+วิ่งจำลอง 1.257 m ใน 25.9 s ที่ความเร็วสูงสุด .05 m/s แล้วหยุดในรัศมี goal .144 m
+จึงผ่านขีดจำกัดเก่า .5m/20s และหยุดด้วย goal จริงใน fixture
+TF หน่วง 120 ms, legacy grid invalid ตลอด, ไม่มี publisher /cmd_vel และไม่มีการเชื่อมต่อหุ่นจริง
+ดู `tests/native_goal_session_probe.py`; ไม่ใช่ผลทดสอบการเคลื่อน/หยุดบนหุ่นจริง

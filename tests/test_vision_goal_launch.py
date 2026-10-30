@@ -104,6 +104,15 @@ class VisionLaunchTests(unittest.TestCase):
         self.context["steering_mode"]="nav2"
         with self.assertRaisesRegex(ValueError,"requires vision"):self.nodes()
 
+    def test_supervised_goal_limits_reach_filter_and_overlay(self):
+        from husky_link_core.supervised_trial import MODE,GOAL_LIMITS
+        self.context['supervised_trial']='true'
+        self.profile.update(operation_mode=MODE,trial_limits=GOAL_LIMITS)
+        Path(self.context['profile']).write_text(json.dumps(self.profile))
+        nodes=self.nodes()
+        self.assertTrue(nodes['laser_safety'].parameters[-1]['trial_goal_session'])
+        self.assertTrue(nodes['vision_goal_controller'].parameters[0]['trial_goal_session'])
+
     def test_motion_mode_still_rejects_unverified_robot_profile(self):
         self.context["allow_motion"]="true"
         with self.assertRaisesRegex(ValueError,"motion mode requires"):
