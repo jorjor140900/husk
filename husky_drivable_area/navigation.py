@@ -57,6 +57,25 @@ def mapping_scan_geometry(scan):
                 range_min=max(scan.range_min, float(np.finfo(np.float32).eps)))
 
 
+def guide_obstacle_source(profile, vision, supervised_trial):
+    """Explicit attended image mode may omit unvalidated live scan marking.
+
+    This changes only the global guide, not AMCL's scan input or local image
+    constraints. Normal/native navigation never silently loses live obstacles.
+    """
+    settings=profile.get('navigation',{})
+    if not isinstance(settings,dict):raise ValueError('navigation must be an object')
+    source=settings.get('guide_obstacle_source','live_scan')
+    if source not in ('live_scan','saved_map_only'):
+        raise ValueError('guide_obstacle_source must be live_scan or saved_map_only')
+    if source=='saved_map_only':
+        if not vision or not supervised_trial:
+            raise ValueError('saved_map_only requires explicit supervised vision mode')
+        from husky_link_core.supervised_trial import trial_mode
+        trial_mode(profile,True)
+    return source
+
+
 def inflation_radius(profile):
     """Optional outer lateral extent relative to the measured hull half-width.
 

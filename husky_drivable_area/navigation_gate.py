@@ -29,6 +29,10 @@ class NavigationGate(Node):
         if type(extended) is not bool or extended and not self.supervised_trial:
             raise ValueError("extended session requires explicit supervised_trial")
         self.max_linear=.15 if extended else .05
+        self.declare_parameter("guide_obstacle_source","live_scan")
+        self.guide_obstacle_source=self.get_parameter("guide_obstacle_source").value
+        if self.guide_obstacle_source not in ("live_scan","saved_map_only") or self.guide_obstacle_source=="saved_map_only" and not self.supervised_trial:
+            raise ValueError("saved-map-only guide requires explicit supervised mode")
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("odom_frame", "odom")
         self.allow_motion = self.get_parameter("allow_motion").value
@@ -123,6 +127,7 @@ class NavigationGate(Node):
         self.status.publish(String(data=json.dumps(dict(enabled=self.enabled, allow_motion=self.allow_motion,
             reason=reason, request_allowed=demand is not None, linear_x=command.linear.x, angular_z=command.angular.z,
             vision_reason=self.vision[0].get("reason") if self.vision else None,
+            guide_obstacle_source=getattr(self,"guide_obstacle_source","live_scan"),
             downstream_collision_filter_required=not getattr(self,"supervised_trial",False),
             supervised_trial=getattr(self,"supervised_trial",False), ready_for_autonomous_control=False))))
 

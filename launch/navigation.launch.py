@@ -13,7 +13,7 @@ from launch_ros.actions import Node
 
 
 def _nodes(context):
-    from husky_drivable_area.navigation import navigation_parameters, saved_map_metadata
+    from husky_drivable_area.navigation import navigation_parameters, saved_map_metadata, guide_obstacle_source
     from husky_drivable_area.ground_geometry import CameraCalibration, CameraMount
     from husky_drivable_area.robot_profile import load_robot_profile, expanded_path
     share = Path(get_package_share_directory("husky_drivable_area"))
@@ -36,6 +36,7 @@ def _nodes(context):
     if mode not in ("nav2", "vision"):
         raise ValueError("steering_mode must be nav2 or vision")
     vision = mode == "vision"
+    guide_source=guide_obstacle_source(profile,vision,trial)
     if trial and not vision:raise ValueError("supervised_trial requires vision steering")
     if allow:
         if profile.get("bridge", {}).get("forward_commands") is not True:
@@ -54,6 +55,8 @@ def _nodes(context):
         # image labels constrain the actual local steering reference directly.
         costmap=params["global_costmap"]["global_costmap"]["ros__parameters"]
         costmap["plugins"].remove("vision_layer")
+        if guide_source=="saved_map_only":
+            costmap["plugins"].remove("obstacle_layer")
     with tempfile.NamedTemporaryFile("w",prefix="husky-nav2-",suffix=".yaml",delete=False) as target:
         yaml.safe_dump(params,target)
         parameters = target.name
@@ -83,7 +86,7 @@ def _nodes(context):
         Node(package="husky_drivable_area",executable="field_permission",namespace="husky_control",output="screen",
              parameters=[{"external_topic":robot["external_permission_topic"]}]),
         Node(package="husky_drivable_area",executable="navigation_gate",output="screen",
-             parameters=[{"allow_motion":allow,"base_frame":base,"odom_frame":odom,**trial_parameters}],
+             parameters=[{"allow_motion":allow,"base_frame":base,"odom_frame":odom,"guide_obstacle_source":guide_source,**trial_parameters}],
              remappings=[("/husky_nav/nav2_cmd_vel","/husky_nav/vision_cmd_vel"),
                          ("/husky_nav/vision_status","/husky_nav/vision_control_status")] if vision else []),
         Node(package="husky_drivable_area",executable="goal_dispatch",output="screen",

@@ -884,3 +884,69 @@ receiver_state_stale_or_clock_skew เป็นอีกเงื่อนไข
 Unit tests 4 cases และ native ROS2 network-none ทดสอบ goal/map/TF จริงกับ costmap publisher แบบ volatile
 ที่ไม่มี goal_plan เลย: ตรวจพบกำแพงแบ่ง free endpoints และแยกจาก saved map ที่ยังว่างได้
 ไม่มีการเชื่อมต่อหรือเคลื่อนหุ่นจริง
+
+
+## 13. จุด scan สะสมรอบหุ่นจน guide ถูกบล็อก
+
+Global obstacle_layer mark จาก /husky_nav/mapping_scan และ clearing ไม่ใช้ค่า inf
+จุดที่ไม่ถูก ray ล้างอาจค้างอยู่ แม้กล้องเห็นพื้นโล่ง การลด inflation radius ไม่ลบเซลล์ต้นทาง
+การยืนยันว่าทุกจุดเป็นพื้น/ตัวหุ่นจริงต้องตรวจ raw sensor/TF/deskew/height ต่อ
+ชุดนี้ไม่ได้แก้ข้อมูล LiDAR และไม่ได้เปลี่ยน inf เป็น free เพื่อรับรอง safety
+
+สำหรับชุด supervised vision ที่เลือกข้าม LiDAR อยู่แล้ว เพิ่มตัวเลือกชัดเจน:
+`navigation.guide_obstacle_source=saved_map_only`
+guide จาก Nav2 จะใช้ static_layer+inflation_layer โดยไม่ใช้ obstacle_layer ของ scan สด
+saved map และกำแพงที่บันทึกยังอยู่; scan/TF ยังส่งให้ AMCL ระบุตำแหน่งตามเดิม
+เส้นควบคุมยังมาจาก image/AI และยังหยุดเมื่อ mask/reference/odom/permission/command ไม่ผ่าน
+สิ่งกีดขวางสดจึงอาศัย image/AI และคนเฝ้าในชุดทดลองนี้ ไม่ได้มี LiDAR safety ที่รับรอง
+normal/native Nav2 หรือ profile ที่ไม่เปิด supervised mode ใช้ตัวเลือกนี้ไม่ได้
+ค่า default ทุก profile เดิมยังเป็น live_scan ไม่มีการปิด layer เงียบ ๆ
+
+### แยกต้นเหตุที่ runtime ขณะ console STOP
+
+เฉพาะ supervised vision ที่เปิดอยู่ กด Space ให้เป็น STOP แล้วบนคอม:
+
+```bash
+ros2 param set /global_costmap/global_costmap obstacle_layer.enabled false
+ros2 service call /global_costmap/clear_entirely_global_costmap \
+  nav2_msgs/srv/ClearEntireCostmap "{}"
+```
+
+รอ costmap rebuild แล้ว static map จะกลับมา จุดที่ค้างใน live layer ถูกล้าง
+goal guide refresh ตามปกติ หรือเลือก goal ใหม่ ขณะนี้ยังไม่กด g
+นี่มีผลต่อ costmap ที่ planner ใช้จริง ไม่ใช่ซ่อน RViz display
+runtime test นี้เปลี่ยน obstacle_layer.enabled เท่านั้น; guide_obstacle_source ใน status ยังเป็นค่าจาก profile ตอนเริ่ม node จนกว่าจะ restart ด้วยตัวเลือกถาวร
+ถ้าวงยังอยู่ อาจอยู่ใน saved map/อีก display ต้องตรวจต่อ ไม่ยืนยันว่าทุกวงเป็นจุดปลอม
+Mapping observations/AI veto mask ใน RViz อาจยังแสดงข้อมูลของตัวเองได้แม้ไม่ได้ใช้ mark guide
+หากจะคืน live scan: set obstacle_layer.enabled true แล้ว clear/rebuild ขณะ STOP
+
+### เก็บตัวเลือกไว้หลัง restart
+
+หยุด field launch แล้วอัปเดต source/export/build บนคอมตามขั้น1 (ไม่ต้องอัปเดต gateway หุ่น)
+แก้เฉพาะ profile ทดลองที่เปิดใช้:
+
+```bash
+python3 - <<'PYSOURCE'
+import json
+import shutil
+from pathlib import Path
+p=Path.home()/"husky_vision_ws/robot/robot-nojoy-015.json"
+backup=p.with_suffix('.json.before-guide-source.bak')
+if not backup.exists():shutil.copy2(p,backup)
+d=json.loads(p.read_text())
+d.setdefault('navigation',{})['guide_obstacle_source']='saved_map_only'
+p.write_text(json.dumps(d,indent=2)+'\n')
+PYSOURCE
+```
+
+เปิด field launch เดิมพร้อม profile นี้และ supervised_trial:=true
+`/husky_nav/control_status` จะแสดง guide_obstacle_source=saved_map_only
+ใน global costmap parameters plugins ต้องเป็น [static_layer,inflation_layer]
+ไม่ต้อง clear อีกครั้งหลังเริ่ม node ใหม่ จากนั้นตั้ง pose/goal และรอ reference ก่อนเริ่ม sessionตามขั้น11
+หากเหลืองยัง start_blocked_narrow_or_unobserved ต้องตรวจ mask/geometry ต่อ ไม่ใช่เพิ่มความเร็ว
+
+Validation: unit tests ตรวจ plugin list/explicit flag, คง inflation/AMCL scan,
+ปฏิเสธ saved-map-only ใน normal/native mode และเก็บ live_scan เป็นค่าเดิม
+Native ROS2 network-none ทดสอบ image controller+gate+filter ว่า mask ถูกบล็อกหรือหมดอายุยังหยุด
+และไม่กลับมาวิ่งเองหลังข้อมูลกลับมา ไม่มีการเชื่อมต่อหุ่นจริง
+ไม่ได้ทดสอบ Nav2 obstacle clearing บนหุ่นจริง และการเปลี่ยนนี้ไม่ใช่การรับรอง obstacle safety
