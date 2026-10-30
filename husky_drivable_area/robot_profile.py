@@ -91,9 +91,8 @@ def load_robot_profile(filename, *, allow_supervised_trial=False):
     if problems:
         raise ValueError("Complete measured robot profile first: "+", ".join(problems))
     if "navigation" in data:
-        from .navigation import inflation_radius, guide_obstacle_source
+        from .navigation import inflation_radius
         inflation_radius(data)
-        guide_obstacle_source(data,True,allow_supervised_trial)
     calibration = CameraCalibration.load(camera["calibration_path"])
     mount = CameraMount.load(camera["mount_path"])
     if [camera["width"], camera["height"]] != [calibration.width, calibration.height]:

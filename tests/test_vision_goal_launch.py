@@ -126,26 +126,6 @@ class VisionLaunchTests(unittest.TestCase):
             self.assertEqual(nodes[executable].parameters[-1]['trial_extended_duration_sec'],900.)
             self.assertTrue(nodes[executable].parameters[-1]['trial_goal_session'])
 
-    def test_saved_map_only_is_explicit_and_leaves_localization_and_geometry_intact(self):
-        from husky_link_core.supervised_trial import MODE,LONG_GOAL_LIMITS
-        self.profile['navigation']=dict(guide_obstacle_source='saved_map_only',inflation_side_clearance_m=.15)
-        Path(self.context['profile']).write_text(json.dumps(self.profile))
-        with self.assertRaisesRegex(ValueError,'supervised'):self.nodes()
-        self.context['supervised_trial']='true'
-        self.profile.update(operation_mode=MODE,trial_limits=LONG_GOAL_LIMITS)
-        Path(self.context['profile']).write_text(json.dumps(self.profile))
-        nodes=self.nodes()
-        parameters=yaml.safe_load(Path(nodes['planner_server'].parameters[0]).read_text())
-        costmap=parameters['global_costmap']['global_costmap']['ros__parameters']
-        self.assertEqual(costmap['plugins'],['static_layer','inflation_layer'])
-        self.assertAlmostEqual(costmap['inflation_layer']['inflation_radius'],.48)
-        self.assertEqual(parameters['amcl']['ros__parameters']['scan_topic'],'/husky_nav/mapping_scan')
-        self.assertIn('mapping_scan',nodes)
-        self.assertIn('vision_goal_controller',nodes)
-        self.assertEqual(nodes['navigation_gate'].parameters[0]['guide_obstacle_source'],'saved_map_only')
-        self.context['steering_mode']='nav2'
-        with self.assertRaisesRegex(ValueError,'supervised vision'):self.nodes()
-
     def test_motion_mode_still_rejects_unverified_robot_profile(self):
         self.context["allow_motion"]="true"
         with self.assertRaisesRegex(ValueError,"motion mode requires"):

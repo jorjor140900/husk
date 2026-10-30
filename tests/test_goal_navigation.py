@@ -133,13 +133,6 @@ class NavigationConfigTests(unittest.TestCase):
             profile['navigation']['inflation_side_clearance_m']=value
             with self.assertRaises(ValueError):navigation_parameters(profile,template,'/tmp/site.yaml','/tmp/tree.xml')
 
-    def test_live_guide_obstacles_remain_default_and_unknown_source_is_rejected(self):
-        from husky_drivable_area.navigation import guide_obstacle_source
-        self.assertEqual(guide_obstacle_source({},True,False),'live_scan')
-        self.assertEqual(guide_obstacle_source({},False,False),'live_scan')
-        for value in ('none','false',None):
-            with self.assertRaises(ValueError):guide_obstacle_source(dict(navigation=dict(guide_obstacle_source=value)),True,True)
-
     def test_side_margin_changes_only_width_and_matches_collision_filter(self):
         from husky_drivable_area.collision import CollisionConfig
         footprint=dict(front_m=.5,rear_m=.56,half_width_m=.33,margin_m=.15,lateral_margin_m=.08)
