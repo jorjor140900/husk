@@ -19,9 +19,11 @@ from .controller_node import stamp_ns
 
 
 class NavigationGate(Node):
-    def __init__(self):
-        super().__init__("navigation_gate")
+    def __init__(self, **kwargs):
+        super().__init__("navigation_gate", **kwargs)
         self.declare_parameter("allow_motion", False)
+        self.declare_parameter("supervised_trial", False)
+        self.supervised_trial=self.get_parameter("supervised_trial").value
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("odom_frame", "odom")
         self.allow_motion = self.get_parameter("allow_motion").value
@@ -115,7 +117,8 @@ class NavigationGate(Node):
         self.output.publish(command)
         self.status.publish(String(data=json.dumps(dict(enabled=self.enabled, allow_motion=self.allow_motion,
             reason=reason, request_allowed=demand is not None, linear_x=command.linear.x, angular_z=command.angular.z,
-            downstream_collision_filter_required=True, ready_for_autonomous_control=False))))
+            downstream_collision_filter_required=not getattr(self,"supervised_trial",False),
+            supervised_trial=getattr(self,"supervised_trial",False), ready_for_autonomous_control=False))))
 
 
 def stop_node(node):

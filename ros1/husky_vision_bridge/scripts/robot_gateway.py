@@ -19,6 +19,7 @@ from tf2_msgs.msg import TFMessage
 
 from husky_link_core.protocol import CommandWatchdog, PROTOCOL, dumps, joy_permitted, loads, stamp_dict, wire
 from husky_link_core.cloud_wire import encode_cloud
+from husky_link_core.supervised_trial import trial_mode, TrialBudget, LIMITS, odometry_sample
 
 try:
     monotonic = time.monotonic
@@ -36,12 +37,17 @@ class RobotGateway(object):
         else:
             profile = {}
         robot = profile.get("robot", {})
-        self.gate = CommandWatchdog(robot.get("base_frame") or rospy.get_param("~base_frame", "base_link"))
+        self.supervised_trial = trial_mode(profile, rospy.get_param("~supervised_trial", False))
+        self.trial = TrialBudget() if self.supervised_trial else None
+        self.odom_frame = robot.get("odom_frame") or "odom"
+        self.gate = CommandWatchdog(robot.get("base_frame") or rospy.get_param("~base_frame", "base_link"),
+            max_linear=LIMITS['max_linear_mps'] if self.supervised_trial else .10,
+            max_angular=LIMITS['max_angular_rps'] if self.supervised_trial else .30)
         self.allow_output = rospy.get_param("~allow_robot_output", False)
         if type(self.allow_output) is not bool:
             raise ValueError("allow_robot_output must be bool")
         requested = rospy.get_param("~robot_input_topic", "") or profile.get("bridge", {}).get("expected_output_topic") or ""
-        if self.allow_output:
+        if self.allow_output and not self.supervised_trial:
             checks = profile.get("field_measurements", {})
             required = {"geometry_checked", "mux_and_base_timeout_checked", "independent_permission_gate_checked"}
             if set(checks) != required or any(checks[key] is not True for key in required):
@@ -51,6 +57,7 @@ class RobotGateway(object):
         self.output_topic = requested if self.allow_output else "/husky_vision/watchdog_preview"
         self.output = rospy.Publisher(self.output_topic, Twist, queue_size=1)
         self.state = rospy.Publisher("state", String, queue_size=1)
+        self.trial_status = rospy.Publisher("trial_status", String, queue_size=1) if self.supervised_trial else None
         self.publishers = dict((kind, rospy.Publisher(kind + "_json", String, queue_size=1, latch=kind == "tf_static"))
                                for kind in ("odom", "scan", "tf", "tf_static", "permission", "image", "cloud"))
         self.pending, self.transforms, self.static = {}, {}, {}
@@ -111,6 +118,11 @@ class RobotGateway(object):
 
     def telemetry(self, message, kind):
         with self.lock:
+            if kind == "odom" and getattr(self, "trial", None) is not None:
+                try:
+                    self.trial.observe(odometry_sample(message,self.odom_frame,self.gate.base_frame),monotonic())
+                except ValueError:
+                    if self.trial.active:self.trial.stop("invalid_trial_odometry")
             self.pending[kind] = message
 
     def permission(self, message):
@@ -164,6 +176,17 @@ class RobotGateway(object):
         with self.lock:
             if request.data and self.allow_output and not self.local_permission(rospy.Time.now().to_nsec(), monotonic()):
                 return SetBoolResponse(success=False, message="robot-local permission/deadman must be held and fresh first")
+            if getattr(self,"trial",None) is not None:
+                if request.data:
+                    if self.gate.armed:
+                        return SetBoolResponse(success=False,message="stop before starting another supervised trial")
+                    self.trial.reset(monotonic())
+                    reason=self.trial.check(monotonic(),rospy.Time.now().to_nsec())
+                    if reason != "clear":
+                        self.trial.stop(reason)
+                        return SetBoolResponse(success=False,message=reason)
+                else:
+                    self.trial.stop("operator_stop")
             self.gate.set_enabled(request.data, monotonic())
         return SetBoolResponse(success=True, message="armed; fresh lease/command still required" if request.data else "disarmed")
 
@@ -177,11 +200,18 @@ class RobotGateway(object):
                 self.pending["permission"] = (Bool(data=local_allowed), stamp_dict(ros_ns))
             if self.allow_output and not local_allowed:
                 self.gate.disarm("local_permission_lost", now)
+            if getattr(self,"trial",None) is not None and self.gate.armed:
+                reason=self.trial.check(now,ros_ns)
+                if reason != "clear":self.gate.disarm(reason,now)
             command = self.gate.tick(ros_ns, now)
             if command is not None:
                 message = Twist()
                 message.linear.x, message.angular.z = command
                 self.output.publish(message)
+            if getattr(self,"trial_status",None) is not None:
+                self.trial_status.publish(String(data=dumps(dict(mode="supervised_vision_trial",lidar_checked=False,
+                    armed=self.gate.armed,reason=self.gate.reason,distance_m=self.trial.distance,
+                    rotation_rad=self.trial.rotation,limits=LIMITS))))
             self.state.publish(String(data=dumps({"protocol": PROTOCOL, "stamp": stamp_dict(ros_ns),
                 "armed": self.gate.armed, "lease": self.gate.lease, "reason": self.gate.reason,
                 "driver_output_enabled": self.allow_output, "output_topic": self.output_topic,

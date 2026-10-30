@@ -19,6 +19,8 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker
+from std_srvs.srv import Trigger
+from husky_link_core.supervised_trial import TrialBudget, LIMITS, bounded_command, odometry_sample
 
 from .collision import CollisionConfig, check_sweep, scan_points
 from .control import CommandLimiter, ControllerConfig, Demand, fresh_stamp, quaternion_matrix
@@ -26,16 +28,24 @@ from .controller_node import stamp_ns
 
 
 class LaserSafetyNode(Node):
-    def __init__(self):
-        super().__init__("laser_safety")
-        for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link",
+    def __init__(self, **kwargs):
+        super().__init__("laser_safety", **kwargs)
+        for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link", "supervised_trial": False,
                             "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,
                             "request_timeout_sec": 0.3, "permission_timeout_sec": 0.3,
                             "release_hold_sec": 0.5, "output_acceleration_mps2": 0.25,
                             "output_angular_acceleration_rps2": 0.8}.items():
             self.declare_parameter(name, value)
         value = lambda name: self.get_parameter(name).value
-        self.config = CollisionConfig(**{name: value(name) for name in CollisionConfig.__dataclass_fields__})
+        self.supervised_trial = value("supervised_trial")
+        if type(self.supervised_trial) is not bool:raise ValueError("supervised_trial must be bool")
+        configuration={name: value(name) for name in CollisionConfig.__dataclass_fields__}
+        if self.supervised_trial:
+            configuration.update(max_linear_mps=LIMITS['max_linear_mps'],max_angular_rps=LIMITS['max_angular_rps'])
+        self.config = CollisionConfig(**configuration)
+        self.trial=TrialBudget() if self.supervised_trial else None
+        self.request_invalid=False
+        self.navigation_status=None
         self.odom_frame, self.base_frame = value("odom_frame"), value("base_frame")
         if not self.odom_frame or not self.base_frame or self.odom_frame == self.base_frame:
             raise ValueError("distinct odom_frame/base_frame required")
@@ -69,6 +79,27 @@ class LaserSafetyNode(Node):
         self.status = self.create_publisher(String, "safety/status", 1)
         self.marker = self.create_publisher(Marker, "safety/sweep", 1)
         self.timer = self.create_timer(0.05, self._tick)
+        if self.supervised_trial:
+            self.navigation_sub=self.create_subscription(String,"/husky_nav/control_status",self._navigation_status,1)
+            self.reset_service=self.create_service(Trigger,"/husky_nav/reset_trial",self._reset_trial)
+            self.get_logger().warning("SUPERVISED TRIAL: LiDAR NOT CHECKED; 0.03 m/s, 0.5 m, 20 s, rotation <=0.35 rad")
+
+    def _navigation_status(self, message):
+        try:
+            status=json.loads(message.data)
+            if not isinstance(status,dict) or type(status.get("request_allowed")) is not bool:raise ValueError()
+            self.navigation_status=(status,time.monotonic())
+        except (ValueError,TypeError):self.navigation_status=None
+
+    def _reset_trial(self, request, response):
+        if self.permitted and time.monotonic()-self.permission_received<=.3:
+            response.success=False;response.message="stop operator permission before resetting trial";return response
+        self.trial=TrialBudget()
+        if self.odom is not None:
+            self.trial.observe(odometry_sample(self.odom[0],self.odom_frame,self.base_frame),self.odom[1])
+        self.limiter.reset();self.request=(0.,0.);self.proposed=(0.,0.)
+        response.success=True;response.message="trial reset; fresh request, permission and explicit arm still required"
+        return response
 
     def _scan(self, message):
         try:
@@ -103,11 +134,17 @@ class LaserSafetyNode(Node):
             if not np.isfinite(position).all() or not math.isfinite(p.z) or not all(math.isfinite(v) for v in velocity):
                 return
             self.odom = (message, time.monotonic(), position, rotation[:2, :2], velocity)
+            if self.trial is not None:
+                self.trial.observe(odometry_sample(message,self.odom_frame,self.base_frame),self.odom[1])
         except (ValueError, TypeError, OverflowError):
             return
 
     def _request(self, message):
-        self.request = (message.linear.x, message.angular.z)
+        self.request_invalid=False
+        try:
+            self.request = bounded_command(message.linear.x,message.angular.z) if self.supervised_trial else (message.linear.x,message.angular.z)
+        except ValueError:
+            self.request=(0.,0.);self.request_invalid=True
         self.request_received = time.monotonic()
 
     def _permission(self, message):
@@ -116,6 +153,9 @@ class LaserSafetyNode(Node):
 
     def _check(self):
         now, ros_ns = time.monotonic(), self.get_clock().now().nanoseconds
+        if self.trial is not None and self.trial.fault:
+            return self.trial.fault,None
+        if self.request_invalid:return "invalid_trial_request",None
         if now - self.permission_received > self.timeouts["permission"]:
             return "permission_timeout", None
         if not self.permitted:
@@ -127,6 +167,13 @@ class LaserSafetyNode(Node):
         odom, received, position, rotation, velocity = self.odom
         if not fresh_stamp(stamp_ns(odom.header.stamp), received, ros_ns, now, self.timeouts["odom"]):
             return "stale_odometry", None
+        if self.trial is not None:
+            if self.navigation_status is None or now-self.navigation_status[1]>.2:
+                return "trial_navigation_gate_stale",None
+            if not self.navigation_status[0]["request_allowed"]:
+                return "trial_navigation_gate_closed",None
+            if not self.trial.active and any(self.request):self.trial.reset(now)
+            return self.trial.check(now,ros_ns),None
         if not self.scans:
             return self.scan_error, None
         reason = "stale_scan"
@@ -164,6 +211,8 @@ class LaserSafetyNode(Node):
             reason, poses = self._check()
         except (ValueError, TypeError, OverflowError, FloatingPointError):
             reason, poses = "invalid_geometry_or_motion", None
+        if self.trial is not None and self.trial.active and reason != "clear":
+            self.trial.stop(reason)
         if reason == "clear":
             if self.clear_since is None:
                 self.clear_since = now
@@ -180,7 +229,12 @@ class LaserSafetyNode(Node):
         self.status.publish(String(data=json.dumps({"reason": reason, "command_allowed": reason == "clear",
             "scan_input_reason": self.scan_error, "scan_samples_buffered": len(self.scans),
             "linear_x": command.linear.x, "angular_z": command.angular.z,
-            "model": "planar_scan_and_command_stop_sweeps", "physical_robot_validated": False})))
+            "model": "supervised_vision_no_lidar" if self.supervised_trial else "planar_scan_and_command_stop_sweeps",
+            "lidar_checked": not self.supervised_trial,
+            "trial_distance_m": self.trial.distance if self.trial else None,
+            "trial_rotation_rad": self.trial.rotation if self.trial else None,
+            "trial_limits": LIMITS if self.supervised_trial else None,
+            "physical_robot_validated": False})))
         if self.marker.get_subscription_count() > 0:
             self._draw(poses, reason)
 

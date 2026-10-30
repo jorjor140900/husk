@@ -100,3 +100,15 @@ class OperatorProfileTests(unittest.TestCase):
         self.assertFalse(self.robot_output.exists())
         with self.assertRaises(ValueError):
             prepare_operator_profile(self.source, self.robot_output, self.robot_output)
+
+    def test_supervised_profile_preserves_pending_checks_and_requires_explicit_mode(self):
+        from husky_link_core.operator_permission import operator_settings
+        prepare_operator_profile(self.source,self.output,self.robot_output,supervised_trial=True)
+        value=json.loads(self.output.read_text())
+        self.assertEqual(value["operation_mode"],"supervised_vision_trial")
+        self.assertFalse(value["field_measurements"]["geometry_checked"])
+        self.assertFalse(value["field_measurements"]["independent_permission_gate_checked"])
+        with self.assertRaisesRegex(ValueError,"must match"):load_robot_profile(self.output)
+        self.assertTrue(load_robot_profile(self.output,allow_supervised_trial=True)[0]["bridge"]["forward_commands"])
+        with self.assertRaisesRegex(ValueError,"must match"):operator_settings(value,True)
+        self.assertEqual(operator_settings(value,True,True)[1],"/cmd_vel")

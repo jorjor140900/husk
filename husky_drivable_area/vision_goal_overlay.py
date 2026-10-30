@@ -7,7 +7,7 @@ from .ground_overlay import robot_axis_pixels
 from .nav2_camera_path import project_nav2_path
 
 
-def draw_vision_reference(frame,labels,reference,camera,mount,reason):
+def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False):
     image=frame.copy()
     mask=cv2.resize((labels==1).astype(np.uint8),(frame.shape[1],frame.shape[0]),interpolation=cv2.INTER_NEAREST)>0
     green=np.full_like(frame,(0,200,0))
@@ -35,4 +35,8 @@ def draw_vision_reference(frame,labels,reference,camera,mount,reason):
     for y,text in ((18,"IMAGE + AI: "+reason),(38,"Yellow=controller reference  Blue=robot Y=0"),
                    (58,"Red=mask edge fits | Goal selects direction")):
         cv2.putText(image,text,(7,y),cv2.FONT_HERSHEY_SIMPLEX,.42,(255,255,255),1)
+    if supervised_trial:
+        cv2.rectangle(image,(0,65),(image.shape[1],87),(0,70,110),-1)
+        cv2.putText(image,"SUPERVISED: LiDAR OFF | 0.03m/s | 0.5m | 20s",(7,81),
+                    cv2.FONT_HERSHEY_SIMPLEX,.42,(255,255,255),1)
     return image

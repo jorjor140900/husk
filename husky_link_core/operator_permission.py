@@ -11,7 +11,9 @@ PREVIEW_TOPIC = "/husky_vision/watchdog_preview"
 FIELD_CHECKS = {"geometry_checked", "mux_and_base_timeout_checked", "independent_permission_gate_checked"}
 
 
-def operator_settings(profile, allow_output=False):
+def operator_settings(profile, allow_output=False, supervised_trial=False):
+    from .supervised_trial import trial_mode
+    trial = trial_mode(profile, supervised_trial)
     if type(allow_output) is not bool:
         raise ValueError("allow_robot_output must be bool")
     robot, bridge = profile.get("robot", {}), profile.get("bridge", {})
@@ -21,7 +23,7 @@ def operator_settings(profile, allow_output=False):
         raise ValueError("configure robot.ros1_permission_topic=" + PERMISSION_TOPIC)
     if allow_output:
         checks = profile.get("field_measurements", {})
-        if set(checks) != FIELD_CHECKS or any(checks[key] is not True for key in FIELD_CHECKS):
+        if not trial and (set(checks) != FIELD_CHECKS or any(checks[key] is not True for key in FIELD_CHECKS)):
             raise ValueError("field geometry, mux/base timeout and independent permission checks are pending")
         topic = bridge.get("expected_output_topic")
         if (bridge.get("forward_commands") is not True or not isinstance(topic, STRING_TYPES) or

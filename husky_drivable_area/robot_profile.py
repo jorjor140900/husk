@@ -15,8 +15,10 @@ def expanded_path(value):
     return Path(os.path.expandvars(value)).expanduser().resolve()
 
 
-def load_robot_profile(filename):
+def load_robot_profile(filename, *, allow_supervised_trial=False):
     data = json.loads(Path(filename).expanduser().read_text())
+    from husky_link_core.supervised_trial import trial_mode
+    trial = trial_mode(data, allow_supervised_trial)
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data.get("schema_version") != 1:
         raise ValueError("unsupported robot profile")
     problems = []
@@ -98,7 +100,7 @@ def load_robot_profile(filename):
         if not isinstance(bridge.get("expected_output_topic"), str) or not bridge["expected_output_topic"].startswith("/"):
             raise ValueError("set the verified ROS1 velocity-mux input topic")
         checks = {"geometry_checked", "mux_and_base_timeout_checked", "independent_permission_gate_checked"}
-        if set(data["field_measurements"]) != checks or any(data["field_measurements"][key] is not True for key in checks):
+        if not trial and (set(data["field_measurements"]) != checks or any(data["field_measurements"][key] is not True for key in checks)):
             raise ValueError("field geometry, mux/base timeout and independent permission gate measurements are still pending")
         if robot["external_permission_topic"] == "/husky_link/external_permission":
             source = robot.get("ros1_permission_topic")

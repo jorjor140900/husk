@@ -3,6 +3,7 @@
   <arg name="scan_topic" default="" />
   <arg name="base_frame" default="base_link" />
   <arg name="allow_robot_output" default="false" />
+  <arg name="supervised_trial" default="false" />
   <arg name="robot_input_topic" default="" />
   <arg name="address" default="127.0.0.1" />
   <arg name="port" default="9090" />
@@ -29,6 +30,7 @@
     <param name="scan_topic" value="$(arg scan_topic)" />
     <param name="base_frame" value="$(arg base_frame)" />
     <param name="allow_robot_output" value="$(arg allow_robot_output)" />
+    <param name="supervised_trial" value="$(arg supervised_trial)" />
     <param name="robot_input_topic" value="$(arg robot_input_topic)" />
   </node>
 </launch>

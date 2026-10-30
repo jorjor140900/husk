@@ -9,7 +9,10 @@ from husky_link_core.operator_permission import PERMISSION_TOPIC, operator_setti
 from .robot_profile import load_robot_profile
 
 
-def prepare_operator_profile(source, output, robot_output, motion=False):
+def prepare_operator_profile(source, output, robot_output, motion=False, supervised_trial=False):
+    from husky_link_core.supervised_trial import MODE, LIMITS
+    if motion and supervised_trial:
+        raise ValueError("choose normal motion or supervised trial")
     source, output, robot_output = [Path(path).expanduser().resolve() for path in (source, output, robot_output)]
     if output == robot_output or output.exists() or robot_output.exists():
         raise ValueError("choose two distinct NEW output files; existing profiles are never overwritten")
@@ -28,17 +31,23 @@ def prepare_operator_profile(source, output, robot_output, motion=False):
         invalidated.append("mux_and_base_timeout_checked")
     robot.update(ros1_permission_topic=PERMISSION_TOPIC, joy_topic=None, joy_deadman_button=None,
                  external_permission_topic="/husky_link/external_permission")
-    bridge.update(forward_commands=motion, expected_output_topic="/cmd_vel")
-    operator_settings(profile, motion)
+    profile.pop("operation_mode", None)
+    profile.pop("trial_limits", None)
+    if supervised_trial:
+        profile.update(operation_mode=MODE, trial_limits=copy.deepcopy(LIMITS))
+    bridge.update(forward_commands=motion or supervised_trial, expected_output_topic="/cmd_vel")
+    operator_settings(profile, motion or supervised_trial, supervised_trial)
     # Validate geometry/files/field measurements before creating a motion file.
     # Preview preparation deliberately preserves incomplete physical checks.
-    if motion:
+    if motion or supervised_trial:
         with tempfile.TemporaryDirectory() as folder:
             temporary = Path(folder)/"profile.json"
             temporary.write_text(json.dumps(profile))
-            load_robot_profile(temporary)
+            load_robot_profile(temporary, allow_supervised_trial=supervised_trial)
     robot_profile = {key: copy.deepcopy(profile[key]) for key in
                      ("schema_version", "bridge", "robot", "field_measurements")}
+    if supervised_trial:
+        robot_profile.update(operation_mode=MODE, trial_limits=copy.deepcopy(LIMITS))
     created = []
     try:
         for path, value in ((output, profile), (robot_output, robot_profile)):
@@ -50,7 +59,7 @@ def prepare_operator_profile(source, output, robot_output, motion=False):
         for path in created:
             path.unlink()
         raise
-    return dict(mode="motion" if motion else "preview", profile=str(output), robot_profile=str(robot_output),
+    return dict(mode=MODE if supervised_trial else ("motion" if motion else "preview"), profile=str(output), robot_profile=str(robot_output),
                 permission_topic=PERMISSION_TOPIC, expected_output_topic="/cmd_vel",
                 invalidated_checks=invalidated,
                 field_measurements=profile["field_measurements"], ready_for_autonomous_control=False)
@@ -62,9 +71,10 @@ def main(argv=None):
     parser.add_argument("--output", required=True)
     parser.add_argument("--robot-output", required=True)
     parser.add_argument("--motion", action="store_true", help="requires previously recorded field checks; does not set them true")
+    parser.add_argument("--supervised-trial", action="store_true", help="explicit bounded attended trial; LiDAR NOT checked, field checks remain unchanged")
     args = parser.parse_args(argv)
     try:
-        report = prepare_operator_profile(args.profile, args.output, args.robot_output, args.motion)
+        report = prepare_operator_profile(args.profile, args.output, args.robot_output, args.motion, args.supervised_trial)
     except (ValueError, KeyError, OSError, TypeError) as exc:
         parser.exit(2, str(exc)+"\n")
     print(json.dumps(report, indent=2))

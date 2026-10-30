@@ -46,7 +46,7 @@ class VisionLaunchTests(unittest.TestCase):
             field_measurements=dict(geometry_checked=False,mux_and_base_timeout_checked=False,
                                     independent_permission_gate_checked=False))
         (root/"robot.json").write_text(json.dumps(self.profile))
-        self.context=dict(profile=str(root/"robot.json"),map=str(root/"map.yaml"),allow_motion="false",
+        self.context=dict(profile=str(root/"robot.json"),map=str(root/"map.yaml"),allow_motion="false",supervised_trial="false",
             steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw")
 
     def nodes(self):
@@ -87,6 +87,19 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertFalse(nodes["goal_dispatch"].parameters[0]["guide_only"])
         rendered=yaml.safe_load(Path(nodes["planner_server"].parameters[0]).read_text())
         self.assertIn("vision_layer",rendered["global_costmap"]["global_costmap"]["ros__parameters"]["plugins"])
+
+    def test_trial_wiring_is_explicit_and_does_not_activate_for_normal_profiles(self):
+        from husky_link_core.supervised_trial import MODE,LIMITS
+        self.context["supervised_trial"]="true"
+        with self.assertRaisesRegex(ValueError,"must match"):self.nodes()
+        self.profile.update(operation_mode=MODE,trial_limits=LIMITS)
+        Path(self.context["profile"]).write_text(json.dumps(self.profile))
+        nodes=self.nodes()
+        self.assertTrue(nodes["laser_safety"].parameters[-1]["supervised_trial"])
+        self.assertTrue(nodes["navigation_gate"].parameters[0]["supervised_trial"])
+        self.assertTrue(nodes["vision_goal_controller"].parameters[0]["supervised_trial"])
+        self.context["steering_mode"]="nav2"
+        with self.assertRaisesRegex(ValueError,"requires vision"):self.nodes()
 
     def test_motion_mode_still_rejects_unverified_robot_profile(self):
         self.context["allow_motion"]="true"

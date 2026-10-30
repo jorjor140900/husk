@@ -3,7 +3,8 @@
 คีย์บอร์ดใช้เริ่ม/หยุดรอบวิ่ง ส่วน image/AI คำนวณเส้นและบังคับเดิน/เลี้ยวเอง
 permission topic อยู่ `/husky_operator/permission` นอก namespace ที่ rosbridge อนุญาตให้ส่งคำสั่ง
 จึงไม่ให้ช่องส่งคำสั่งภาพ/AI เผยแพร่ permission โดยตรงผ่าน WebSocket
-ไม่ต้องเปิด teleop node และไม่ส่ง Twist ตรงข้าม controller/LiDAR filter ไป `/cmd_vel`
+ไม่ต้องเปิด teleop node และไม่ส่ง Twist ตรงข้าม controller ไป `/cmd_vel`
+โหมดปกติใช้ LiDAR filter; โหมดทดลองข้าม LiDAR ต้องเลือกอย่างชัดเจนตามขั้น 8
 RViz ใช้เลือกตำแหน่งและ goal ส่วนเส้นควบคุมจริงอยู่ที่ `/husky_nav/vision_reference`
 และภาพ `/husky_nav/vision_overlay` เส้น preview เดิม `/drivable_area/overlay`
 เป็นภาพทดลอง จึงไม่ใช้เป็นจออ้างอิงการขับจริง
@@ -287,9 +288,10 @@ rosrun husky_vision_bridge operator_console.py \
   _allow_robot_output:=true _session_sec:=30.0
 ```
 
-**คอม C — enable link ก่อน:**
+**คอม C — enable navigation gate และ link ก่อน:**
 
 ```bash
+ros2 service call /husky_nav/set_enabled std_srvs/srv/SetBool "{data: true}"
 ros2 service call /husky_link/set_enabled std_srvs/srv/SetBool "{data: true}"
 ```
 
@@ -330,3 +332,115 @@ ros2 service call /husky_nav/cancel_vision_goal std_srvs/srv/Trigger "{}"
 - CLI สร้าง preview profile และ syntax ฝั่งหุ่นผ่าน ยังไม่ได้ทดสอบ ROS1 transport/การเคลื่อนหุ่นจริง
 
 ผลเหล่านี้ไม่ใช่หลักฐานระยะหยุดจริง, VLP16 coverage หรือความแม่นยำของเส้นภาคสนาม
+
+
+## 8. โหมดทดลองมีคนเฝ้า: ข้ามการตรวจ LiDAR อย่างชัดเจน
+
+ใช้เฉพาะการทดลองระยะสั้นที่ผู้ควบคุมมองเห็นหุ่นและทางตลอด พร้อมใช้ hardware e-stop
+โหมดนี้ **ไม่ตรวจสิ่งกีดขวางด้วย LiDAR** และไม่เปลี่ยนผล field measurements ให้เป็น true
+mask จาก RGB อาจมองพื้น/สิ่งกีดขวางผิดได้ การมีเส้นเหลืองไม่รับรองว่าหุ่นผ่านได้
+
+จำกัดความเร็ว .03 m/s, เลี้ยว .15 rad/s, ระยะสะสม .5 m, เวลา 20 s และมุมเลี้ยวสะสม .35 rad
+ถึงข้อใดก่อนจะหยุด ต้องเริ่มรอบใหม่เอง ระยะเหล่านี้เป็นจุดสั่งหยุดจาก odometry ไม่ใช่ระยะหยุดทางกายภาพที่รับรอง
+จำกัดทั้งฝั่ง ROS2 และ gateway บนหุ่น จึงต้องอัปเดตทั้งสองเครื่องตามขั้น 1–2 ก่อนใช้
+เวลา gateway เริ่มนับตั้งแต่ arm ส่วน ROS2 เริ่มนับเมื่อมีคำขอความเร็วครั้งแรก
+ภาพเก่า, reference หาย, odometry/TF ขาด, permission/คำสั่งขาด หรือ link หลุดยังทำให้หยุด
+หลังเริ่มเคลื่อนที่แล้ว fault จะค้าง แม้ข้อมูลกลับมาสดก็ไม่วิ่งต่อเอง
+
+### สร้างและคัดลอกไฟล์ใหม่
+
+หลัง git pull/export/build ตามขั้น 1 บนคอม (หยุด launch เดิมก่อน):
+
+```bash
+ros2 run husky_vision prepare_operator_profile \
+  --profile "$HOME/husky_vision_ws/robot/robot-nojoy-preview.json" \
+  --output "$HOME/husky_vision_ws/robot/robot-nojoy-trial.json" \
+  --robot-output "$HOME/husky_vision_ws/robot/ros1-nojoy-trial.json" \
+  --supervised-trial
+scp -r "$HOME/husky_vision_ws/src/husky_vision/ros1/husky_vision_bridge" \
+  administrator@192.168.131.1:~/husky_ws/src/
+scp "$HOME/husky_vision_ws/robot/ros1-nojoy-trial.json" \
+  administrator@192.168.131.1:~/husky-nojoy-trial.json
+```
+
+หากชื่อ output มีอยู่แล้วให้ใช้ไฟล์เดิมที่สร้างด้วยรุ่นนี้หรือเลือกชื่อใหม่ เครื่องมือไม่เขียนทับ
+บนหุ่น build package ใหม่ตามขั้น 2; ปิด console ด้วย q แล้วหยุด gateway/field launch เดิมก่อนเปลี่ยนชุด
+ทุก terminal ใช้ environment เดิมในขั้น 1–2; ROS2 ต้อง export Cyclone เหมือนกันทั้งหมด
+SSH tunnel เดิมเปิดค้างไว้ได้ หากยังไม่มี เปิดบนคอมอีก terminal:
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes \
+  -L127.0.0.1:9090:127.0.0.1:9090 administrator@192.168.131.1
+```
+
+### เปิดรอบทดลอง
+
+**หุ่น A — gateway:**
+
+```bash
+roslaunch husky_vision_bridge bridge.launch \
+  profile_path:="$HOME/husky-nojoy-trial.json" \
+  odom_topic:=/odometry/filtered scan_topic:=/scan base_frame:=base_link \
+  allow_robot_output:=true supervised_trial:=true
+```
+
+**คอม B — กล้อง/AI/navigation:**
+
+```bash
+QT_QPA_PLATFORM=xcb ros2 launch husky_vision vision_field.launch.py \
+  profile:="$HOME/husky_vision_ws/robot/robot-nojoy-trial.json" \
+  map:="$HOME/husky_vision_ws/maps/outdoor1.yaml" \
+  allow_motion:=true supervised_trial:=true
+```
+
+ตั้ง initial pose ให้ตรงพื้นที่จริง แล้วเลือก goal ใหม่ตรงทางเดิน
+ดู `/husky_nav/vision_overlay` ซึ่งแสดงเส้นเหลืองที่ controller ใช้จริง พร้อมแถบ `SUPERVISED: LiDAR OFF`
+หาก goal ไกลเกิน .5 m รอบนี้จะหยุดก่อนถึง goal ตามขีดจำกัดระยะ
+
+**หุ่น B — console เปิดค้างไว้ ยังไม่กด g:**
+
+```bash
+rosrun husky_vision_bridge operator_console.py \
+  _profile_path:="$HOME/husky-nojoy-trial.json" \
+  _allow_robot_output:=true _supervised_trial:=true _session_sec:=20.0
+```
+
+**คอม C — enable ทั้งสอง gate หลัง console เริ่มแล้ว:**
+
+```bash
+ros2 service call /husky_nav/set_enabled std_srvs/srv/SetBool "{data: true}"
+ros2 service call /husky_link/set_enabled std_srvs/srv/SetBool "{data: true}"
+```
+
+ทั้งคู่ต้องตอบ success=true จากนั้นกด **g** ใน console หุ่น B เพียงครั้งเดียว
+AI/controller ส่งความเร็วตามเส้นเหลือง ส่วน console อนุญาต/หยุดเท่านั้น ไม่ต้องใช้ joystick หรือ teleop
+**Space หยุด, q หยุดและออก**; hardware e-stop สำหรับเหตุฉุกเฉิน
+
+สถานะ ROS2 `/husky_control/safety/status` จะระบุ `model: supervised_vision_no_lidar`, `lidar_checked: false`
+`scan_input_reason: invalid_scan_metadata` อาจยังแสดงได้ เพราะเก็บสถานะ scan เดิมไว้ แต่ไม่ได้ใช้ตัดสินการเคลื่อนที่ในโหมดนี้
+สถานะบนหุ่น `/husky_vision/trial_status` แสดง armed, reason, ระยะ/มุมสะสมและขีดจำกัด
+โหมดปกติยังปฏิเสธ scan เดียวกันตามเดิม
+
+### เริ่มรอบใหม่หลังหยุด/fault/ครบขีดจำกัด
+
+กด Space ให้ console เป็น stopped ก่อน แล้ว reset ฝั่งคอม:
+
+```bash
+ros2 service call /husky_nav/reset_trial std_srvs/srv/Trigger "{}"
+ros2 service call /husky_nav/set_enabled std_srvs/srv/SetBool "{data: true}"
+ros2 service call /husky_link/set_enabled std_srvs/srv/SetBool "{data: true}"
+```
+
+reset ต้องตอบ success=true; จะถูกปฏิเสธขณะ permission ยังเปิดอยู่
+ตรวจตำแหน่ง/ทางและ goal ใหม่ก่อนกด g อีกครั้ง ไม่มีการต่อเวลา/arm อัตโนมัติ
+หากสั่งหยุดจาก terminal ให้ใช้วิธีในขั้น 7 ได้ตามเดิม
+
+### ผลทดสอบโหมดนี้
+
+Python suite 360 tests ผ่าน รวม profile+flag ต้องตรงกัน, ไม่แก้ field facts, จำกัดความเร็วโดยรักษาความโค้ง,
+งบระยะ/เวลา/มุม และ gateway หุ่นหยุดแม้คำสั่งยังสด
+Native ROS Jazzy ใน container ที่ตัด network ใช้ navigation gate และ safety node จริงร่วมกับข้อมูลจำลอง:
+โหมด trial ส่งออกไม่เกิน .03 m/s ขณะที่โหมดปกติปฏิเสธ scan เดียวกัน;
+ภาพ/odom หายแล้วหยุดค้าง, reset ขณะ permission เปิดถูกปฏิเสธ, ครบระยะ/เวลาแล้วหยุด และไม่มี publisher `/cmd_vel`
+ดู fixture `tests/native_supervised_trial_probe.py` (ใช้เฉพาะ container network none)
+ยังไม่ได้ทดสอบการวิ่งหรือระยะหยุดจริงบนหุ่น
