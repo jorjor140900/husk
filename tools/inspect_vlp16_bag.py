@@ -47,7 +47,9 @@ def inspect(path):
     with AnyReader([path]) as reader:
         for connection, received, raw in reader.messages():
             records[connection.topic].append((received, reader.deserialize(raw, connection.msgtype)))
-    required = ("/scan", "/velodyne_points", "/velodyne_packets", "/odometry/filtered", "/tf_static")
+    # Packet topic is optional for geometry/deskew review. Per-point times are
+    # retained in PointCloud2; packet-relative checks are skipped when absent.
+    required = ("/scan", "/velodyne_points", "/odometry/filtered", "/tf_static")
     missing = [name for name in required if not records[name]]
     if missing:
         raise ValueError("recording_missing_topics:"+",".join(missing))

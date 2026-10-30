@@ -148,3 +148,47 @@ Live transform-node configuration supplied on 2026-10-30:
 This configuration supports choosing `input_mode=raw_timed` for this deployment;
 recheck it after driver changes. These cloud-source limits differ from the
 LaserScan's reported 0..200 m and do not establish free-space/low-obstacle coverage.
+
+## Additional stationary bag received 2026-10-30
+
+`husky-vlp16-20261029-232306.bag`, SHA-256
+`b25abb043e86f151dd10c2dd32ddc9ef3a84c2a63c34aee0b6145a8c5c25c01c`:
+34 clouds/scans, 171 odometry messages and static TF. No packet topic was requested
+for this recording; the inspection tool now treats packets as optional and skips
+packet-relative checks, while retaining signed PointCloud2 times.
+
+32 clouds have complete odometry brackets; two boundary clouds are rejected.
+Odometry pose extent is zero, so this recording does not validate deskew during
+real motion. Scan metadata is rejected in all 34 scans; all match ring 8.
+
+Declared TF places base_footprint at base Z=-.13228 m and the sensor at
+base XYZ=(-.2317,0,.88155), identity rotation. On the assumed flat plane this is
+1.01383 m sensor height. The lowest ring is -15 degrees. Along the forward
+centerline its height above the declared plane is approximately:
+
+| Forward X from base (m) | Lowest-beam height (m) |
+| --- | --- |
+| 0.5 | .818 |
+| 1.0 | .684 |
+| 1.5 | .550 |
+| 2.0 | .416 |
+| 2.5 | .282 |
+| 3.0 | .148 |
+
+In the observed 1.2 m wide front strip there are no returns before X=1.5 m,
+and no returns within 5 cm of the declared floor below X=3 m. This is **not** a
+free-space measurement. Returns at X=1.5..2.5 m have heights roughly .31..63 m;
+without synchronized imagery they cannot be identified as particular objects.
+Ground-height candidates occur around X=3..5 m, about 2..3 cm below the declared
+plane. No ground-class or passability decision is made from height alone.
+
+No points project inside the previously stated footprint XY rectangle
+X=[-.56,.50], Y=[-.33,.33]. That absence cannot identify a 3-D self-filter model
+or prove that the body is filtered correctly. The dimensions used are prior
+user measurements, not a new measurement from this bag.
+
+Changing scan limits or dropping floor/body points cannot restore missing
+near-floor observations. A cloud-based stop filter still needs an explicit
+near-field coverage strategy and physical validation; obstacle classification
+alone must not permit commands into unobserved space. The recorded stationary
+scene does not validate stopping distances, terrain or camera calibration.
