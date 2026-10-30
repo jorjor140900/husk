@@ -854,3 +854,33 @@ Native ROS2 ใน container network none ทดสอบ controller/gate/filter
 ถึงgoalใน26.8s แล้วให้ศูนย์; ทดลองหยุดส่งคำสั่งแล้ว watchdog disarm
 TFช้า120ms, legacygridinvalidตลอด, ไม่มี publisher /cmd_vel และไม่ได้เชื่อมต่อหุ่นจริง
 ไม่ได้ทดสอบเดิน100mหรือเดิน900sจริง ดู tests/native_extended_goal_probe.py
+
+
+## 12. ตรวจ NO_VALID_PATH โดยไม่ต้องมีเส้นทางก่อน
+
+`goal_failed / NO_VALID_PATH` ทำให้ controller รอ waiting_for_goal_guide แม้สีเขียวดีเทคได้
+ใช้ตัวตรวจนี้เมื่อ plan ว่างได้ โดยคง console STOP ไม่ต้อง enable/g:
+
+```bash
+cd ~/husk-live
+git pull --ff-only origin work
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+python3 tools/check_goal_costmap.py --duration 10
+```
+
+ต้อง source ROS2/.venv/install ตามเดิม แต่ไม่ต้อง export/build/restart field launch เพื่อใช้เครื่องมือนี้
+อ่าน current goal, map, costmap และ TF จากกราฟที่เปิดอยู่ มีเพียง GetParameters สำหรับอ่านค่าจริง
+ไม่มี publisher ความเร็ว/permission, ไม่มี action request และไม่มี parameter write
+รายงานบอก start/goal อยู่ใน/นอกแผนที่หรือเป็น blocked/unknown/soft_cost/free,
+จำนวนเซลล์ขวางเส้นตรง, เซลล์ขวางที่ saved map ยังว่าง และ connectivity ของ point grid
+`point_grid_connected_4_neighbour` ไม่ใช่ Nav2 planner และไม่รับรอง footprint หรือว่าเดินผ่านได้
+ต้นทุนสีฟ้าไม่ใช่เซลล์บล็อกทั้งหมด เครื่องมือแยก cost<99 กับ >=99 และไม่แก้ข้อมูลให้ผ่าน
+costmap subscriber รับ stream ใหม่ได้ทั้ง publisher แบบ volatile และ transient local
+หากขาด topic/TF จะรายงาน error และข้อมูล publisher/QoS แทนการสร้างเส้นเทียม
+ส่งไฟล์หลัง REPORT: มาอ่านต่อได้ ไฟล์มีเฉพาะ diagnostics ไม่ใช่ข้อมูลให้ควบคุมหุ่น
+
+receiver_state_stale_or_clock_skew เป็นอีกเงื่อนไขของ link: เกี่ยวกับการเปิดส่งคำสั่งจริง
+ไม่ใช่สาเหตุโดยตรงของ planner NO_VALID_PATH จึงควรแก้ให้ guide/reference ผ่านขณะ STOP ก่อนเริ่ม session
+Unit tests 4 cases และ native ROS2 network-none ทดสอบ goal/map/TF จริงกับ costmap publisher แบบ volatile
+ที่ไม่มี goal_plan เลย: ตรวจพบกำแพงแบ่ง free endpoints และแยกจาก saved map ที่ยังว่างได้
+ไม่มีการเชื่อมต่อหรือเคลื่อนหุ่นจริง
