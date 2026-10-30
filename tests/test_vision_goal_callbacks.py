@@ -102,8 +102,53 @@ class VisionGoalCallbackTests(unittest.TestCase):
         self.assertIsNone(self.node.pending)
         self.assertTrue(all(not call.args[0].poses for call in self.node.path_pub.publish.call_args_list))
 
+    def test_streaming_captures_do_not_starve_a_delayed_exact_tf(self):
+        n=self.node;n.reference=None;n.start_x=1.;n.config=object()
+        labels=np.ones((480,640),np.uint8)
+        reference=np.column_stack([np.linspace(1.,2.,11),np.zeros(11)])
+        def decode(data):
+            ns=int(data)
+            return {"source_header":{"frame_id":"camera","stamp":{
+                "sec":ns//10**9,"nanosec":ns%10**9}},"raw_shape_hw":[480,640]},labels
+        def delayed_tf(target,source,ns):
+            if ns>self.now-90_000_000:raise RuntimeError("future extrapolation")
+            return np.eye(4)
+        n.tf_matrix.side_effect=delayed_tf
+        with mock.patch.object(self.module,"decode_segmentation",side_effect=decode), \
+             mock.patch.object(self.module,"plan_vision_reference",return_value=(reference,"ok",{})):
+            for i in range(30):
+                ns=10_000_000_000+i*66_666_667
+                self.now=ns+20_000_000
+                n.segmentation(NS(data=str(ns)))
+                n.retry()
+                if i>=2:
+                    self.assertIsNotNone(n.reference)
+                    self.assertLessEqual(self.now-n.source_ns,500_000_000)
+            paths=[c.args[0] for c in n.path_pub.publish.call_args_list if c.args[0].poses]
+            self.assertGreater(len(paths),8)
+            stamps=[p.header.stamp.sec*10**9+p.header.stamp.nanosec for p in paths]
+            captures={10_000_000_000+i*66_666_667 for i in range(30)}
+            self.assertTrue(set(stamps)<=captures)
+            self.assertEqual(stamps,sorted(set(stamps)))
+
+    def test_tf_wait_preserves_reference_stamp_but_stops_at_original_expiry(self):
+        n=self.node;reference=n.reference;source=n.source_ns;received=n.source_received
+        n.pending=(10_050_000_000,np.ones((480,640),np.uint8),time.monotonic())
+        n.tf_matrix.side_effect=RuntimeError("TF delayed")
+        n.retry()
+        self.assertIs(n.reference,reference)
+        self.assertEqual((n.source_ns,n.source_received),(source,received))
+        self.assertTrue(n.detail["capture_tf_waiting"])
+        self.now=10_550_000_000
+        n.retry()
+        self.assertIsNone(n.reference)
+        self.assertEqual(n.reason,"waiting_for_capture_tf")
+        self.assertEqual(n.command_pub.publish.call_args.args[0].twist.linear.x,0.)
+
     def test_malformed_packet_clears_old_reference_immediately(self):
+        self.node.pending=(10*10**9,np.ones((480,640),np.uint8),time.monotonic())
         self.node.segmentation(NS(data='{"valid": false}'))
+        self.assertIsNone(self.node.pending)
         self.assertIsNone(self.node.reference)
         self.assertEqual(self.node.command_pub.publish.call_args.args[0].twist.linear.x,0.)
 

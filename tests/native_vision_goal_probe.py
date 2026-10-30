@@ -7,6 +7,7 @@ import os
 if os.environ.get("HUSKY_ISOLATED_TEST") != "1":
     raise SystemExit("Use HUSKY_ISOLATED_TEST=1 in an isolated --network none ROS test container only.")
 import json, math, time
+from collections import deque
 from pathlib import Path
 import cv2
 import numpy as np
@@ -47,6 +48,9 @@ static=StaticTransformBroadcaster(fixture);dynamic=TransformBroadcaster(fixture)
 def tf(parent,child,x=0.,z=0.):
  t=TransformStamped();t.header.frame_id=parent;t.child_frame_id=child;t.transform.translation.x=x;t.transform.translation.z=z;t.transform.rotation.w=1.;return t
 static.sendTransform([tf('map','odom'),tf('base_link','vision_ground',z=-.132)])
+tf_delay=float(os.environ.get('HUSKY_TEST_TF_DELAY_SEC','0'))
+assert 0<=tf_delay<=.3
+tf_pending=deque()
 state=dict(x=0.,y=0.,yaw=0.,v=0.,w=0.,vision=True,blocked=False,simulate=False)
 requests=[];guarded=[];references=[];statuses=[];images=[];action_count=[]
 def command(m):
@@ -85,12 +89,16 @@ def publish():
  stamp=fixture.get_clock().now().to_msg()
  odom=Odometry();odom.header.frame_id='odom';odom.child_frame_id='base_link';odom.header.stamp=stamp
  odom.pose.pose.position.x=state['x'];odom.pose.pose.position.y=state['y'];odom.pose.pose.orientation.z=math.sin(state['yaw']/2);odom.pose.pose.orientation.w=math.cos(state['yaw']/2);odom.twist.twist.linear.x=state['v'];odom.twist.twist.angular.z=state['w'];odom_pub.publish(odom)
- tr=tf('odom','base_link');tr.header.stamp=stamp;tr.transform.translation.x=state['x'];tr.transform.translation.y=state['y'];tr.transform.rotation=odom.pose.pose.orientation;dynamic.sendTransform(tr)
+ tr=tf('odom','base_link');tr.header.stamp=stamp;tr.transform.translation.x=state['x'];tr.transform.translation.y=state['y'];tr.transform.rotation=odom.pose.pose.orientation;tf_pending.append((time.monotonic()+tf_delay,tr))
  header=Header();header.frame_id=m.camera_frame;header.stamp=stamp
  image_pub.publish(fill_image(Image(),frame,header))
  if time.monotonic()-last_route>1.:publish_route()
  if state['vision']:seg_pub.publish(String(data=encode_segmentation(blocked if state['blocked'] else clear,header,.3)))
-timer=fixture.create_timer(.1,publish)
+def publish_ready_tf():
+ while tf_pending and tf_pending[0][0]<=time.monotonic():
+  dynamic.sendTransform(tf_pending.popleft()[1])
+tf_timer=fixture.create_timer(.01,publish_ready_tf)
+timer=fixture.create_timer(1/15,publish)
 def spin(seconds):
  end=time.monotonic()+seconds
  while time.monotonic()<end:executor.spin_once(timeout_sec=.01)
@@ -128,7 +136,7 @@ try:
  assert all(v==0 and w==0 for v,w in guarded)
  assert fixture.count_publishers('/cmd_vel')==0
  assert len(action_count)>=3
- report=dict(result='passed',native_ros2=True,physical_robot=False,synthetic_camera=True,
+ report=dict(delayed_tf_sec=tf_delay,camera_fps=15,result='passed',native_ros2=True,physical_robot=False,synthetic_camera=True,
   image_first_reference=True,curved_guide_not_copied=True,overlay_matches_controller_capture=True,
   blocked_mask_stops=True,stale_mask_stops_and_hides_yellow=True,cancel_stops=True,
   preview_only_gate_stays_zero=True,no_global_cmd_vel=True,synthetic_periodic_map_guide=True,dispatcher_action_callbacks_tested_separately=True,

@@ -157,7 +157,6 @@ class VisionGoalNode(Node):
             self.overlay(ns,np.full((self.camera.height,self.camera.width),255,np.uint8),[],"waiting for fresh AI")
 
     def segmentation(self,message):
-        self.pending=None
         try:
             packet,labels=decode_segmentation(message.data)
             source=packet["source_header"];stamp=source["stamp"]
@@ -171,9 +170,14 @@ class VisionGoalNode(Node):
             if not fresh_stamp(ns,now,self.get_clock().now().nanoseconds,now,.5):
                 raise ValueError("stale_segmentation")
             self.last_seg_ns=ns
-            self.pending=(ns,labels,now)
+            # Keep one exact capture until TF catches up. Replacing this slot
+            # at camera rate can starve it forever when TF trails the camera.
+            if self.pending is None or not fresh_stamp(
+                    self.pending[0],self.pending[2],self.get_clock().now().nanoseconds,now,.5):
+                self.pending=(ns,labels,now)
             self.retry()
         except (ValueError,TypeError,KeyError,OverflowError,cv2.error) as exc:
+            self.pending=None
             self.clear(str(exc)[:120])
 
     def retry(self):
@@ -217,9 +221,14 @@ class VisionGoalNode(Node):
             self.path_pub.publish(path)
             self.pending=None
             self.overlay(ns,labels,reference,"image reference ready")
-        except TransformException:
-            # One bounded latest packet, retried at its original capture time.
-            self.clear("waiting_for_capture_tf")
+        except TransformException as exc:
+            # Retry this capture, not a new one. A missing NEXT transform does
+            # not invalidate an existing reference within its original 500 ms
+            # source budget; neither its stamp nor receipt time is renewed.
+            if self.reference is None or not fresh_stamp(
+                    self.source_ns,self.source_received,self.get_clock().now().nanoseconds,time.monotonic(),.5):
+                self.clear("waiting_for_capture_tf")
+            self.detail.update(capture_tf_waiting=True,capture_tf_error=str(exc)[:240])
         except (ValueError,TypeError,KeyError,OverflowError,cv2.error) as exc:
             self.pending=None;self.clear(str(exc)[:120])
             self.overlay(ns,labels,[],self.reason)

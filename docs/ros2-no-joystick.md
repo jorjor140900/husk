@@ -444,3 +444,18 @@ Native ROS Jazzy ใน container ที่ตัด network ใช้ navigatio
 ภาพ/odom หายแล้วหยุดค้าง, reset ขณะ permission เปิดถูกปฏิเสธ, ครบระยะ/เวลาแล้วหยุด และไม่มี publisher `/cmd_vel`
 ดู fixture `tests/native_supervised_trial_probe.py` (ใช้เฉพาะ container network none)
 ยังไม่ได้ทดสอบการวิ่งหรือระยะหยุดจริงบนหุ่น
+
+
+### ถ้า controller รอ capture TF ทั้งที่ tf2_echo ล่าสุดมี TF
+
+รุ่นหลัง 75bbaa9 แก้กรณีภาพ 15 FPS มาเร็วกว่าข้อมูล TF: เดิม segmentation ใหม่เขียนทับ
+ภาพที่กำลังรอทุกครั้ง จึงอาจรอ TF ของภาพล่าสุดตลอดโดยไม่เคยสร้าง reference สำเร็จ
+ตอนนี้เก็บภาพรอเพียงหนึ่งภาพ ใช้ timestamp เดิม และ retry จนได้ TF หรือหมดอายุ 500 ms
+เส้นที่สร้างสำเร็จและยังสดไม่ถูกล้างเพียงเพราะ TF ของภาพถัดไปยังมาไม่ถึง
+ไม่เลื่อน stamp ไม่ใช้ latest TF แทนเวลา capture และไม่เพิ่มงบภาพเก่า
+packet ผิด/goal ยกเลิก/ภาพหมดอายุยังตัดเส้นและให้ศูนย์
+
+อัปเดตเฉพาะ ROS2 บนคอมตามขั้น 1 แล้ว restart field launch; ไม่ต้องเปลี่ยน trial profile
+หรือ build gateway หุ่นใหม่สำหรับการแก้นี้ ตั้ง pose/goal ใหม่และ enable ทั้งสอง gate ก่อนเริ่มรอบใหม่
+ตรวจ status `tracking` และเส้นเหลืองจริงที่ `/husky_nav/vision_overlay`
+หากยังรอ status จะมี `capture_tf_error` บอก transform ที่ขาดและช่วงเวลาให้ตรวจต่อ
