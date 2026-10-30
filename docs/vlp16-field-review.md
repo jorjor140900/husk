@@ -192,3 +192,39 @@ near-floor observations. A cloud-based stop filter still needs an explicit
 near-field coverage strategy and physical validation; obstacle classification
 alone must not permit commands into unobserved space. The recorded stationary
 scene does not validate stopping distances, terrain or camera calibration.
+
+
+## Stationary ghost-diagnosis bag, received after leaving the field
+
+`husky-ghost-20261030-050159.bag` SHA-256 `b829f2115f8f79d4104c63094e6b052d3726f39b61f73229faee6eb37347c23c`
+contains 34 clouds/scans,174 odometry and208 TF messages plus static TF.
+The user explicitly reported a different location. Odometry pose extent is zero;
+this is not a recording of the moving field failure and has no costmap/map-to-odom evidence.
+
+All scans again match ring8 (+1 degree), not all16 rings.
+On the declared base-footprint plane Z=-.13228m and lidar TF(-.2317,0,.88155),
+selected scan returns within4m of base XY are approximately1.023..1.081m above ground.
+No selected scan return is within5cm of the declared plane, and no selected return
+projects inside the earlier footprint XY rectangle. Neither observation proves
+self filtering or identifies real objects at the new site. Do not assume these
+are floor points or remove live obstacle marking.
+
+The recorded conversion matches assigning the last point in each angular bin.
+Among29604 paired finite bins,5571 are more than1cm farther than the nearest
+ring8 return in the same bin;610 differ by more than1m and258 by more than10m.
+Maximum difference is32.747m. Nearer real returns must be preserved when
+correcting the conversion; this discrepancy alone does not prove the field ghosts.
+
+All34 original scan metadata checks still reject the scan: range_min=0,
+angle_max differs from the final bin by about .01119rad and timing is zero
+although timed clouds span about100.8ms. Robot-local recording delays are
+approximately2..6.3ms; these measurements do not characterize Wi-Fi delivery.
+33 clouds have complete odometry brackets; the one boundary cloud is rejected.
+With stationary odometry, deskew changes are numerical roundoff only.
+
+The next field evidence must include the laptop global costmap, map and
+AMCL map-to-odom TF at the same time as raw scan/cloud and robot odometry,
+plus a synchronized scene view. A robot-only bag cannot distinguish a raw
+return artifact from old costmap cells or localization shifts in map.
+No runtime conversion, filter threshold, permission, velocity or obstacle-layer
+setting was changed based on this stationary bag.
