@@ -165,6 +165,88 @@ class LinkEnableTests(unittest.TestCase):
             self.assertTrue(link.enable(True)[0])
             self.assertEqual(link.snapshot()["disable_reason"],"")
 
+    def prepared_trial(self):
+        clock=[2.,10_000_000_000]
+        link=self.link(supervised_trial=True,forward_commands=True,base_frame="base_link",
+                       expected_output_topic="/husky_vision/watchdog_preview",
+                       command_provider=lambda _:dict(source_ns=clock[1],linear_x=0.,angular_z=0.))
+        link.ros_clock=lambda:clock[1];link.connected=True
+        return link,clock
+
+    def test_trial_preparation_survives_disarmed_gap_but_never_sends_stale_commands(self):
+        link,clock=self.prepared_trial();socket=mock.Mock()
+        with mock.patch("husky_drivable_area.robot_link.time.monotonic",side_effect=lambda:clock[0]):
+            link._received("state",receiver(False));self.assertTrue(link.enable(True)[0])
+            clock[0]+=.4;clock[1]+=400_000_000
+            link._send_command(socket)
+            self.assertTrue(link.enabled);self.assertTrue(link.snapshot()["awaiting_receiver_arm"])
+            self.assertFalse(link.snapshot()["motion_permitted"]);socket.send.assert_not_called()
+            state=receiver(True);state["lease"]="b"*32;state["stamp"]=stamp_dict(clock[1])
+            link._received("state",state);link._send_command(socket)
+            socket.send.assert_called_once();self.assertIsNone(link.preparing_until)
+            clock[0]+=.4;clock[1]+=400_000_000
+            link._send_command(socket);self.assertFalse(link.enabled)
+            state["stamp"]=stamp_dict(clock[1]);link._received("state",state)
+            link._send_command(socket);socket.send.assert_called_once()
+            self.assertFalse(link.enabled)  # No recovery after first arm.
+
+    def test_prepared_trial_feeds_real_watchdog_zero_then_bounded_motion_and_times_out(self):
+        link,clock=self.prepared_trial();socket=mock.Mock()
+        gate=CommandWatchdog("base_link",max_linear=.03,max_angular=.15)
+        def state():
+            value=receiver(gate.armed)
+            value.update(stamp=stamp_dict(clock[1]),lease=gate.lease,reason=gate.reason,
+                         max_linear_mps=.03,max_angular_rps=.15)
+            return value
+        def receive_command(raw):
+            command=loads(json.loads(raw)["msg"]["data"])
+            self.assertTrue(gate.accept(command,clock[1],clock[0]))
+        socket.send.side_effect=receive_command
+        with mock.patch("husky_drivable_area.robot_link.time.monotonic",side_effect=lambda:clock[0]):
+            link._received("state",state());link.enable(True)
+            clock[0]+=.4;clock[1]+=400_000_000;link._send_command(socket)
+            socket.send.assert_not_called()
+            gate.set_enabled(True,clock[0]);link._received("state",state());link._send_command(socket)
+            self.assertEqual(gate.tick(clock[1],clock[0]),(0.,0.))
+            link.provider=lambda _:dict(source_ns=clock[1],linear_x=.03,angular_z=0.)
+            for _ in range(5):
+                clock[0]+=.05;clock[1]+=50_000_000
+                link._received("state",state());link._send_command(socket)
+                self.assertEqual(gate.tick(clock[1],clock[0]),(.03,0.))
+            clock[0]+=.4;clock[1]+=400_000_000
+            link._send_command(socket)
+            self.assertFalse(link.enabled)
+            self.assertEqual(gate.tick(clock[1],clock[0]),(0.,0.))
+            self.assertEqual(gate.reason,"command_timeout")
+            gate.set_enabled(True,clock[0]);link._received("state",state())
+            sent=socket.send.call_count;link._send_command(socket)
+            self.assertEqual(socket.send.call_count,sent)
+
+    def test_trial_preparation_expires_without_arming_even_with_fresh_receiver(self):
+        link,clock=self.prepared_trial();socket=mock.Mock()
+        with mock.patch("husky_drivable_area.robot_link.time.monotonic",side_effect=lambda:clock[0]):
+            link._received("state",receiver(False));link.enable(True)
+            clock[0]+=20.;clock[1]+=20_000_000_000
+            state=receiver(False);state["stamp"]=stamp_dict(clock[1]);link._received("state",state)
+            link._send_command(socket)
+            self.assertFalse(link.enabled);self.assertEqual(link.disable_reason,"arm_preparation_expired")
+            state["armed"]=True;link._received("state",state);link._send_command(socket)
+            socket.send.assert_not_called();self.assertFalse(link.enabled)
+
+    def test_trial_stop_disconnect_and_already_armed_do_not_get_preparation_recovery(self):
+        for action in ("stop","disconnect","lease_change","already_armed"):
+            link,clock=self.prepared_trial();socket=mock.Mock()
+            with mock.patch("husky_drivable_area.robot_link.time.monotonic",side_effect=lambda:clock[0]):
+                link._received("state",receiver(action=="already_armed"));link.enable(True)
+                if action=="stop":link.enable(False)
+                elif action=="disconnect":link.connected=False
+                elif action=="lease_change":
+                    state=receiver(False);state["lease"]="c"*32;link._received("state",state)
+                clock[0]+=.4;clock[1]+=400_000_000;link._send_command(socket)
+                self.assertFalse(link.enabled,action)
+                self.assertIsNone(link.preparing_until,action)
+                socket.send.assert_not_called()
+
     def test_clock_offset_is_distinct_from_receiver_delivery_gap(self):
         link=self.link();link.connected=True
         with mock.patch("husky_drivable_area.robot_link.time.monotonic",return_value=2.):

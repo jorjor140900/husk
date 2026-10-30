@@ -66,7 +66,7 @@ def _nodes(context):
         raise ValueError("ground parent and child must differ")
     nodes = [
         Node(package="husky_drivable_area",executable="robot_bridge",namespace="husky_link",output="screen",parameters=[{
-            "bridge_url":bridge["url"],"forward_commands":allow,"base_frame":base,
+            "bridge_url":bridge["url"],"forward_commands":allow,"base_frame":base,"supervised_trial":trial,
             "expected_output_topic":bridge.get("expected_output_topic") or "",
             "command_topic":"/husky_nav/filtered_cmd_vel_stamped"}]),
         Node(package="husky_drivable_area",executable="mapping_scan",output="screen"),

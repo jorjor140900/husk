@@ -12,7 +12,11 @@ class RosbridgeLink:
     KINDS = ("odom", "scan", "tf", "tf_static", "permission", "image", "cloud", "state")
 
     def __init__(self, url, *, prefix="/husky_vision", forward_commands=False, base_frame="",
-                 expected_output_topic="", command_provider=None, ros_clock=None):
+                 expected_output_topic="", command_provider=None, ros_clock=None, supervised_trial=False):
+        if type(supervised_trial) is not bool:
+            raise ValueError("supervised_trial must be bool")
+        self.supervised_trial = supervised_trial
+        self.preparing_until = self.preparing_lease = None
         parsed = urlparse(url)
         if parsed.scheme not in ("ws", "wss") or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("use a ws/wss URL without embedded credentials; default is an SSH-forwarded loopback socket")
@@ -69,6 +73,7 @@ class RosbridgeLink:
         if self.enabled or self.disable_reason == "startup":
             self.disable_reason = reason
         self.enabled = False
+        self.preparing_until = self.preparing_lease = None
 
     def snapshot(self):
         with self.lock:
@@ -82,6 +87,8 @@ class RosbridgeLink:
                 timing = dict(source_age_ms=source_ms, receipt_age_ms=receipt_ms,
                               source_age_at_receipt_estimate_ms=source_ms-receipt_ms)
             return {"disable_reason": self.disable_reason, "receiver_timing_ms": timing,
+                    "awaiting_receiver_arm": self.enabled and self.preparing_until is not None and now < self.preparing_until,
+                    "arm_preparation_remaining_sec": max(0.,self.preparing_until-now) if self.preparing_until is not None else 0.,
                     "connected": self.connected, "enabled": self.enabled, "forward_commands": self.forward_commands,
                     "reason": reason, "transport_error": self.error,
                     "receiver": self.receiver[0].copy() if self.receiver else None,
@@ -96,6 +103,7 @@ class RosbridgeLink:
             if not enabled:
                 self.enabled, self.stop_stamp = False, self.ros_clock()
                 self.disable_reason = "operator_disabled"
+                self.preparing_until = self.preparing_lease = None
                 return True, "disabled; zero requested, robot-local watchdog remains active"
             if not self.forward_commands:
                 return False, "observe mode: forward_commands is false"
@@ -104,6 +112,11 @@ class RosbridgeLink:
                 return False, reason
             self.enabled = True
             self.disable_reason = ""
+            self.preparing_until = self.preparing_lease = None
+            if self.supervised_trial and not self.receiver[0]["armed"]:
+                self.preparing_until = time.monotonic()+20.
+                self.preparing_lease = self.receiver[0]["lease"]
+                return True, "prepared for 20s; press g on robot; fresh state and filtered commands still required"
             return True, "enabled; local ROS1 receiver arm and fresh filtered commands still required"
 
     def take(self):
@@ -132,6 +145,15 @@ class RosbridgeLink:
                     raise ValueError("invalid_receiver_limits_or_lease")
                 if self.receiver and self.receiver[0]["armed"] and (not packet["armed"] or packet["lease"] != self.receiver[0]["lease"]):
                     self._drop_enable("receiver_disarmed_or_lease_changed:"+packet["reason"])
+                if self.preparing_until is not None:
+                    if now >= self.preparing_until:
+                        self._drop_enable("arm_preparation_expired")
+                    elif packet["armed"]:
+                        # The first observed arm consumes preparation. From
+                        # here every stale-state fault drops enable as usual.
+                        self.preparing_until = self.preparing_lease = None
+                    elif packet["lease"] != self.preparing_lease:
+                        self._drop_enable("receiver_stopped_during_preparation")
                 self.receiver = (packet, now)
             elif packet.get("kind") != kind or not isinstance(packet.get("msg"), dict):
                 raise ValueError("invalid_telemetry_envelope")
@@ -147,8 +169,18 @@ class RosbridgeLink:
 
     def _send_command(self, socket):
         with self.lock:
-            reason = self._receiver_reason(time.monotonic(), self.ros_clock())
+            now = time.monotonic()
+            if self.preparing_until is not None and now >= self.preparing_until:
+                self._drop_enable("arm_preparation_expired")
+            reason = self._receiver_reason(now, self.ros_clock())
             if reason != "ok":
+                # Explicit, finite trial preparation may wait for fresh state
+                # while still disarmed. Never send on stale data, reconnect,
+                # or automatically recover an already armed session.
+                if (self.enabled and self.preparing_until is not None and self.connected and
+                        self.receiver is not None and not self.receiver[0]["armed"] and
+                        reason == "receiver_state_stale_or_clock_skew"):
+                    return
                 self._drop_enable(reason)
                 return
             state = self.receiver[0]

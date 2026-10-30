@@ -96,6 +96,7 @@ class VisionLaunchTests(unittest.TestCase):
         Path(self.context["profile"]).write_text(json.dumps(self.profile))
         nodes=self.nodes()
         self.assertTrue(nodes["laser_safety"].parameters[-1]["supervised_trial"])
+        self.assertTrue(nodes["robot_bridge"].parameters[0]["supervised_trial"])
         self.assertTrue(nodes["navigation_gate"].parameters[0]["supervised_trial"])
         self.assertTrue(nodes["vision_goal_controller"].parameters[0]["supervised_trial"])
         self.context["steering_mode"]="nav2"

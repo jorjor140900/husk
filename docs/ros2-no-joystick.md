@@ -463,7 +463,7 @@ packet ผิด/goal ยกเลิก/ภาพหมดอายุยัง
 
 ### ถ้า enable สำเร็จแต่กลับเป็น false ก่อนกด g
 
-`receiver_state_stale_or_clock_skew` ทำให้ link ล้าง enable latch แม้ gateway ยังไม่ arm
+ในโหมดปกติ `receiver_state_stale_or_clock_skew` ทำให้ link ล้าง enable latch แม้ gateway ยังไม่ arm
 ดังนั้นสถานะกลับ `reason: ok` ภายหลังไม่ได้แปลว่าเปิด command forwarding กลับแล้ว
 หากกด g หลัง enable ถูกล้าง gateway อาจจบด้วย `no_first_command`; คำสั่งที่ขาดช่วงภายหลังเป็น `command_timeout`
 อย่าเปิด auto-reenable หรือเพิ่ม watchdog เพื่อกลบเหตุนี้
@@ -485,3 +485,24 @@ timedatectl show -p NTP -p NTPSynchronized
 บนหุ่นตรวจ `timedatectl show -p NTP -p NTPSynchronized` เช่นกัน
 ping ปกติไม่รับรองว่า ROS/rosbridge ไม่ค้าง และ NTP synchronized ทั้งคู่ไม่ได้วัด offset ระหว่างเครื่องโดยตรง
 ถ้า ping ปกติแต่ ROS stamps เก่า ให้ตรวจ clock offset, โหลด process/ROS1 gateway/rosbridge และ topic ที่มี payload ใหญ่ต่อ
+
+
+### โหมดทดลอง: เตรียมรอ g ได้ 20 วินาทีหลัง enable
+
+สำหรับ `supervised_trial:=true` เท่านั้น เมื่อ enable link ขณะ gateway ยัง disarmed
+จะเปิดช่วงเตรียมเริ่มไม่เกิน 20 วินาที (`awaiting_receiver_arm: true`)
+ช่วงนี้ state เก่าชั่วคราวยังรอข้อมูลใหม่ได้ แต่ไม่ส่งคำสั่งและไม่ให้ motion_permitted ขณะข้อมูลเก่า
+จึงไม่สูญเสียการเตรียมเริ่มเพียงเพราะ Wi-Fi สะดุดระหว่างเปลี่ยน terminal ไปกด g
+
+เมื่อเห็น gateway armed ครั้งแรก ช่วงเตรียมสิ้นสุดทันที
+ตั้งแต่นั้นข้อมูลเก่า/คำสั่งขาด/การ disarm จะปิดค้างตามเดิม ไม่เปิดใหม่เมื่อข้อมูลกลับมา
+ไม่มีการเพิ่ม receiver timeout .3 s หรือ command watchdog .25 s
+connection หลุด, คำสั่ง disable, lease เปลี่ยนขณะยัง disarmed หรือครบ 20 วินาทีจะยกเลิกช่วงเตรียม
+หากหมดช่วงเตรียม ให้ console อยู่ STOP แล้ว enable ใหม่เอง ไม่กด g เพื่อฝืนให้เริ่ม
+โหมดปกติไม่เปลี่ยนพฤติกรรม
+
+อัปเดตเฉพาะ ROS2 ตามขั้น 1 และ restart field launch เดิมพร้อม supervised_trial:=true
+profile และ ROS1 gateway เดิมใช้ได้ ไม่ต้องเปลี่ยน flags การตรวจภาคสนาม
+ทดสอบร่วมกับ CommandWatchdog ฝั่งหุ่นจริงใน Python: สะดุดก่อน arm ไม่ส่งคำสั่งเก่า,
+arm แล้วรับคำสั่งศูนย์แรก ตามด้วย .03 m/s, ขาดข้อมูลหลัง arm ต้องหยุด และ arm รอบใหม่ไม่ทำให้ link เปิดเอง
+การทดสอบนี้ไม่ใช่การขยับหุ่นจริง

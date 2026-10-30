@@ -39,7 +39,7 @@ def ros2_fields(value):
 class RobotBridgeNode(Node):
     def __init__(self):
         super().__init__("robot_bridge")
-        defaults = {"bridge_url": "ws://127.0.0.1:9090", "ros1_prefix": "/husky_vision", "forward_commands": False,
+        defaults = {"bridge_url": "ws://127.0.0.1:9090", "ros1_prefix": "/husky_vision", "forward_commands": False, "supervised_trial": False,
                     "base_frame": "", "expected_output_topic": "", "command_topic": "/husky_control/control/cmd_vel_stamped",
                     "expected_camera_width": 0, "expected_camera_height": 0}
         for name, value in defaults.items():
@@ -62,7 +62,8 @@ class RobotBridgeNode(Node):
         self.image_decode_ms = None
         self.link = RosbridgeLink(value("bridge_url"), prefix=value("ros1_prefix"), forward_commands=value("forward_commands"),
                                  base_frame=value("base_frame"), expected_output_topic=value("expected_output_topic"),
-                                 command_provider=self._motion, ros_clock=lambda: self.get_clock().now().nanoseconds)
+                                 command_provider=self._motion, ros_clock=lambda: self.get_clock().now().nanoseconds,
+                                 supervised_trial=value("supervised_trial"))
         self.command_sub = self.create_subscription(TwistStamped, value("command_topic"), self._command, 1)
         self.enable_service = self.create_service(SetBool, "set_enabled", self._enable)
         self.timer = self.create_timer(0.05, self._tick)
