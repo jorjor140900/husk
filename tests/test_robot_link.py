@@ -141,6 +141,39 @@ class LinkEnableTests(unittest.TestCase):
         link._received("state", receiver(True))
         self.assertFalse(link.snapshot()["motion_permitted"])
 
+    def test_late_state_latches_disable_reason_even_when_fresh_state_returns(self):
+        clock=[10_000_000_000]
+        link=self.link(forward_commands=True,base_frame="base_link",
+                       expected_output_topic="/husky_vision/watchdog_preview")
+        link.ros_clock=lambda:clock[0];link.connected=True
+        with mock.patch("husky_drivable_area.robot_link.time.monotonic",return_value=2.):
+            link._received("state",receiver(True))
+            self.assertTrue(link.enable(True)[0])
+        clock[0]+=350_000_000
+        with mock.patch("husky_drivable_area.robot_link.time.monotonic",return_value=2.35):
+            link._send_command(mock.Mock())
+            timing=link.snapshot()["receiver_timing_ms"]
+            self.assertAlmostEqual(timing["receipt_age_ms"],350)
+            self.assertAlmostEqual(timing["source_age_ms"],350)
+            self.assertAlmostEqual(timing["source_age_at_receipt_estimate_ms"],0)
+            fresh=receiver(True);fresh["stamp"]=stamp_dict(clock[0])
+            link._received("state",fresh)
+            status=link.snapshot()
+            self.assertEqual(status["reason"],"ok")
+            self.assertFalse(status["enabled"])
+            self.assertEqual(status["disable_reason"],"receiver_state_stale_or_clock_skew")
+            self.assertTrue(link.enable(True)[0])
+            self.assertEqual(link.snapshot()["disable_reason"],"")
+
+    def test_clock_offset_is_distinct_from_receiver_delivery_gap(self):
+        link=self.link();link.connected=True
+        with mock.patch("husky_drivable_area.robot_link.time.monotonic",return_value=2.):
+            state=receiver();state["stamp"]=stamp_dict(9_600_000_000)
+            link._received("state",state)
+            timing=link.snapshot()["receiver_timing_ms"]
+            self.assertEqual(timing["receipt_age_ms"],0)
+            self.assertEqual(timing["source_age_at_receipt_estimate_ms"],400)
+
     def test_unexpected_driver_topic_and_source_clock_skew_block_enable(self):
         link = self.link(forward_commands=True, base_frame="base_link", expected_output_topic="/verified/mux_input")
         link.connected = True

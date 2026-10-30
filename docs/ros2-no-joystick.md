@@ -459,3 +459,29 @@ packet ผิด/goal ยกเลิก/ภาพหมดอายุยัง
 หรือ build gateway หุ่นใหม่สำหรับการแก้นี้ ตั้ง pose/goal ใหม่และ enable ทั้งสอง gate ก่อนเริ่มรอบใหม่
 ตรวจ status `tracking` และเส้นเหลืองจริงที่ `/husky_nav/vision_overlay`
 หากยังรอ status จะมี `capture_tf_error` บอก transform ที่ขาดและช่วงเวลาให้ตรวจต่อ
+
+
+### ถ้า enable สำเร็จแต่กลับเป็น false ก่อนกด g
+
+`receiver_state_stale_or_clock_skew` ทำให้ link ล้าง enable latch แม้ gateway ยังไม่ arm
+ดังนั้นสถานะกลับ `reason: ok` ภายหลังไม่ได้แปลว่าเปิด command forwarding กลับแล้ว
+หากกด g หลัง enable ถูกล้าง gateway อาจจบด้วย `no_first_command`; คำสั่งที่ขาดช่วงภายหลังเป็น `command_timeout`
+อย่าเปิด auto-reenable หรือเพิ่ม watchdog เพื่อกลบเหตุนี้
+
+`/husky_link/status` มี `disable_reason` จำเหตุที่ล้าง latch ครั้งแรกจนกว่าจะ enable ใหม่
+และ `receiver_timing_ms` แสดง source_age_ms, receipt_age_ms,
+source_age_at_receipt_estimate_ms (รวม clock offset และความหน่วงส่ง ไม่ใช่ network delay ล้วน)
+receipt_age สูงชี้ว่าสถานะขาดช่วง ส่วน source_age สูงแต่ receipt_age ต่ำชี้ว่าข้อมูลมาถึงก็เก่าแล้วหรือเวลาต่างกัน
+การเพิ่ม fields นี้ไม่เปลี่ยนเกณฑ์อายุ ไม่ auto-enable และไม่ส่งคำสั่งใหม่
+
+หยุด operator session แล้วตรวจ route สาย LAN และความหน่วงบนคอม:
+
+```bash
+ip route get 192.168.131.1
+ping -c 20 -i 0.2 192.168.131.1
+timedatectl show -p NTP -p NTPSynchronized
+```
+
+บนหุ่นตรวจ `timedatectl show -p NTP -p NTPSynchronized` เช่นกัน
+ping ปกติไม่รับรองว่า ROS/rosbridge ไม่ค้าง และ NTP synchronized ทั้งคู่ไม่ได้วัด offset ระหว่างเครื่องโดยตรง
+ถ้า ping ปกติแต่ ROS stamps เก่า ให้ตรวจ clock offset, โหลด process/ROS1 gateway/rosbridge และ topic ที่มี payload ใหญ่ต่อ

@@ -26,6 +26,7 @@ class RosbridgeLink:
         self.provider, self.ros_clock = command_provider, ros_clock or time.time_ns
         self.lock, self.stop = threading.RLock(), threading.Event()
         self.connected = self.enabled = False
+        self.disable_reason = "startup"
         self.receiver = None
         self.pending, self.error, self.sequence = {}, "not_connected", 0
         self.image_count = 0
@@ -62,10 +63,26 @@ class RosbridgeLink:
             return "receiver_driver_output_disabled"
         return "ok"
 
+    def _drop_enable(self, reason):
+        # Call under lock. Preserve the first failure after an explicit enable,
+        # including after fresh receiver packets make the live reason OK again.
+        if self.enabled or self.disable_reason == "startup":
+            self.disable_reason = reason
+        self.enabled = False
+
     def snapshot(self):
         with self.lock:
-            reason = self._receiver_reason(time.monotonic(), self.ros_clock())
-            return {"connected": self.connected, "enabled": self.enabled, "forward_commands": self.forward_commands,
+            now, ros_ns = time.monotonic(), self.ros_clock()
+            reason = self._receiver_reason(now, ros_ns)
+            timing = None
+            if self.receiver:
+                state, received = self.receiver
+                receipt_ms = (now-received)*1000
+                source_ms = (ros_ns-stamp_ns(state["stamp"]))/1e6
+                timing = dict(source_age_ms=source_ms, receipt_age_ms=receipt_ms,
+                              source_age_at_receipt_estimate_ms=source_ms-receipt_ms)
+            return {"disable_reason": self.disable_reason, "receiver_timing_ms": timing,
+                    "connected": self.connected, "enabled": self.enabled, "forward_commands": self.forward_commands,
                     "reason": reason, "transport_error": self.error,
                     "receiver": self.receiver[0].copy() if self.receiver else None,
                     "motion_permitted": reason == "ok" and self.forward_commands and self.enabled and self.receiver[0]["armed"],
@@ -78,6 +95,7 @@ class RosbridgeLink:
         with self.lock:
             if not enabled:
                 self.enabled, self.stop_stamp = False, self.ros_clock()
+                self.disable_reason = "operator_disabled"
                 return True, "disabled; zero requested, robot-local watchdog remains active"
             if not self.forward_commands:
                 return False, "observe mode: forward_commands is false"
@@ -85,6 +103,7 @@ class RosbridgeLink:
             if reason != "ok":
                 return False, reason
             self.enabled = True
+            self.disable_reason = ""
             return True, "enabled; local ROS1 receiver arm and fresh filtered commands still required"
 
     def take(self):
@@ -112,7 +131,7 @@ class RosbridgeLink:
                         any(not finite(packet.get(k)) or packet[k] <= 0 for k in ("max_linear_mps", "max_angular_rps", "command_timeout_sec"))):
                     raise ValueError("invalid_receiver_limits_or_lease")
                 if self.receiver and self.receiver[0]["armed"] and (not packet["armed"] or packet["lease"] != self.receiver[0]["lease"]):
-                    self.enabled = False
+                    self._drop_enable("receiver_disarmed_or_lease_changed:"+packet["reason"])
                 self.receiver = (packet, now)
             elif packet.get("kind") != kind or not isinstance(packet.get("msg"), dict):
                 raise ValueError("invalid_telemetry_envelope")
@@ -128,8 +147,9 @@ class RosbridgeLink:
 
     def _send_command(self, socket):
         with self.lock:
-            if self._receiver_reason(time.monotonic(), self.ros_clock()) != "ok":
-                self.enabled = False
+            reason = self._receiver_reason(time.monotonic(), self.ros_clock())
+            if reason != "ok":
+                self._drop_enable(reason)
                 return
             state = self.receiver[0]
             if not self.forward_commands or not state["armed"]:
@@ -162,7 +182,8 @@ class RosbridgeLink:
                 if self.forward_commands:
                     socket.send(json.dumps({"op": "advertise", "topic": self.prefix+"/command", "type": "std_msgs/String"}))
                 with self.lock:
-                    self.connected, self.enabled, self.error = True, False, ""
+                    self._drop_enable("connection_reset")
+                    self.connected, self.error = True, ""
                     self.receiver, self.pending = None, {}
                 sent_at = float("-inf")
                 while not self.stop.is_set():
@@ -190,7 +211,8 @@ class RosbridgeLink:
                     self.error = type(exc).__name__+": "+str(exc)[:160]
             finally:
                 with self.lock:
-                    self.connected = self.enabled = False
+                    self._drop_enable(self.error or "connection_closed")
+                    self.connected = False
                     self.receiver, self.pending, self.stop_stamp = None, {}, None
                 if socket is not None:
                     socket.close()
