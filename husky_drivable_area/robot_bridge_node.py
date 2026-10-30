@@ -39,7 +39,7 @@ def ros2_fields(value):
 class RobotBridgeNode(Node):
     def __init__(self):
         super().__init__("robot_bridge")
-        defaults = {"bridge_url": "ws://127.0.0.1:9090", "ros1_prefix": "/husky_vision", "forward_commands": False, "supervised_trial": False,
+        defaults = {"bridge_url": "ws://127.0.0.1:9090", "ros1_prefix": "/husky_vision", "forward_commands": False, "supervised_trial": False, "trial_extended_session": False,
                     "base_frame": "", "expected_output_topic": "", "command_topic": "/husky_control/control/cmd_vel_stamped",
                     "expected_camera_width": 0, "expected_camera_height": 0}
         for name, value in defaults.items():
@@ -57,6 +57,10 @@ class RobotBridgeNode(Node):
         self.status_pub = self.create_publisher(String, "status", 1)
         self.permission_pub = self.create_publisher(Bool, "motion_permitted", 1)
         self.external_permission_pub = self.create_publisher(Bool, "external_permission", 1)
+        extended=value("trial_extended_session")
+        if type(extended) is not bool or extended and value("supervised_trial") is not True:
+            raise ValueError("extended session requires explicit supervised_trial")
+        self.command_max_linear=.15 if extended else .10
         self.command_lock, self.last_command = threading.Lock(), None
         self.decode_errors = {}
         self.image_decode_ms = None
@@ -86,7 +90,7 @@ class RobotBridgeNode(Node):
             if (source <= 0 or not -0.05 <= age <= 0.20 or time.monotonic()-received > 0.20 or
                     frame_id(message.header.frame_id) != self.link.base_frame or
                     any(x != 0 for x in (twist.linear.y, twist.linear.z, twist.angular.x, twist.angular.y)) or
-                    not finite(v) or not finite(w) or not 0 <= v <= min(0.10, receiver["max_linear_mps"]) or
+                    not finite(v) or not finite(w) or not 0 <= v <= min(getattr(self,"command_max_linear",.10), receiver["max_linear_mps"]) or
                     abs(w) > min(0.30, receiver["max_angular_rps"])):
                 return None
             return {"source_ns": source, "linear_x": v, "angular_z": w}

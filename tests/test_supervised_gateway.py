@@ -41,6 +41,26 @@ class SupervisedGatewayTests(unittest.TestCase):
         self.assertFalse(self.g.gate.armed)
         self.assertEqual(self.g.gate.reason,'trial_distance_limit')
 
+    def test_extended_receiver_accepts_015_and_stops_at_independent_backups(self):
+        from husky_link_core.supervised_trial import LONG_GOAL_LIMITS
+        self.g.trial=TrialBudget(LONG_GOAL_LIMITS);self.g.gate.max_linear=.15
+        self.pose();self.g.trial.reset(self.clock[0]);self.command(.15)
+        self.assertEqual(self.g.output.messages[-1].linear.x,.15)
+        self.fixture.advance(700.);self.pose(99.);self.command(.15)
+        self.assertTrue(self.g.gate.armed)
+        self.fixture.advance(.05);self.pose(100.01);self.command(.15)
+        self.assertEqual(self.g.gate.reason,'trial_distance_limit')
+        self.assertEqual(self.g.output.messages[-1].linear.x,0.)
+
+    def test_extended_receiver_time_backup_remains_robot_local(self):
+        from husky_link_core.supervised_trial import LONG_GOAL_LIMITS
+        self.g.trial=TrialBudget(LONG_GOAL_LIMITS);self.g.gate.max_linear=.15
+        self.pose();self.g.trial.reset(self.clock[0]);self.command(.15)
+        self.fixture.advance(900.);self.pose(1.);self.command(.15)
+        self.assertFalse(self.g.gate.armed)
+        self.assertEqual(self.g.gate.reason,'trial_time_limit')
+        self.assertEqual(self.g.output.messages[-1].linear.x,0.)
+
     def test_robot_local_distance_limit_overrides_fresh_commands(self):
         self.command();self.assertTrue(self.g.gate.armed)
         self.fixture.advance(.05);self.pose(.51);self.command()

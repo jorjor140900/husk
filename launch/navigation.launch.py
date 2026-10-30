@@ -25,9 +25,13 @@ def _nodes(context):
         profile["camera"][key] = str(expanded_path(profile["camera"][key]))
     allow = LaunchConfiguration("allow_motion").perform(context).lower() == "true"
     trial = LaunchConfiguration("supervised_trial").perform(context).lower() == "true"
-    from husky_link_core.supervised_trial import trial_mode, profile_trial_limits, GOAL_LIMITS
+    from husky_link_core.supervised_trial import trial_mode, profile_trial_limits, GOAL_LIMITS, EXTENDED_GOAL_LIMITS, LONG_GOAL_LIMITS
     trial_mode(profile, trial)
-    goal_session=trial and profile_trial_limits(profile)==GOAL_LIMITS
+    limits=profile_trial_limits(profile) if trial else None
+    extended=trial and limits in (EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS)
+    goal_session=trial and (limits==GOAL_LIMITS or extended)
+    trial_parameters=dict(supervised_trial=trial,trial_extended_session=extended)
+    reference_parameters=dict(trial_goal_session=goal_session,trial_extended_duration_sec=limits['max_duration_sec'] if extended else 300.)
     mode = LaunchConfiguration("steering_mode").perform(context)
     if mode not in ("nav2", "vision"):
         raise ValueError("steering_mode must be nav2 or vision")
@@ -67,7 +71,7 @@ def _nodes(context):
         raise ValueError("ground parent and child must differ")
     nodes = [
         Node(package="husky_drivable_area",executable="robot_bridge",namespace="husky_link",output="screen",parameters=[{
-            "bridge_url":bridge["url"],"forward_commands":allow,"base_frame":base,"supervised_trial":trial,
+            "bridge_url":bridge["url"],"forward_commands":allow,"base_frame":base,**trial_parameters,
             "expected_output_topic":bridge.get("expected_output_topic") or "",
             "command_topic":"/husky_nav/filtered_cmd_vel_stamped"}]),
         Node(package="husky_drivable_area",executable="mapping_scan",output="screen"),
@@ -79,14 +83,14 @@ def _nodes(context):
         Node(package="husky_drivable_area",executable="field_permission",namespace="husky_control",output="screen",
              parameters=[{"external_topic":robot["external_permission_topic"]}]),
         Node(package="husky_drivable_area",executable="navigation_gate",output="screen",
-             parameters=[{"allow_motion":allow,"base_frame":base,"odom_frame":odom,"supervised_trial":trial}],
+             parameters=[{"allow_motion":allow,"base_frame":base,"odom_frame":odom,**trial_parameters}],
              remappings=[("/husky_nav/nav2_cmd_vel","/husky_nav/vision_cmd_vel"),
                          ("/husky_nav/vision_status","/husky_nav/vision_control_status")] if vision else []),
         Node(package="husky_drivable_area",executable="goal_dispatch",output="screen",
              parameters=[{"allow_motion":allow,"guide_only":vision}]),
         Node(package="husky_drivable_area",executable="laser_safety",namespace="husky_control",output="screen",
              parameters=[str(share/"config/laser_safety.yaml"),profile["footprint"],
-                         {"base_frame":base,"odom_frame":odom,"max_linear_mps":.05,"max_angular_rps":.2,"supervised_trial":trial,"trial_goal_session":goal_session}],
+                         {"base_frame":base,"odom_frame":odom,"max_linear_mps":.05,"max_angular_rps":.2,**trial_parameters,**reference_parameters}],
              remappings=[("odom","/husky_link/odom"),("scan","/husky_link/scan"),
                          ("control/requested_cmd_vel","/husky_nav/guarded_request"),
                          ("control/cmd_vel","/husky_nav/filtered_cmd_vel"),
@@ -97,7 +101,7 @@ def _nodes(context):
             "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],
             "base_frame":base,"odom_frame":odom,"half_width_m":profile["footprint"]["half_width_m"],
             "side_margin_m":profile["footprint"].get("lateral_margin_m",profile["footprint"]["margin_m"]),
-            "image_topic":LaunchConfiguration("image_topic").perform(context),"supervised_trial":trial,"trial_goal_session":goal_session}]))
+            "image_topic":LaunchConfiguration("image_topic").perform(context),**trial_parameters,**reference_parameters}]))
     if camera.get("publish_camera_tf",True):
         q = mount.quaternion_xyzw
         nodes.append(Node(package="tf2_ros",executable="static_transform_publisher",name="navigation_camera_mount",

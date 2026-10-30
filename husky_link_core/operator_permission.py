@@ -35,9 +35,11 @@ def operator_settings(profile, allow_output=False, supervised_trial=False):
 
 
 class OperatorSession(object):
-    def __init__(self, duration=30.0, expected_output_topic=PREVIEW_TOPIC, driver_output_enabled=False):
-        if not finite(duration) or not 1 <= duration <= 120:
-            raise ValueError("session duration must be 1..120 seconds")
+    def __init__(self, duration=30.0, expected_output_topic=PREVIEW_TOPIC, driver_output_enabled=False, max_duration_sec=120.):
+        if type(max_duration_sec) not in (int,float) or max_duration_sec not in (20.,120.,300.,900.):
+            raise ValueError("invalid fixed session maximum")
+        if not finite(duration) or not 1 <= duration <= max_duration_sec:
+            raise ValueError("session duration must be 1..%s seconds"%max_duration_sec)
         if type(driver_output_enabled) is not bool:
             raise ValueError("driver_output_enabled must be bool")
         self.duration = float(duration)

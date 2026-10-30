@@ -31,7 +31,8 @@ def main():
     if trial:
         duration=min(float(duration),profile_trial_limits(profile)['max_duration_sec'])
         print("SUPERVISED TRIAL: LiDAR NOT CHECKED. Operator must watch robot and keep hardware e-stop available.")
-    session = OperatorSession(duration, expected, allow)
+    session = OperatorSession(duration, expected, allow,
+        max_duration_sec=profile_trial_limits(profile)['max_duration_sec'] if trial else 120.)
     # A single console owns this local permission topic. No latching/background
     # auto-enable; terminal/process loss lets the gateway's .3s deadline expire.
     publisher = rospy.Publisher(topic, Bool, queue_size=1, latch=False)

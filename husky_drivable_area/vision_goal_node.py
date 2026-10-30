@@ -32,12 +32,18 @@ class VisionGoalNode(Node):
     def __init__(self):
         super().__init__("vision_goal_controller")
         defaults=dict(camera_calibration="",camera_mount="",base_frame="base_link",odom_frame="odom",
-            image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,supervised_trial=False,trial_goal_session=False)
+            image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.)
         for key,value in defaults.items():
             self.declare_parameter(key,value)
         value=lambda key:self.get_parameter(key).value
         self.supervised_trial=value("supervised_trial")
         self.trial_goal_session=value("trial_goal_session")
+        from husky_link_core.supervised_trial import selected_limits
+        self.trial_extended_session=value("trial_extended_session")
+        self.trial_extended_duration_sec=value("trial_extended_duration_sec")
+        limits=selected_limits(self.trial_goal_session,self.trial_extended_session,self.trial_extended_duration_sec)
+        if self.trial_extended_session and not self.supervised_trial:
+            raise ValueError("extended session requires explicit supervised_trial")
         self.camera=CameraCalibration.load(value("camera_calibration"))
         self.mount=CameraMount.load(value("camera_mount"))
         self.base,self.odom_frame=value("base_frame"),value("odom_frame")
@@ -51,7 +57,7 @@ class VisionGoalNode(Node):
         self.start_x=float(points[0,0])
         if not .05<self.start_x<=1.5:
             raise ValueError("calibrated near reference must be within 1.5 m; inspect physical field of view")
-        self.controller=ControllerConfig(cruise_speed_mps=.05,max_angular_speed_rps=.2,
+        self.controller=ControllerConfig(cruise_speed_mps=limits['max_linear_mps'] if self.trial_extended_session else .05,max_angular_speed_rps=.2,
             max_path_offset_m=1.5,lookahead_m=.5)
         self.limiter=CommandLimiter(self.controller)
         self.buffer=Buffer();self.listener=TransformListener(self.buffer,self)
@@ -252,7 +258,9 @@ class VisionGoalNode(Node):
             frame=image_to_bgr(message)
             image=draw_vision_reference(frame,labels,reference,self.camera,self.mount,reason,
                 supervised_trial=getattr(self,"supervised_trial",False),
-                trial_goal_session=getattr(self,"trial_goal_session",False))
+                trial_goal_session=getattr(self,"trial_goal_session",False),
+                trial_extended_session=getattr(self,"trial_extended_session",False),
+                trial_extended_duration_sec=getattr(self,"trial_extended_duration_sec",300.))
             result=fill_compressed_image(CompressedImage(),image,message.header,80)
             self.overlay_pub.publish(result);self.last_overlay_stamp=ns
             self.last_display=(ns,labels)

@@ -9,13 +9,17 @@ from husky_link_core.operator_permission import PERMISSION_TOPIC, operator_setti
 from .robot_profile import load_robot_profile
 
 
-def prepare_operator_profile(source, output, robot_output, motion=False, supervised_trial=False, supervised_goal=False):
-    from husky_link_core.supervised_trial import MODE, LIMITS, GOAL_LIMITS
+def prepare_operator_profile(source, output, robot_output, motion=False, supervised_trial=False, supervised_goal=False, supervised_extended_goal=False, extended_session_sec=300.):
+    from husky_link_core.supervised_trial import MODE, selected_limits
+    if supervised_extended_goal and (supervised_goal or supervised_trial):
+        raise ValueError("choose only one supervised preset")
+    if not supervised_extended_goal and extended_session_sec!=300.:
+        raise ValueError("extended session duration requires supervised extended goal")
     if supervised_goal and supervised_trial:
         raise ValueError("choose supervised trial or supervised goal")
-    goal_session=supervised_goal
-    supervised_trial=supervised_trial or supervised_goal
-    limits=GOAL_LIMITS if goal_session else LIMITS
+    goal_session=supervised_goal or supervised_extended_goal
+    supervised_trial=supervised_trial or goal_session
+    limits=selected_limits(goal_session,supervised_extended_goal,extended_session_sec)
     if motion and supervised_trial:
         raise ValueError("choose normal motion or supervised trial")
     source, output, robot_output = [Path(path).expanduser().resolve() for path in (source, output, robot_output)]
@@ -78,9 +82,11 @@ def main(argv=None):
     parser.add_argument("--motion", action="store_true", help="requires previously recorded field checks; does not set them true")
     parser.add_argument("--supervised-trial", action="store_true", help="explicit bounded attended trial; LiDAR NOT checked, field checks remain unchanged")
     parser.add_argument("--supervised-goal", action="store_true", help="attended goal session: 0.05 m/s, backup 3 m/120 s; LiDAR NOT checked")
+    parser.add_argument("--supervised-extended-goal",action="store_true",help="attended 0.15 m/s preset, backup 100 m; LiDAR NOT checked")
+    parser.add_argument("--extended-session-sec",type=float,choices=(300.,900.),default=300.)
     args = parser.parse_args(argv)
     try:
-        report = prepare_operator_profile(args.profile, args.output, args.robot_output, args.motion, args.supervised_trial, args.supervised_goal)
+        report = prepare_operator_profile(args.profile, args.output, args.robot_output, args.motion, args.supervised_trial, args.supervised_goal, args.supervised_extended_goal, args.extended_session_sec)
     except (ValueError, KeyError, OSError, TypeError) as exc:
         parser.exit(2, str(exc)+"\n")
     print(json.dumps(report, indent=2))

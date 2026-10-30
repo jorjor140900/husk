@@ -113,6 +113,19 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertTrue(nodes['laser_safety'].parameters[-1]['trial_goal_session'])
         self.assertTrue(nodes['vision_goal_controller'].parameters[0]['trial_goal_session'])
 
+    def test_extended_profile_wires_all_control_limits_together(self):
+        from husky_link_core.supervised_trial import MODE,LONG_GOAL_LIMITS
+        self.context['supervised_trial']='true'
+        self.profile.update(operation_mode=MODE,trial_limits=LONG_GOAL_LIMITS)
+        Path(self.context['profile']).write_text(json.dumps(self.profile))
+        nodes=self.nodes()
+        for executable in ('robot_bridge','navigation_gate','laser_safety','vision_goal_controller'):
+            parameters=nodes[executable].parameters[-1]
+            self.assertTrue(parameters['trial_extended_session'])
+        for executable in ('laser_safety','vision_goal_controller'):
+            self.assertEqual(nodes[executable].parameters[-1]['trial_extended_duration_sec'],900.)
+            self.assertTrue(nodes[executable].parameters[-1]['trial_goal_session'])
+
     def test_motion_mode_still_rejects_unverified_robot_profile(self):
         self.context["allow_motion"]="true"
         with self.assertRaisesRegex(ValueError,"motion mode requires"):

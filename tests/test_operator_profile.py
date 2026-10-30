@@ -66,6 +66,19 @@ class OperatorProfileTests(unittest.TestCase):
         load_robot_profile(self.output,allow_supervised_trial=True)
         with self.assertRaises(ValueError):load_robot_profile(self.output)
 
+    def test_extended_goal_profile_is_explicit_and_preserves_navigation_and_facts(self):
+        from husky_link_core.supervised_trial import LONG_GOAL_LIMITS
+        self.profile['navigation']=dict(inflation_side_clearance_m=.15)
+        self.source.write_text(json.dumps(self.profile))
+        prepare_operator_profile(self.source,self.output,self.robot_output,
+                                 supervised_extended_goal=True,extended_session_sec=900.)
+        actual=json.loads(self.output.read_text());robot=json.loads(self.robot_output.read_text())
+        self.assertEqual(actual['trial_limits'],LONG_GOAL_LIMITS)
+        self.assertEqual(robot['trial_limits'],LONG_GOAL_LIMITS)
+        self.assertEqual(actual['navigation'],self.profile['navigation'])
+        self.assertEqual(actual['field_measurements'],self.profile['field_measurements'])
+        load_robot_profile(self.output,allow_supervised_trial=True)
+
     def test_motion_rejected_without_creating_files_when_field_checks_are_pending(self):
         with self.assertRaisesRegex(ValueError, "pending"):
             self.prepare(True)

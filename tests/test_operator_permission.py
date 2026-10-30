@@ -108,6 +108,18 @@ class OperatorPermissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "null"):
             operator_settings(profile, True)
 
+    def test_extended_session_requires_explicit_maximum_and_expires_without_renewal(self):
+        with self.assertRaises(ValueError):OperatorSession(900.)
+        with self.assertRaises(ValueError):OperatorSession(900.,max_duration_sec=300.)
+        self.session=OperatorSession(900.,max_duration_sec=900.)
+        self.receive();self.start_and_arm();deadline=self.session.deadline
+        self.receive(300.,armed=True)
+        self.assertFalse(self.session.start(self.now,self.ros))
+        self.assertEqual(self.session.deadline,deadline)
+        self.receive(600.,armed=True)
+        self.assertEqual(self.session.tick(self.now,self.ros),(False,False))
+        self.assertEqual(self.session.reason,'session_expired')
+
     def test_duration_bounds(self):
         for value in (0, -1, 121, float("nan"), float("inf"), True):
             with self.subTest(value=value), self.assertRaises(ValueError):

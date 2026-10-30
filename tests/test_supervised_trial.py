@@ -39,6 +39,20 @@ class TrialBudgetTests(unittest.TestCase):
         budget.observe((0,0,0,130_000_000_000),121.)
         self.assertEqual(budget.check(121.,130_000_000_000),'trial_time_limit')
 
+    def test_extended_goal_is_fixed_and_keeps_independent_distance_and_time_limits(self):
+        from husky_link_core.supervised_trial import LONG_GOAL_LIMITS,selected_limits
+        limits=selected_limits(True,True,900.)
+        self.assertEqual(limits,LONG_GOAL_LIMITS)
+        self.assertEqual(bounded_command(.15,0.,limits),(.15,0.))
+        with self.assertRaises(ValueError):bounded_command(.151,0.,limits)
+        with self.assertRaises(ValueError):selected_limits(False,True,900.)
+        with self.assertRaises(ValueError):selected_limits(True,True,901.)
+        for x,elapsed,reason in ((99.9,700.,'clear'),(100.01,700.,'trial_distance_limit'),(99.,900.,'trial_time_limit')):
+            b=TrialBudget(limits);b.observe((0,0,0,10_000_000_000),1.);b.reset(1.)
+            ns=10_000_000_000+int(elapsed*1e9)
+            b.observe((x,0,0,ns),1.+elapsed)
+            self.assertEqual(b.check(1.+elapsed,ns),reason)
+
     def test_command_scaling_preserves_curvature_and_rejects_invalid(self):
         v,w=bounded_command(.05,.2)
         self.assertAlmostEqual(v,.03);self.assertAlmostEqual(w/v,4)

@@ -24,6 +24,11 @@ class NavigationGate(Node):
         self.declare_parameter("allow_motion", False)
         self.declare_parameter("supervised_trial", False)
         self.supervised_trial=self.get_parameter("supervised_trial").value
+        self.declare_parameter("trial_extended_session",False)
+        extended=self.get_parameter("trial_extended_session").value
+        if type(extended) is not bool or extended and not self.supervised_trial:
+            raise ValueError("extended session requires explicit supervised_trial")
+        self.max_linear=.15 if extended else .05
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("odom_frame", "odom")
         self.allow_motion = self.get_parameter("allow_motion").value
@@ -104,7 +109,7 @@ class NavigationGate(Node):
         values = (t.linear.x,t.linear.y,t.linear.z,t.angular.x,t.angular.y,t.angular.z)
         if (command.header.frame_id != self.base or not all(math.isfinite(v) for v in values) or
                 any(v != 0 for v in (t.linear.y,t.linear.z,t.angular.x,t.angular.y)) or
-                not 0 <= t.linear.x <= .050001 or abs(t.angular.z) > .200001):
+                not 0 <= t.linear.x <= getattr(self,"max_linear",.05)+.000001 or abs(t.angular.z) > .200001):
             return "invalid_nav2_command", None
         return "request_passed_to_collision_filter", t
 

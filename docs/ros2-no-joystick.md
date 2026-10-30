@@ -726,3 +726,131 @@ PYPROFILE
 ถ้าต้องย้อนค่าทดลอง runtime ใช้ radius .81 หรือเอา field ใหม่ออกจาก profile แล้ว restart
 AI ที่รายงาน start_blocked_narrow_or_unobserved ยังต้องตรวจ mask/ตำแหน่ง/calibration ต่อ
 ไม่เปลี่ยน lateral_margin_m เป็น .15 เพื่อแก้แถบสี เพราะจะเพิ่มความกว้างตรวจ AI จาก .82 เป็น .96 m
+
+
+## 11. Profile ใหม่ 0.15 m/s พร้อมเพดานสำรอง 100 m/900 s
+
+ตามค่าที่เลือก: ความเร็วเป้าหมายสูงสุด .15 m/s, ระยะสะสมไม่เกิน 100 m, เวลา session ไม่เกิน 900 s
+ให้ controller หยุดเมื่อถึง goal ก่อน หากเงื่อนไขใดผิด/ชนเพดานก่อนจะหยุดตามเดิม
+ไม่เพิ่ม timeout ข้อมูล, ไม่ auto-arm/restart หลัง fault และไม่ได้ยืนยันว่าเดิน 100 m จริงได้
+ยังปิดการตรวจ LiDAR: ต้องมีคนเฝ้าเส้นทางและพร้อมใช้ hardware e-stop ตลอด
+เงื่อนไขมุมเลี้ยวสะสม .35 rad (ประมาณ20องศา), angular speed .15 rad/s,
+อายุ reference .5 s, odom/permission .3 s และ robot command watchdog .25 s คงเดิม
+ดังนั้น 100 m/900 s เป็นเพดานสำรอง ไม่ใช่การรับรองระยะทาง/ความปลอดภัยของทุก goal
+100 m ที่ .15 m/s ใช้ขั้นต่ำ 667 s; แผนที่ต้องครอบคลุมพื้นที่จริงด้วย การเพิ่มเพดานไม่ขยาย saved map
+
+เดิมทั้ง controller และ gate จำกัด .05 m/s และ bridge provider จำกัด .10 m/s
+preset ใหม่นี้ต่อค่าจริงครบ controller → navigation gate → filter → bridge → receiver
+profile เดิม .03/.05 ไม่ถูกเพิ่มเพดานตามไปด้วย และไฟล์ที่แก้ limits นอก preset จะถูกปฏิเสธ
+
+### อัปเดตทั้งสองฝั่งและสร้าง profile แยก
+
+กด Space แล้ว q จบ console เดิม หยุด field launch และ gateway เดิมก่อน update
+คง SSH tunnel บนคอมไป administrator@10.82.12.199 เปิดไว้ได้
+
+บนคอม:
+
+```bash
+cd ~/husk-live
+git pull --ff-only origin work
+python3 tools/create_ros2_workspace.py \
+  --workspace "$HOME/husky_vision_ws" --update-code
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+python /usr/bin/colcon build --symlink-install --packages-select husky_vision
+source install/local_setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+ros2 run husky_vision prepare_operator_profile \
+  --profile "$HOME/husky_vision_ws/robot/robot-nojoy-goal.json" \
+  --output "$HOME/husky_vision_ws/robot/robot-nojoy-015.json" \
+  --robot-output "$HOME/husky_vision_ws/robot/ros1-nojoy-015.json" \
+  --supervised-extended-goal --extended-session-sec 900
+```
+
+เก็บการตั้ง costmap ข้างละ15ซม.ที่ขอไว้ใน profile ใหม่นี้ (ไม่เปลี่ยนขนาดหุ่น/AI margin):
+
+```bash
+python3 - <<'PYSAVE'
+import json
+from pathlib import Path
+p=Path.home()/"husky_vision_ws/robot/robot-nojoy-015.json"
+d=json.loads(p.read_text())
+d.setdefault('navigation',{})['inflation_side_clearance_m']=.15
+p.write_text(json.dumps(d,indent=2)+'\n')
+PYSAVE
+scp -r "$HOME/husky_vision_ws/src/husky_vision/ros1/husky_vision_bridge" \
+  administrator@10.82.12.199:~/husky_ws/src/
+scp "$HOME/husky_vision_ws/robot/ros1-nojoy-015.json" \
+  administrator@10.82.12.199:~/husky-nojoy-015.json
+```
+
+เครื่องมือสร้าง profile ไม่เขียนทับไฟล์เดิม ถ้ามีชื่อ output อยู่แล้วให้ใช้ไฟล์ที่สร้างด้วยรุ่นนี้หรือเลือกชื่อใหม่
+profile สองฝั่งต้องเป็นชุดเดียวกัน ห้ามคัดลอกแค่ JSON ไปให้ gateway รุ่นเก่าซึ่งไม่รู้จัก limits ใหม่
+
+บนหุ่น:
+
+```bash
+source /opt/ros/noetic/setup.bash
+cd ~/husky_ws
+catkin_make --pkg husky_vision_bridge
+source devel/setup.bash
+export ROS_MASTER_URI=http://127.0.0.1:11311
+unset ROS_HOSTNAME
+export ROS_IP=10.82.12.199
+
+roslaunch husky_vision_bridge bridge.launch \
+  profile_path:="$HOME/husky-nojoy-015.json" \
+  odom_topic:=/odometry/filtered scan_topic:=/scan base_frame:=base_link \
+  allow_robot_output:=true supervised_trial:=true
+```
+
+บนคอม terminal ที่ source environment/Cyclone แล้ว:
+
+```bash
+QT_QPA_PLATFORM=xcb ros2 launch husky_vision vision_field.launch.py \
+  profile:="$HOME/husky_vision_ws/robot/robot-nojoy-015.json" \
+  map:="$HOME/husky_vision_ws/maps/outdoor1.yaml" \
+  allow_motion:=true supervised_trial:=true
+```
+
+ตั้ง pose/goal ให้ตรงพื้นที่จริง รอเส้นเหลืองใน /husky_nav/vision_overlay
+แถบภาพต้องแสดง .15 m/s และ backup 100m/900s
+
+หุ่นอีก terminal ที่ source Noetic/devel และ ROS_IP เหมือน gateway:
+
+```bash
+rosrun husky_vision_bridge operator_console.py \
+  _profile_path:="$HOME/husky-nojoy-015.json" \
+  _allow_robot_output:=true _supervised_trial:=true _session_sec:=900.0
+```
+
+ต้องเห็น `one 900s session` แล้วคง STOP ก่อน
+บนคอม terminal ROS2 อีกอัน:
+
+```bash
+ros2 service call /husky_nav/reset_trial std_srvs/srv/Trigger "{}"
+ros2 service call /husky_nav/set_enabled std_srvs/srv/SetBool "{data: true}"
+ros2 service call /husky_link/set_enabled std_srvs/srv/SetBool "{data: true}"
+```
+
+ทั้งหมดต้อง success=true และ link เป็น prepared for 20s แล้วจึงกด g ครั้งเดียวภายในช่วงเตรียม
+20 s นี้เป็นช่วงรอ arm ไม่ใช่เวลา session วิ่ง 900 s
+Space/ปุ่มอื่นหยุด, q หยุดและออก ใช้ terminal แยกสำหรับพิมพ์คำสั่งตรวจ
+ถึง goal controller ให้ศูนย์และ latch goal_reached; console อาจยัง active จน Space/หมดเวลา
+หลัง fault ข้อมูลกลับมาสดจะไม่วิ่งต่อเอง ต้อง STOP/reset/enable และกด g ใหม่
+ตรวจ /husky_link/status ให้ receiver.max_linear_mps=.15 และ /husky_control/safety/status ให้ trial_limits=100m/900s
+ถ้าคนเฝ้ามองเส้นทางไม่ครบให้หยุด ไม่ใช้เพดานเวลาเป็นหลักฐานว่าเส้นทางปลอดภัย
+
+### Validation ของชุดนี้
+
+Python suite 382 tests ผ่าน รวมเพดานเดิมไม่เปลี่ยน, preset ต้อง explicit,
+การส่ง .15 และปฏิเสธ overspeed, session900s ไม่ต่อเวลาเมื่อกด g ซ้ำ,
+backupระยะ100mและเวลา900sฝั่ง robot callback โดยใช้เวลาจำลอง
+syntax shared core/scripts ผ่าน Python3.8
+Native ROS2 ใน container network none ทดสอบ controller/gate/filter/bridge provider จริง
+และ CommandWatchdog ฝั่งหุ่นกับข้อมูลจำลอง: เดินจำลอง3.87mที่ความเร็วสูงสุด.15m/s
+ถึงgoalใน26.8s แล้วให้ศูนย์; ทดลองหยุดส่งคำสั่งแล้ว watchdog disarm
+TFช้า120ms, legacygridinvalidตลอด, ไม่มี publisher /cmd_vel และไม่ได้เชื่อมต่อหุ่นจริง
+ไม่ได้ทดสอบเดิน100mหรือเดิน900sจริง ดู tests/native_extended_goal_probe.py

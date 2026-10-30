@@ -87,6 +87,14 @@ class NavigationGateTests(unittest.TestCase):
         self.assertTrue(status["downstream_collision_filter_required"])
         self.assertFalse(status["ready_for_autonomous_control"])
 
+    def test_extended_gate_ceiling_is_explicit_and_never_admits_overspeed(self):
+        self.twist.linear.x=.15
+        self.assertEqual(self.tick()['reason'],'invalid_nav2_command')
+        self.node.max_linear=.15
+        self.assertEqual(self.tick()['linear_x'],.15)
+        self.twist.linear.x=.151
+        self.assertEqual(self.tick()['reason'],'invalid_nav2_command')
+
     def test_stale_vision_permission_and_commands_each_stop_the_request(self):
         self.node.permission = (False,100.)
         self.assertEqual(self.tick()["linear_x"],0)

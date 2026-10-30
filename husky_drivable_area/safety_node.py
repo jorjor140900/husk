@@ -20,7 +20,7 @@ from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker
 from std_srvs.srv import Trigger
-from husky_link_core.supervised_trial import TrialBudget, LIMITS, GOAL_LIMITS, bounded_command, odometry_sample
+from husky_link_core.supervised_trial import TrialBudget, selected_limits, bounded_command, odometry_sample
 
 from .collision import CollisionConfig, check_sweep, scan_points
 from .control import CommandLimiter, ControllerConfig, Demand, fresh_stamp, quaternion_matrix
@@ -30,7 +30,7 @@ from .controller_node import stamp_ns
 class LaserSafetyNode(Node):
     def __init__(self, **kwargs):
         super().__init__("laser_safety", **kwargs)
-        for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link", "supervised_trial": False, "trial_goal_session": False,
+        for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link", "supervised_trial": False, "trial_goal_session": False, "trial_extended_session": False, "trial_extended_duration_sec": 300.,
                             "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,
                             "request_timeout_sec": 0.3, "permission_timeout_sec": 0.3,
                             "release_hold_sec": 0.5, "output_acceleration_mps2": 0.25,
@@ -42,7 +42,7 @@ class LaserSafetyNode(Node):
         goal_session=value("trial_goal_session")
         if type(goal_session) is not bool or goal_session and not self.supervised_trial:
             raise ValueError("trial_goal_session requires explicit supervised_trial")
-        self.trial_limits=GOAL_LIMITS.copy() if goal_session else LIMITS.copy()
+        self.trial_limits=selected_limits(goal_session,value("trial_extended_session"),value("trial_extended_duration_sec"))
         configuration={name: value(name) for name in CollisionConfig.__dataclass_fields__}
         if self.supervised_trial:
             configuration.update(max_linear_mps=self.trial_limits['max_linear_mps'],max_angular_rps=self.trial_limits['max_angular_rps'])
