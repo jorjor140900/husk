@@ -74,6 +74,11 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertEqual(nodes["vision_goal_controller"].parameters[0]["side_margin_m"],.08)
         rendered=yaml.safe_load(Path(nodes["planner_server"].parameters[0]).read_text())
         self.assertNotIn("vision_layer",rendered["global_costmap"]["global_costmap"]["ros__parameters"]["plugins"])
+        global_map=rendered["global_costmap"]["global_costmap"]["ros__parameters"]
+        self.assertIn("obstacle_layer",global_map["plugins"])
+        scan=global_map["obstacle_layer"]["mapping_scan"]
+        self.assertEqual(scan["topic"],"/husky_nav/mapping_scan")
+        self.assertTrue(scan["marking"]);self.assertTrue(scan["clearing"])
         view=yaml.safe_load(Path(nodes["rviz2"].arguments[1]).read_text())
         displays={row["Name"]:row for row in view["Visualization Manager"]["Displays"]}
         self.assertFalse(displays["Goal preview plan"]["Enabled"])

@@ -884,3 +884,41 @@ receiver_state_stale_or_clock_skew เป็นอีกเงื่อนไข
 Unit tests 4 cases และ native ROS2 network-none ทดสอบ goal/map/TF จริงกับ costmap publisher แบบ volatile
 ที่ไม่มี goal_plan เลย: ตรวจพบกำแพงแบ่ง free endpoints และแยกจาก saved map ที่ยังว่างได้
 ไม่มีการเชื่อมต่อหรือเคลื่อนหุ่นจริง
+
+
+## 13. คงสิ่งกีดขวางสดไว้ และตรวจต้นเหตุจุดสะสม
+
+ถอนตัวเลือก saved-map-only ตามข้อกำหนดให้มีสิ่งกีดขวางเรียลไทม์แล้ว
+vision steering ยังคง obstacle_layer จาก /husky_nav/mapping_scan ทั้ง marking และ clearing
+ไม่ปิด layer เพื่อให้ planner ผ่าน และไม่เปลี่ยน no-return ทั้งหมดให้เป็นพื้นที่ว่าง
+LiDAR final safety ของชุดทดลองยังไม่ผ่าน validation ตามเดิม ต้องมีคนเฝ้า
+
+หากเคยทดลองปิด obstacle_layer ขณะ runtime ให้ console STOP แล้วคืนค่า:
+
+```bash
+ros2 param set /global_costmap/global_costmap obstacle_layer.enabled true
+```
+
+ถ้าเคยใส่ navigation.guide_obstacle_source=saved_map_only ให้เอา field นี้ออกจาก profile
+update source/export/build ฝั่งคอมตามขั้น1 แล้ว restart field launch; gateway หุ่นไม่ต้องเปลี่ยน
+การซ่อน display หรือ clear costmap ซ้ำระหว่างวิ่งไม่แก้ต้นเหตุของจุดผิด
+
+จาก bag เดิมที่ส่งมา /scan เป็น ring8 เพียง ringเดียว ไม่ใช่เมฆ3Dทุกระดับ
+bag นั้น stationary จึงใช้ตัดสินการ smear ขณะเคลื่อนที่ไม่ได้
+ข้อมูลปัจจุบันต้องแยกว่าจุดอยู่ใน raw /scan, เป็น self-return/TF/การเคลื่อนที่,
+หรือจุดจริงหายแล้วแต่ costmap clearing ยังเก็บไว้ ห้ามเดาว่าทุกจุดเป็นพื้น
+
+บนหุ่นอ่านพารามิเตอร์ต้นทางและบันทึกช่วงที่เกิดอาการ 4s:
+
+```bash
+rosparam get /velodyne_nodelet_manager_laserscan
+vlp_ghost_bag="$HOME/husky-ghost-$(date +%Y%m%d-%H%M%S).bag"
+timeout -s INT 4s rosbag record --lz4 -O "$vlp_ghost_bag" \
+  /velodyne_points /odometry/filtered /tf /tf_static /scan
+ls -lh "$vlp_ghost_bag"
+```
+
+ส่ง bag พร้อมภาพกล้อง/ตำแหน่งวัตถุจริงในช่วงนั้นและพารามิเตอร์ laserscan
+ตัว record ไม่มีคำสั่งขยับหุ่น ไม่ให้เริ่ม autonomous เพียงเพื่อเก็บ bag
+ใช้เครื่องมือ inspect_vlp16_bag.py เดิมตรวจ ring, metadata, timestamps และ timed points ต่อ
+threshold กรองตัวหุ่น/พื้นและการล้างเซลล์ต้องอิงข้อมูลนี้ พร้อมรักษาการตรวจสิ่งกีดขวางจริง
