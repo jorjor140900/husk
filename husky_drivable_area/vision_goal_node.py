@@ -302,7 +302,7 @@ class VisionGoalNode(Node):
             demand=Demand(reason="invalid_vision_control_inputs")
         v,w=self.limiter.step(demand,dt)
         self.publish_command(v,w)
-        self.status_pub.publish(String(data=json.dumps(dict(reason=demand.reason,
+        self.status_pub.publish(String(data=json.dumps(dict(valid=demand.reason=="tracking",reason=demand.reason,
             reference_reason=self.reason,source_stamp_ns=self.source_ns,linear_x=v,angular_z=w,
             remaining_to_goal_m=demand.remaining_m,controller_path_topic="/husky_nav/vision_reference",
             steering_source="image_ai",map_use="goal_route_guidance",**self.detail,

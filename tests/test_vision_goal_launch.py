@@ -69,6 +69,7 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertFalse(nodes["robot_bridge"].parameters[0]["forward_commands"])
         self.assertFalse(nodes["navigation_gate"].parameters[0]["allow_motion"])
         self.assertIn(("/husky_nav/nav2_cmd_vel","/husky_nav/vision_cmd_vel"),nodes["navigation_gate"].remappings)
+        self.assertIn(("/husky_nav/vision_status","/husky_nav/vision_control_status"),nodes["navigation_gate"].remappings)
         self.assertTrue(nodes["goal_dispatch"].parameters[0]["guide_only"])
         self.assertEqual(nodes["vision_goal_controller"].parameters[0]["side_margin_m"],.08)
         rendered=yaml.safe_load(Path(nodes["planner_server"].parameters[0]).read_text())
@@ -84,6 +85,7 @@ class VisionLaunchTests(unittest.TestCase):
         self.context["steering_mode"]="nav2"
         nodes=self.nodes()
         self.assertNotIn("vision_goal_controller",nodes)
+        self.assertNotIn(("/husky_nav/vision_status","/husky_nav/vision_control_status"),nodes["navigation_gate"].remappings)
         self.assertFalse(nodes["goal_dispatch"].parameters[0]["guide_only"])
         rendered=yaml.safe_load(Path(nodes["planner_server"].parameters[0]).read_text())
         self.assertIn("vision_layer",rendered["global_costmap"]["global_costmap"]["ros__parameters"]["plugins"])

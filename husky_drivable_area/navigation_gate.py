@@ -117,6 +117,7 @@ class NavigationGate(Node):
         self.output.publish(command)
         self.status.publish(String(data=json.dumps(dict(enabled=self.enabled, allow_motion=self.allow_motion,
             reason=reason, request_allowed=demand is not None, linear_x=command.linear.x, angular_z=command.angular.z,
+            vision_reason=self.vision[0].get("reason") if self.vision else None,
             downstream_collision_filter_required=not getattr(self,"supervised_trial",False),
             supervised_trial=getattr(self,"supervised_trial",False), ready_for_autonomous_control=False))))
 

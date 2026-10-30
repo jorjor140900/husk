@@ -58,6 +58,21 @@ class VisionGoalCallbackTests(unittest.TestCase):
         self.now=10_100_000_000
         n.get_clock=lambda:NS(now=lambda:NS(nanoseconds=self.now,to_msg=lambda:header().stamp),clock_type="ros")
 
+    def test_reference_validity_is_from_actual_tracking_and_keeps_capture_stamp(self):
+        n=self.node;source=n.source_ns
+        n.tick()
+        status=json.loads(n.status_pub.publish.call_args.args[0].data)
+        self.assertTrue(status['valid']);self.assertEqual(status['source_stamp_ns'],source)
+        self.now+=500_000_000
+        n.pose=(n.pose[0],self.now,time.monotonic())
+        n.tick()
+        status=json.loads(n.status_pub.publish.call_args.args[0].data)
+        self.assertFalse(status['valid']);self.assertEqual(status['source_stamp_ns'],source)
+        self.assertEqual(status['reason'],'image_reference_stale')
+        self.assertEqual(status['linear_x'],0.)
+        n.cancel(None,NS());n.tick()
+        self.assertFalse(json.loads(n.status_pub.publish.call_args.args[0].data)['valid'])
+
     def test_stale_capture_stops_even_while_odometry_and_goal_remain_valid(self):
         self.assertEqual(self.node.demand().reason,"tracking")
         self.node.source_ns-=600_000_000

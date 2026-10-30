@@ -531,3 +531,26 @@ python3 ~/husk-live/tools/trace_trial_session.py --duration 60
 ส่งไฟล์รายงานนั้นได้แม้ session จบแล้ว รายงานมีเหตุ gate ขณะ armed,
 ครั้งแรกที่ gate ปิดหลังเคยผ่าน และค่าสูงสุดของ filtered command ส่วน .jsonl เป็นข้อความทุก sample
 ไม่มีภาพกล้อง และไม่ได้รับรองการขยับ/ระยะหยุดจริง
+
+
+### เส้นเหลือง tracking แต่ gate บอก vision_invalid
+
+รายงาน trial-20261030T052148027582Z พบ max_abs_filtered_linear_mps=0,
+ขณะ armed มี vision_invalid 84 samples และผ่าน request เพียง 5 samples
+ตอน gate ปิด link ยัง enabled/armed และ source age ราว 72 ms;
+controller เส้นเหลืองรายงาน tracking แต่ gate เดิมอ่าน `/husky_nav/vision_status` จากตัวฉาย grid แยกต่างหาก
+ตัว grid รายงาน invalid ระหว่างรอ capture TF ของภาพถัดไป จึงบล็อกเส้นที่ controller ใช้ได้
+
+ใน steering_mode=vision ตอนนี้ remap vision status ของ navigation gate ไป
+`/husky_nav/vision_control_status` ซึ่งมี valid=true เฉพาะเมื่อ controller demand เป็น tracking
+source_stamp_ns ยังเป็นเวลา capture ที่สร้าง reference จริง ไม่ใช่เวลาส่ง status 20 Hz
+ภาพเกิน 500 ms, ไม่มี reference/goal/TF/odom ที่ใช้ได้, mask ถูกบล็อก หรือ cancel จะให้ valid=false
+nav2 mode ยังคงตรวจ grid status เดิม ส่วน LiDAR filter/permission/watchdog และขีดจำกัด trial ไม่เปลี่ยน
+status gate เพิ่ม vision_reason เพื่อบอกเหตุจาก input ที่ gate ใช้ และ fault context เก็บเหตุนี้ได้
+
+อัปเดตเฉพาะคอมตามขั้น 1 แล้ว restart field launch เดิมพร้อม trial profile
+ไม่ต้องเปลี่ยน profile, gateway หุ่น หรือยืด timeout
+ทดสอบ Python 369 tests ผ่าน และ fixture `tests/native_reference_gate_probe.py` ใน native ROS2 ที่ตัด network:
+controller+gate+filter จริงส่ง filtered command .03 m/s ได้แม้ legacy grid invalid ตลอดและ TF ช้า 120 ms
+ภาพหมดอายุและ mask ถูกบล็อกยังให้ศูนย์และ latch ไม่กลับไปเคลื่อนเองหลังข้อมูลกลับมา
+ไม่มี publisher `/cmd_vel` ใน fixture และไม่ได้ขยับหุ่นจริง
