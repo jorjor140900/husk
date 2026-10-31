@@ -87,6 +87,8 @@ watchdog บนหุ่น, profile ค่าจริง, launch รวมแ�
 เริ่ม observe/disarmed; วันจริงต้องเติม topic/TF/geometry และตรวจ sensor/gate ก่อนเปิดคำสั่ง
 มี [ผลตรวจ VLP16 จาก bag ของ cpr-a200-1068](docs/vlp16-field-review.md) และเครื่องมือ offline
 ตรวจ ring/timing พร้อมแกน deskew รายจุด; ยังไม่เชื่อมส่วนนี้เข้า field controller
+ถ้าไม่มีหุ่น ใช้ [หน้าดู LiDAR ย้อนหลังจาก bag](docs/lidar-offline.md)
+กด Play/เลื่อนเฟรมใน browser เพื่อเทียบ scan เดิมกับจุดใกล้ที่สุด โดยไม่ต้องเปิด ROS
 
 ## ผลลัพธ์
 
