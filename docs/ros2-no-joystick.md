@@ -922,3 +922,13 @@ ls -lh "$vlp_ghost_bag"
 ตัว record ไม่มีคำสั่งขยับหุ่น ไม่ให้เริ่ม autonomous เพียงเพื่อเก็บ bag
 ใช้เครื่องมือ inspect_vlp16_bag.py เดิมตรวจ ring, metadata, timestamps และ timed points ต่อ
 threshold กรองตัวหุ่น/พื้นและการล้างเซลล์ต้องอิงข้อมูลนี้ พร้อมรักษาการตรวจสิ่งกีดขวางจริง
+
+## 14. แก้กรอบค้างจาก map->odom เปลี่ยนระหว่างเดิน
+
+โหมด vision เปลี่ยน global obstacle layer เป็น OdomObstacleLayer ซึ่งเก็บจุดสดใน odom
+แล้วฉายเข้า map ใหม่พร้อมคำนวณ inflation ใหม่เมื่อ AMCL ปรับตำแหน่ง
+ยัง mark สิ่งกีดขวางสดและ clear ด้วย finite measured rays; ไม่ใช้ timeout ลบสิ่งกีดขวาง
+ขั้นอัปเดตนี้ต้องใช้ `--with-navigation` และ build ทั้ง `husky_vision_nav2` กับ `husky_vision`
+ดู [คำสั่งอัปเดตและขอบเขตการแก้](live-obstacle-fix.md)
+ขั้นนี้แทนชั้น obstacle เดิมใน global costmap ของโหมด vision; ข้อความ/parameter enabled
+ของ stock ObstacleLayer ในขั้น13 เป็นคำสั่งสำหรับรุ่นเก่า ไม่ใช่วิธีสลับ plugin ใหม่ขณะเปิดอยู่

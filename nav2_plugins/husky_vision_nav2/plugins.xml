@@ -2,4 +2,7 @@
   <class type="husky_vision_nav2::VisionMaskLayer" base_class_type="nav2_costmap_2d::Layer">
     <description>AI veto only, before inflation; never clears mapped or sensed obstacles.</description>
   </class>
+  <class type="husky_vision_nav2::OdomObstacleLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>Live finite-ray marking/clearing in odom; reprojects map corrections without leaving old obstacles.</description>
+  </class>
 </library>

@@ -54,6 +54,15 @@ def _nodes(context):
         # image labels constrain the actual local steering reference directly.
         costmap=params["global_costmap"]["global_costmap"]["ros__parameters"]
         costmap["plugins"].remove("vision_layer")
+        # Preserve live obstacles in continuous odometry. Reproject the whole
+        # observed layer when AMCL corrects map->odom, instead of leaving the
+        # old map-frame hits (and their inflation halos) behind.
+        costmap["obstacle_layer"]={
+            "plugin":"husky_vision_nav2::OdomObstacleLayer",
+            "scan_topic":"/husky_nav/mapping_scan","odom_frame":robot["odom_frame"],
+            "map_transform_tolerance_sec":params["amcl"]["ros__parameters"]["transform_tolerance"],
+            "timeout_sec":.5,"obstacle_min_range":.1,
+            "obstacle_max_range":4.,"raytrace_max_range":4.5}
     with tempfile.NamedTemporaryFile("w",prefix="husky-nav2-",suffix=".yaml",delete=False) as target:
         yaml.safe_dump(params,target)
         parameters = target.name

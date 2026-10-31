@@ -76,9 +76,13 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertNotIn("vision_layer",rendered["global_costmap"]["global_costmap"]["ros__parameters"]["plugins"])
         global_map=rendered["global_costmap"]["global_costmap"]["ros__parameters"]
         self.assertIn("obstacle_layer",global_map["plugins"])
-        scan=global_map["obstacle_layer"]["mapping_scan"]
-        self.assertEqual(scan["topic"],"/husky_nav/mapping_scan")
-        self.assertTrue(scan["marking"]);self.assertTrue(scan["clearing"])
+        obstacle=global_map["obstacle_layer"]
+        self.assertEqual(obstacle["plugin"],"husky_vision_nav2::OdomObstacleLayer")
+        self.assertEqual(obstacle["scan_topic"],"/husky_nav/mapping_scan")
+        self.assertEqual(obstacle["odom_frame"],"odom")
+        self.assertEqual(obstacle["map_transform_tolerance_sec"],rendered["amcl"]["ros__parameters"]["transform_tolerance"])
+        self.assertEqual(obstacle["obstacle_max_range"],4.)
+        self.assertEqual(obstacle["raytrace_max_range"],4.5)
         view=yaml.safe_load(Path(nodes["rviz2"].arguments[1]).read_text())
         displays={row["Name"]:row for row in view["Visualization Manager"]["Displays"]}
         self.assertFalse(displays["Goal preview plan"]["Enabled"])
@@ -94,6 +98,8 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertFalse(nodes["goal_dispatch"].parameters[0]["guide_only"])
         rendered=yaml.safe_load(Path(nodes["planner_server"].parameters[0]).read_text())
         self.assertIn("vision_layer",rendered["global_costmap"]["global_costmap"]["ros__parameters"]["plugins"])
+        self.assertEqual(rendered["global_costmap"]["global_costmap"]["ros__parameters"]
+                         ["obstacle_layer"]["plugin"],"nav2_costmap_2d::ObstacleLayer")
 
     def test_trial_wiring_is_explicit_and_does_not_activate_for_normal_profiles(self):
         from husky_link_core.supervised_trial import MODE,LIMITS

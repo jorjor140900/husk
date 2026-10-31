@@ -89,6 +89,8 @@ watchdog บนหุ่น, profile ค่าจริง, launch รวมแ�
 ตรวจ ring/timing พร้อมแกน deskew รายจุด; ยังไม่เชื่อมส่วนนี้เข้า field controller
 ถ้าไม่มีหุ่น ใช้ [หน้าดู LiDAR ย้อนหลังจาก bag](docs/lidar-offline.md)
 กด Play/เลื่อนเฟรมใน browser เพื่อเทียบ scan เดิมกับจุดใกล้ที่สุด โดยไม่ต้องเปิด ROS
+โหมด image steering ใช้ [ชั้นสิ่งกีดขวางใน odom](docs/live-obstacle-fix.md)
+เพื่อคำนวณจุดสดและ inflation ใหม่เมื่อ AMCL ปรับ map->odom
 
 ## ผลลัพธ์
 
