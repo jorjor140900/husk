@@ -1,0 +1,36 @@
+<launch>
+  <arg name="odom_topic" default="" />
+  <arg name="scan_topic" default="" />
+  <arg name="base_frame" default="base_link" />
+  <arg name="allow_robot_output" default="false" />
+  <arg name="supervised_trial" default="false" />
+  <arg name="robot_input_topic" default="" />
+  <arg name="address" default="127.0.0.1" />
+  <arg name="port" default="9090" />
+  <arg name="profile_path" default="" />
+  <arg name="image_max_fps" default="10.0" />
+  <arg name="cloud_topic" default="" />
+  <arg name="cloud_max_fps" default="5.0" />
+  <arg name="image_max_age_sec" default="0.5" />
+  <include file="$(find rosbridge_server)/launch/rosbridge_websocket.launch">
+    <arg name="address" value="$(arg address)" />
+    <arg name="port" value="$(arg port)" />
+    <arg name="topics_glob" value="[/husky_vision/*]" />
+    <arg name="services_glob" value="[/husky_vision/no_remote_services]" />
+    <arg name="params_glob" value="[/husky_vision/no_remote_params]" />
+    <arg name="max_message_size" value="2097152" />
+  </include>
+  <node pkg="husky_vision_bridge" type="robot_gateway.py" name="robot_gateway" ns="husky_vision" output="screen" required="true">
+    <param name="profile_path" value="$(arg profile_path)" />
+    <param name="image_max_fps" value="$(arg image_max_fps)" />
+    <param name="cloud_topic" value="$(arg cloud_topic)" />
+    <param name="cloud_max_fps" value="$(arg cloud_max_fps)" />
+    <param name="image_max_age_sec" value="$(arg image_max_age_sec)" />
+    <param name="odom_topic" value="$(arg odom_topic)" />
+    <param name="scan_topic" value="$(arg scan_topic)" />
+    <param name="base_frame" value="$(arg base_frame)" />
+    <param name="allow_robot_output" value="$(arg allow_robot_output)" />
+    <param name="supervised_trial" value="$(arg supervised_trial)" />
+    <param name="robot_input_topic" value="$(arg robot_input_topic)" />
+  </node>
+</launch>

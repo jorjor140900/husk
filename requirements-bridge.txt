@@ -1,0 +1,4 @@
+# Small additions to the existing ROS2 venv. No changes to the trained model.
+websocket-client>=1.8,<2
+# Used only by the isolated offline link self-test.
+websockets>=13,<16

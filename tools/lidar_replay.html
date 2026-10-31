@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="th">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Husky — offline LiDAR replay</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eef2f6;color:#17243b;font:16px system-ui,sans-serif}
+main{max-width:1180px;margin:auto;padding:24px}h1{font-size:26px;margin:0 0 10px}h2{font-size:18px;margin:0 0 12px}
+p{line-height:1.65;margin:10px 0}.card{background:white;border:1px solid #dae1ea;border-radius:12px;padding:18px;margin:16px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.muted{color:#53627b;font-size:14px}.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:14px}.orange{color:#b64c00}.green{color:#007b69}.grey{color:#717b8c}
+.controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}button,select{padding:9px 14px;font:inherit;border:1px solid #b6c3d3;border-radius:8px;background:white;color:#17243b;cursor:pointer}button.primary{background:#193e74;color:white}input[type=range]{flex:1;min-width:180px}
+canvas{display:block;width:100%;aspect-ratio:1;background:white}#side{aspect-ratio:1.25}.metrics{display:flex;gap:24px;flex-wrap:wrap}.metric strong{display:block;font-size:23px}.metric span{font-size:13px;color:#53627b}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
+@media(max-width:760px){main{padding:12px}.grid{grid-template-columns:1fr}}
+</style>
+<main>
+<h1>ดู LiDAR ย้อนหลัง — ไม่ต้องต่อหุ่น</h1>
+<p id="file" class="muted"></p>
+<p>กด Play หรือเลื่อนเวลาเพื่อดูข้อมูลที่บันทึกไว้ สีส้มคือ scan เดิม สีเขียวคือผลทดลองเลือกจุดใกล้ที่สุดจากวงและช่องมุมเดียวกัน</p>
+<div class="card">
+<div class="controls"><button id="play" class="primary">▶ Play</button><button id="back">−1 เฟรม</button><button id="next">+1 เฟรม</button>
+<input id="frame" aria-label="เฟรม" type="range" min="0" value="0" step="1"><span id="time"></span></div>
+<p class="muted">เล่นตามเวลาใน bag เมื่อถึงท้ายจะหยุด เปลี่ยนกราฟเป็นระยะใกล้หรือไกลได้ด้านล่าง</p>
+<div class="metrics" id="metrics"></div>
+</div>
+<div class="grid">
+<section class="card"><h2>มองจากด้านบน · พิกัด base_link</h2>
+<div class="legend"><span class="orange">● scan เดิม</span><span class="green">● จุดใกล้ที่สุด</span></div>
+<p class="muted">จุดคือ measured returns ที่ฉายตามช่องมุมของ scan ไม่ใช่ costmap สีฟ้า</p>
+<label>ระยะมอง <select id="extent"><option value="4">±4 เมตร</option><option value="10">±10 เมตร</option><option value="40">±40 เมตร</option><option value="100">±100 เมตร</option></select></label>
+<canvas id="top" aria-label="เปรียบเทียบ scan จากด้านบน"></canvas>
+<p class="muted">กากบาทสีน้ำเงินคือจุดกำเนิด base_link; ด้านบนกราฟคือด้านหน้าหุ่น; ไม่ได้วาดขนาดตัวหุ่น</p></section>
+<section class="card"><h2>มองด้านข้าง · ความสูงของจุดจริง</h2>
+<div class="legend"><span class="grey">● จุดตัวอย่างจาก cloud หลาย rings</span><span class="orange">● ring ที่ตรงกับ scan</span></div>
+<p class="muted">X: ด้านหน้าหุ่น · Z: ความสูงเทียบ base_link · แสดงเฉพาะ |Y| &lt; 0.6 เมตร</p>
+<canvas id="side" aria-label="จุด LiDAR ด้านหน้าเทียบความสูง"></canvas>
+<p class="muted">เส้น Z=0 คือ base_link ไม่ใช่พื้น จุดนอกช่วงกราฟไม่ถูกแสดง แต่ยังเก็บไว้ในการเปรียบเทียบ scan</p></section>
+</div>
+<section class="card"><h2>ผลรวมทั้งไฟล์</h2><p id="finding"></p><p id="stationary"></p>
+<p>ผลทดลองยังไม่เปลี่ยนระบบที่ใช้กับหุ่น ไม่มีการลบจุดพื้นหรือตัวหุ่น และช่องที่ไม่มี return ยังไม่มีข้อมูลเหมือนเดิม</p>
+<p>หน้านี้ไม่ได้เล่นภาพกล้องและ global costmap ที่สัมพันธ์กัน จึงยังบอกไม่ได้ว่าจุดไหนเป็นวัตถุจริงหรือเป็นต้นเหตุของกรอบสีฟ้าที่หน้างาน และใช้ทดสอบเส้นเหลืองจากภาพไม่ได้</p>
+<details><summary>รายละเอียดและขอบเขต</summary><pre id="report"></pre></details>
+</section>
+</main>
+<script id="data" type="application/json">__REPLAY_DATA__</script>
+<script>
+'use strict';
+const replay=JSON.parse(document.getElementById('data').textContent);
+const frames=replay.frames,summary=replay.summary,$=id=>document.getElementById(id);
+let timer=null,index=0;
+$('file').textContent=summary.source_file+' · '+frames.length+' เฟรม · เปิดจากไฟล์ได้โดยไม่ใช้อินเทอร์เน็ตหรือ ROS';
+$('frame').max=frames.length-1;
+$('report').textContent=JSON.stringify(summary,null,2);
+$('finding').textContent='สร้าง scan เดิมซ้ำได้จาก ring '+summary.matched_rings.join(', ')+
+  ' · พบ '+summary.farther_than_nearest_counts['1'].toLocaleString()+' ช่อง-เฟรมที่ scan เดิมไกลกว่าจุดใกล้ที่สุดเกิน 1 เมตร'+
+  ' · ต่างสูงสุด '+summary.last_minus_nearest_m.max.toFixed(2)+' เมตร';
+$('stationary').textContent=summary.odometry_position_extent_m&&summary.odometry_position_extent_m.every(x=>x<1e-5)&&summary.odometry_yaw_extent_rad!==null&&summary.odometry_yaw_extent_rad<1e-5?
+  'Odometry ในไฟล์นี้อยู่นิ่ง จึงยังทดสอบอาการที่เกิดขณะหุ่นเคลื่อนที่ไม่ได้':
+  'ดูรายละเอียด odometry ในรายงาน การเล่นนี้เป็นภาพรายเฟรมใน base_link ไม่ได้ชดเชยการเคลื่อนที่';
+function plot(id,x0,x1,y0,y1,xlabel,ylabel){
+  const canvas=$(id),r=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  canvas.width=Math.round(r.width*dpr);canvas.height=Math.round(r.height*dpr);
+  const c=canvas.getContext('2d');c.scale(dpr,dpr);
+  const w=r.width,h=r.height,p=47,pw=w-p-12,ph=h-p-22;
+  const point=(x,y)=>[p+(x-x0)/(x1-x0)*pw,22+(y1-y)/(y1-y0)*ph];
+  c.font='11px system-ui';c.fillStyle='#53627b';
+  for(let i=0;i<=4;i++){
+    const xv=x0+(x1-x0)*i/4,yv=y0+(y1-y0)*i/4;
+    const [x]=point(xv,y0),[,y]=point(x0,yv);
+    c.strokeStyle='#e4e9f0';c.beginPath();c.moveTo(x,22);c.lineTo(x,22+ph);c.moveTo(p,y);c.lineTo(p+pw,y);c.stroke();
+    c.fillText(xv.toFixed(1),x-9,h-27);c.fillText(yv.toFixed(1),4,y+4);
+  }
+  c.fillText(xlabel,p,h-6);c.fillText(ylabel,p,13);
+  c.save();c.beginPath();c.rect(p,22,pw,ph);c.clip();
+  return {c,point,dot:(xy,color,size)=>{c.fillStyle=color;for(const [x,y] of xy){const [a,b]=point(x,y);c.fillRect(a-size/2,b-size/2,size,size)}},done:()=>c.restore()};
+}
+function render(){
+  const f=frames[index],e=Number($('extent').value);$('frame').value=index;
+  $('time').textContent=(index+1)+'/'+frames.length+' · '+f.t.toFixed(2)+'s';
+  $('metrics').replaceChildren();
+  for(const [value,label] of [[f.ring,'ring ตรงกับ scan'],[f.changed_over_1cm,'ช่องที่ต่างเกิน 1 ซม.'],[f.changed_over_1m,'ช่องที่ต่างเกิน 1 ม.'],[f.missing_bins,'ช่องไม่มี return — คงเดิม']]){
+    const box=document.createElement('div');box.className='metric';const a=document.createElement('strong'),b=document.createElement('span');a.textContent=value;b.textContent=label;box.append(a,b);$('metrics').append(box);
+  }
+  const t=plot('top',-e,e,-e,e,'−Y (m): ซ้ายหุ่น ← → ขวาหุ่น','X = ด้านหน้า (m)');
+  // Horizontal is -Y so the robot's left appears on the viewer's left.
+  t.dot(f.recorded.map(([x,y])=>[-y,x]),'#bd580c',4);
+  t.dot(f.nearest.map(([x,y])=>[-y,x]),'#008773',2.5);
+  const [a,b]=t.point(0,0);t.c.strokeStyle='#2356c9';t.c.lineWidth=2;t.c.beginPath();t.c.moveTo(a-6,b);t.c.lineTo(a+6,b);t.c.moveTo(a,b-6);t.c.lineTo(a,b+6);t.c.stroke();t.done();
+  const s=plot('side',0,5,-.4,2.2,'X = ด้านหน้า (m)','Z เทียบ base_link (m)');
+  s.dot(f.context,'#a6b0bc',2);s.dot(f.selected,'#bd580c',3);
+  s.c.strokeStyle='#2356c9';s.c.setLineDash([4,4]);s.c.beginPath();s.c.moveTo(...s.point(0,0));s.c.lineTo(...s.point(5,0));s.c.stroke();s.done();
+}
+function stop(){if(timer!==null)clearTimeout(timer);timer=null;$('play').textContent='▶ Play'}
+function step(){render();if(index>=frames.length-1){stop();return}const delay=Math.max(1,1000*(frames[index+1].t-frames[index].t));timer=setTimeout(()=>{index++;step()},delay)}
+$('play').onclick=()=>{if(timer!==null){stop();return}if(index===frames.length-1)index=0;$('play').textContent='Ⅱ Pause';step()};
+$('back').onclick=()=>{stop();index=Math.max(0,index-1);render()};
+$('next').onclick=()=>{stop();index=Math.min(frames.length-1,index+1);render()};
+$('frame').oninput=()=>{stop();index=Number($('frame').value);render()};
+$('extent').onchange=render;window.addEventListener('resize',render);render();
+</script>
+</html>

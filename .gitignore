@@ -1,0 +1,12 @@
+.venv/
+.venv-segmentation/
+.venv-lidar-review/
+__pycache__/
+*.py[cod]
+outputs/
+models/
+build/
+install/
+log/
+*.egg-info/
+

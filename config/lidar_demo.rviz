@@ -1,0 +1,88 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: husky_lidar_demo/odom
+    Background Color: 35; 35; 35
+    Frame Rate: 20
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid (0.5 m)
+      Enabled: true
+      Cell Size: 0.5
+      Plane Cell Count: 32
+      Color: 90; 90; 90
+      Plane: XY
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/Path
+      Name: Reference (yellow)
+      Enabled: true
+      Topic:
+        Value: /husky_lidar_demo/reference
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Buffer Length: 1
+      Color: 255; 230; 0
+      Line Style: Lines
+      Pose Style: None
+    - Class: rviz_default_plugins/Path
+      Name: Actual trajectory (cyan)
+      Enabled: true
+      Topic:
+        Value: /husky_lidar_demo/simulation/trajectory
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Buffer Length: 1
+      Color: 0; 220; 255
+      Line Style: Lines
+      Pose Style: None
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Simulated robot (blue) and obstacle (red)
+      Enabled: true
+      Topic:
+        Value: /husky_lidar_demo/simulation/markers
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/LaserScan
+      Name: Synthetic LiDAR returns
+      Enabled: true
+      Topic:
+        Value: /husky_lidar_demo/scan
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Style: Points
+      Size (m): 0.04
+      Color Transformer: FlatColor
+      Color: 255; 180; 60
+      Decay Time: 0.3
+    - Class: rviz_default_plugins/Marker
+      Name: Modeled stop sweep (green clear, red blocked)
+      Enabled: true
+      Topic:
+        Value: /husky_lidar_demo/safety/sweep
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Target Frame: husky_lidar_demo/odom
+      Scale: 90
+      X: 3.5
+      Y: 0.0
+      Angle: 0.0
+Window Geometry:
+  Width: 1280
+  Height: 800

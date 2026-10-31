@@ -1,0 +1,95 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: map
+    Background Color: 35; 35; 35
+    Frame Rate: 10
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+    - Class: rviz_default_plugins/Map
+      Name: Saved or SLAM map
+      Enabled: true
+      Topic:
+        Value: /map
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/TF
+      Name: Robot TF
+      Enabled: true
+      Show Names: false
+    - Class: rviz_default_plugins/LaserScan
+      Name: Mapping observations
+      Enabled: true
+      Topic:
+        Value: /husky_nav/mapping_scan
+        Reliability Policy: Best Effort
+      Size (m): 0.03
+    - Class: rviz_default_plugins/Path
+      Name: Goal preview plan
+      Enabled: true
+      Color: 255; 230; 0
+      Line Style: Lines
+      Line Width: 0.04
+      Topic:
+        Value: /husky_nav/goal_plan
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+    - Class: rviz_default_plugins/Path
+      Name: Navigation plan
+      Enabled: true
+      Color: 0; 200; 255
+      Topic:
+        Value: /plan
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Pose
+      Name: Selected destination
+      Enabled: true
+      Topic:
+        Value: /husky_nav/goal
+        Durability Policy: Transient Local
+    - Class: rviz_default_plugins/Path
+      Name: Image AI controller reference
+      Enabled: true
+      Color: 255; 255; 0
+      Line Style: Lines
+      Line Width: 0.025
+      Topic:
+        Value: /husky_nav/vision_reference
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Map
+      Name: AI veto mask
+      Enabled: false
+      Topic:
+        Value: /husky_nav/vision_mask
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Map
+      Name: Global planning costmap
+      Enabled: false
+      Alpha: 0.65
+      Color Scheme: costmap
+      Topic:
+        Value: /global_costmap/costmap
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic: /goal_pose
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Scale: 35
+      Target Frame: map
+Window Geometry:
+  Width: 1100
+  Height: 800

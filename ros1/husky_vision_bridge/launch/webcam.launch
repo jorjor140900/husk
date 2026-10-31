@@ -1,0 +1,17 @@
+<launch>
+  <arg name="video_device" default="/dev/video2" />
+  <arg name="camera_frame" default="husky_vision_camera_optical_frame" />
+  <arg name="width" default="640" />
+  <arg name="height" default="480" />
+  <arg name="fps" default="15" />
+  <arg name="pixel_format" default="mjpeg" />
+  <node pkg="usb_cam" type="usb_cam_node" name="husky_vision_camera" output="screen">
+    <param name="video_device" value="$(arg video_device)" />
+    <param name="image_width" value="$(arg width)" />
+    <param name="image_height" value="$(arg height)" />
+    <param name="framerate" value="$(arg fps)" />
+    <param name="pixel_format" value="$(arg pixel_format)" />
+    <param name="camera_frame_id" value="$(arg camera_frame)" />
+    <param name="io_method" value="mmap" />
+  </node>
+</launch>
