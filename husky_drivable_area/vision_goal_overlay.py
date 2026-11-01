@@ -7,7 +7,7 @@ from .ground_overlay import robot_axis_pixels
 from .nav2_camera_path import project_nav2_path
 
 
-def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.):
+def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,local_fusion=False):
     image=frame.copy()
     mask=cv2.resize((labels==1).astype(np.uint8),(frame.shape[1],frame.shape[0]),interpolation=cv2.INTER_NEAREST)>0
     green=np.full_like(frame,(0,200,0))
@@ -32,7 +32,7 @@ def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_
             if end-start>=2:
                 cv2.polylines(image,[np.rint(points[start:end]).astype(np.int32)],False,colour,width,cv2.LINE_AA)
     cv2.rectangle(image,(0,0),(image.shape[1],65),(20,20,20),-1)
-    for y,text in ((18,"IMAGE + AI: "+reason),(38,"Yellow=controller reference  Blue=robot Y=0"),
+    for y,text in ((18,("LOCAL AI + LiDAR: " if local_fusion else "IMAGE + AI: ")+reason),(38,"Yellow=controller reference  Blue=robot Y=0"),
                    (58,"Red=mask edge fits | Goal selects direction")):
         cv2.putText(image,text,(7,y),cv2.FONT_HERSHEY_SIMPLEX,.42,(255,255,255),1)
     if supervised_trial:
@@ -40,6 +40,8 @@ def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_
         banner="SUPERVISED GOAL: LiDAR OFF | 0.05m/s | backup 3m/120s" if trial_goal_session else "SUPERVISED: LiDAR OFF | 0.03m/s | 0.5m | 20s"
         if trial_extended_session:
             banner="SUPERVISED: LiDAR OFF | 0.15m/s | backup 100m/%ds"%trial_extended_duration_sec
+        if local_fusion:
+            banner=banner.replace("LiDAR OFF","LOCAL LiDAR required")
         cv2.putText(image,banner,(7,81),
                     cv2.FONT_HERSHEY_SIMPLEX,.42,(255,255,255),1)
     return image

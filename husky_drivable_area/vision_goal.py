@@ -80,7 +80,7 @@ def route_direction(route_ground, goal_ground, lookahead=2.5):
     return target
 
 
-def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig()):
+def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(),candidate_check=None):
     """Smooth bounded candidates scored by corridor clearance and goal direction.
 
     The reference starts on the measured robot axis at the calibrated near
@@ -140,6 +140,8 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
             points=np.column_stack([x,y])
             strip=points[:,None,:]+normals[:,None,:]*offsets[None,:,None]
             if not strip_observed(strip.reshape(-1,2)):
+                continue
+            if candidate_check is not None and not candidate_check(points):
                 continue
             yi=np.clip(np.rint((y-ys[0])/config.step_m).astype(int),0,len(ys)-1)
             distance=clearance[np.arange(len(x)),yi]

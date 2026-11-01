@@ -127,3 +127,22 @@ class GoalDispatchTests(unittest.TestCase):
         self.assertEqual(request.goal,message)
         self.assertEqual(request.planner_id,"GridBased")
         self.assertFalse(hasattr(request,"pose"))
+
+    def test_local_goals_need_no_nav2_action_server_and_do_not_publish_a_fake_route(self):
+        before=self.module.ActionClient.call_count
+        with mock.patch.dict(self.fake_node.overrides,guide_only=True,local_guidance=True):
+            node=self.module.GoalDispatch()
+        self.assertIsNone(node.client)
+        self.assertEqual(self.module.ActionClient.call_count,before)
+        message=NS(header=NS(frame_id='map'),pose=NS(position=NS(x=3.,y=0.,z=0.),
+            orientation=NS(x=0.,y=0.,z=0.,w=1.)))
+        node.goal(message)
+        self.assertIs(node.current_goal,message)
+        self.assertEqual(json.loads(node.status.publish.call_args.args[0].data)['reason'],'local_goal_ready')
+        self.assertFalse(json.loads(node.status.publish.call_args.args[0].data)['global_plan_required'])
+        node.refresh_guide()
+        self.assertEqual(self.module.ActionClient.call_count,before)
+
+    def test_local_mode_cannot_accidentally_enable_native_navigation(self):
+        with mock.patch.dict(self.fake_node.overrides,guide_only=False,local_guidance=True):
+            with self.assertRaisesRegex(ValueError,'requires image steering'):self.module.GoalDispatch()

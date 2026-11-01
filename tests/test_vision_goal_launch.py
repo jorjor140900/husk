@@ -47,7 +47,7 @@ class VisionLaunchTests(unittest.TestCase):
                                     independent_permission_gate_checked=False))
         (root/"robot.json").write_text(json.dumps(self.profile))
         self.context=dict(profile=str(root/"robot.json"),map=str(root/"map.yaml"),allow_motion="false",supervised_trial="false",
-            steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw")
+            steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw",guidance_mode="global_route")
 
     def nodes(self):
         nodes=self.module._nodes(self.context)
@@ -141,6 +141,22 @@ class VisionLaunchTests(unittest.TestCase):
         self.context["allow_motion"]="true"
         with self.assertRaisesRegex(ValueError,"motion mode requires"):
             self.module._nodes(self.context)
+
+    def test_local_fusion_has_no_global_planner_and_keeps_private_live_gates(self):
+        self.context['guidance_mode']='local_fusion'
+        nodes=self.nodes()
+        self.assertNotIn('planner_server',nodes)
+        self.assertNotIn('controller_server',nodes)
+        self.assertTrue(nodes['goal_dispatch'].parameters[0]['local_guidance'])
+        self.assertEqual(nodes['vision_goal_controller'].parameters[0]['guidance_mode'],'local_fusion')
+        self.assertEqual(nodes['vision_goal_controller'].parameters[0]['front_m'],.5)
+        self.assertIn('laser_safety',nodes);self.assertIn('navigation_gate',nodes)
+        self.assertFalse(nodes['navigation_gate'].parameters[0]['allow_motion'])
+        view=yaml.safe_load(Path(nodes['rviz2'].arguments[1]).read_text())
+        displays={row['Name']:row for row in view['Visualization Manager']['Displays']}
+        self.assertEqual(displays['Local AI + live LiDAR']['Topic']['Value'],'/husky_nav/local_fusion_grid')
+        self.context['steering_mode']='nav2'
+        with self.assertRaisesRegex(ValueError,'requires vision'):self.nodes()
 
 
 if __name__=="__main__":

@@ -12,6 +12,9 @@ from unittest import mock
 import numpy as np
 
 from husky_drivable_area.control import ControllerConfig, CommandLimiter
+from husky_drivable_area.vision_goal import VisionReferenceConfig
+from husky_drivable_area.vision_local import LocalLidarGrid, LocalFusionConfig
+from test_vision_local import scan as local_scan
 
 
 def header(sec=10):
@@ -191,6 +194,57 @@ class VisionGoalCallbackTests(unittest.TestCase):
             np.testing.assert_array_equal(draw.call_args.args[2],points)
             self.assertIsNone(n.overlay_pending)
             self.assertIs(n.overlay_pub.publish.call_args.args[0].header,correct.header)
+
+    def prepare_local(self):
+        n=self.node;n.local_fusion=True;n.route=None;n.reference=None;n.start_x=1.
+        n.config=VisionReferenceConfig();n.local_config=LocalFusionConfig()
+        n.local_scan=(LocalLidarGrid(local_scan(),np.eye(4)),np.eye(4),10*10**9,time.monotonic())
+        n.local_grid_pub=mock.Mock();n.local_grid_pub.get_subscription_count.return_value=0
+        n.scan_pending=None;n.last_scan_ns=0;n.measured_motion=(0.,0.)
+        n.pending=(10*10**9,np.ones((480,640),np.uint8),time.monotonic())
+        return n
+
+    def test_local_reference_and_command_do_not_require_global_plan(self):
+        n=self.prepare_local()
+        with mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*a:np.where(np.abs(p[:,1])<1.2,1,0).astype(np.uint8)):
+            n.retry()
+        self.assertIsNotNone(n.reference);self.assertIsNone(n.route)
+        n.new_route(NS(poses=[]))  # Failed global planner cannot erase this mode's path.
+        self.assertIsNotNone(n.reference)
+        n.tick();status=json.loads(n.status_pub.publish.call_args.args[0].data)
+        self.assertTrue(status['valid']);self.assertEqual(status['map_use'],'goal_position_only')
+        self.assertEqual(status['lidar_source_stamp_ns'],10*10**9)
+        self.assertGreater(status['linear_x'],0.)
+
+    def test_new_near_obstacle_stops_an_existing_local_reference_immediately(self):
+        n=self.prepare_local();n.reference=np.column_stack([np.linspace(1,3,41),np.zeros(41)])
+        n.tick();self.assertGreater(n.command_pub.publish.call_args.args[0].twist.linear.x,0.)
+        n.local_scan=(LocalLidarGrid(local_scan([(.85,0,.15)]),np.eye(4)),np.eye(4),10*10**9,time.monotonic())
+        n.tick();status=json.loads(n.status_pub.publish.call_args.args[0].data)
+        self.assertFalse(status['valid']);self.assertEqual(status['linear_x'],0.)
+        self.assertEqual(status['reason'],'local_lidar_stop_sweep_blocked_or_unknown')
+
+    def test_fresh_image_does_not_override_stale_or_missing_lidar(self):
+        n=self.prepare_local();n.reference=np.column_stack([np.linspace(1,3,41),np.zeros(41)])
+        self.now=10_400_000_000;n.pose=(n.pose[0],self.now,time.monotonic())
+        n.tick();status=json.loads(n.status_pub.publish.call_args.args[0].data)
+        self.assertEqual(status['reason'],'local_lidar_stale');self.assertEqual(status['linear_x'],0.)
+        n.local_scan=None
+        self.assertEqual(n.demand().reason,'local_lidar_missing')
+
+    def test_local_scan_tf_retry_retains_original_stamp_and_expires(self):
+        n=self.prepare_local();n.local_scan=None
+        def delayed(target,source,ns):
+            if ns>self.now-90_000_000:raise RuntimeError('future extrapolation')
+            return np.eye(4)
+        n.tf_matrix.side_effect=delayed
+        message=local_scan();message.header=NS(frame_id='laser',stamp=NS(sec=10,nanosec=50_000_000))
+        n.laser_scan(message);self.assertIsNone(n.local_scan);self.assertIsNotNone(n.scan_pending)
+        self.now=10_160_000_000;n.retry_lidar()
+        self.assertIsNotNone(n.local_scan);self.assertEqual(n.local_scan[2],10_050_000_000)
+        self.assertTrue(all(c.args[2]==10_050_000_000 for c in n.tf_matrix.call_args_list))
+        self.now=10_400_000_000
+        with self.assertRaisesRegex(ValueError,'stale'):n.live_local_scan()
 
 
 if __name__=="__main__":

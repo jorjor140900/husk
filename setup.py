@@ -16,6 +16,7 @@ setup(
         ("share/husky_drivable_area/docs", ["docs/ros2-metric-path.md", "docs/ros2-control.md", "docs/robot-field-kit.md", "docs/ros2-mount-fit.md", "docs/ros2-charuco.md", "docs/ros2-goal-navigation.md", "docs/ros2-outdoor-grass.md", "docs/ros2-image-goal.md", "docs/ros2-no-joystick.md"]),
         ("share/husky_drivable_area/ros1/husky_vision_bridge", ["ros1/husky_vision_bridge/package.xml", "ros1/husky_vision_bridge/CMakeLists.txt", "ros1/husky_vision_bridge/setup.py"]),
         ("share/husky_drivable_area/docs", ["docs/vlp16-field-review.md"]),
+        ("share/husky_drivable_area/docs", ["docs/ros2-local-fusion.md", "docs/live-obstacle-fix.md"]),
         ("share/husky_drivable_area/ros1/husky_vision_bridge/launch", glob("ros1/husky_vision_bridge/launch/*")),
         ("share/husky_drivable_area/ros1/husky_vision_bridge/scripts", glob("ros1/husky_vision_bridge/scripts/*.py")),
         ("share/husky_drivable_area/ros1/husky_vision_bridge/src/husky_link_core", glob("husky_link_core/*.py")),

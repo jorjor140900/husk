@@ -91,6 +91,8 @@ watchdog บนหุ่น, profile ค่าจริง, launch รวมแ�
 กด Play/เลื่อนเฟรมใน browser เพื่อเทียบ scan เดิมกับจุดใกล้ที่สุด โดยไม่ต้องเปิด ROS
 โหมด image steering ใช้ [ชั้นสิ่งกีดขวางใน odom](docs/live-obstacle-fix.md)
 เพื่อคำนวณจุดสดและ inflation ใหม่เมื่อ AMCL ปรับ map->odom
+มี [โหมดทดลอง local AI + LiDAR](docs/ros2-local-fusion.md) ที่รับ goal โดยตรง
+พร้อม demo รันในคอมได้โดยไม่ต้องมีหุ่น; ค่าเริ่มต้นยังใช้ global-route mode เดิม
 
 ## ผลลัพธ์
 

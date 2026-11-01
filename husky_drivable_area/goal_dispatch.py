@@ -18,11 +18,16 @@ class GoalDispatch(Node):
         super().__init__("goal_dispatch")
         self.declare_parameter("allow_motion", False)
         self.declare_parameter("guide_only", False)
+        self.declare_parameter("local_guidance", False)
         self.allow_motion = self.get_parameter("allow_motion").value
         self.guide_only = self.get_parameter("guide_only").value
+        self.local_guidance = self.get_parameter("local_guidance").value
+        if self.local_guidance and not self.guide_only:
+            raise ValueError("local_guidance requires image steering / guide_only")
         self.native_motion = self.allow_motion and not self.guide_only
         self.action_type = NavigateToPose if self.native_motion else ComputePathToPose
-        self.client = ActionClient(self,self.action_type,"/navigate_to_pose" if self.native_motion else "/compute_path_to_pose")
+        self.client = None if self.local_guidance else ActionClient(
+            self,self.action_type,"/navigate_to_pose" if self.native_motion else "/compute_path_to_pose")
         self.subscription = self.create_subscription(PoseStamped,"/goal_pose",self.goal,1)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -65,11 +70,15 @@ class GoalDispatch(Node):
         self.request_guide(message,generation)
 
     def refresh_guide(self):
+        if getattr(self,"local_guidance",False):return
         if (self.guide_only and self.current_goal is not None and self.goal_handle is None
                 and not self.request_pending and time.monotonic()-self.last_request>=1.):
             self.request_guide(self.current_goal,self.generation)
 
     def request_guide(self,message,generation):
+        if getattr(self,"local_guidance",False):
+            self.report("local_goal_ready",guidance_only=True,global_plan_required=False)
+            return
         if not self.client.server_is_ready():
             self.invalidate_guide()
             self.report("action_server_not_ready_set_initial_pose_and_retry")

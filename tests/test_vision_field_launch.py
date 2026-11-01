@@ -39,7 +39,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         with mock.patch.dict("sys.modules",modules): spec.loader.exec_module(self.module)
         self.context = dict(profile=str(self.profile),map="/site/map.yaml",camera_device=str(self.device),
-                            allow_motion="false",supervised_trial="false",rviz="true",camera_only="false")
+                            allow_motion="false",supervised_trial="false",rviz="true",camera_only="false",guidance_mode="global_route")
 
     def test_pipeline_has_one_camera_correct_frame_cuda_and_actual_controller_overlay_mode(self):
         nodes = self.module._nodes(self.context)
@@ -54,6 +54,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(perception.arguments["async_reference_preview"],"false")
         self.assertEqual(perception.arguments["max_frame_age_sec"],"0.5")
         self.assertEqual(navigation.arguments["steering_mode"],"vision")
+        self.assertEqual(navigation.arguments["guidance_mode"],"global_route")
         self.assertEqual(navigation.arguments["allow_motion"],"false")
         self.context["allow_motion"]="true"
         self.assertEqual(self.module._nodes(self.context)[3].arguments["allow_motion"],"true")
@@ -77,3 +78,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.context["map"]=""
         with self.assertRaisesRegex(ValueError,"navigation requires map"):
             self.module._nodes(self.context)
+
+    def test_local_mode_is_explicitly_forwarded_to_navigation(self):
+        self.context['guidance_mode']='local_fusion'
+        self.assertEqual(self.module._nodes(self.context)[3].arguments['guidance_mode'],'local_fusion')

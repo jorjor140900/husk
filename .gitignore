@@ -1,6 +1,7 @@
 .venv/
 .venv-segmentation/
 .venv-lidar-review/
+.venv-local-demo/
 __pycache__/
 *.py[cod]
 outputs/

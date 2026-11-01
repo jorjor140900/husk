@@ -32,6 +32,7 @@ def _nodes(context):
         raise ValueError("camera_device must resolve to the connected /dev/videoN; plug the camera or override camera_device")
     mount = CameraMount.load(expanded_path(camera["mount_path"]))
     common = dict(profile=str(profile_file), map=value("map"), steering_mode="vision",
+                  guidance_mode=value("guidance_mode"),
                   supervised_trial=value("supervised_trial"),
                   allow_motion=value("allow_motion"), rviz=value("rviz"), image_topic="/camera/image_raw")
     perception = dict(use_webcam="false", image_topic="/camera/image_raw", device="cuda",
@@ -62,5 +63,6 @@ def generate_launch_description():
         DeclareLaunchArgument("camera_device", default_value="/dev/v4l/by-id/usb-Generic_Web_Camera_200901010001-video-index0"),
         DeclareLaunchArgument("allow_motion", default_value="false"),
         DeclareLaunchArgument("supervised_trial", default_value="false"),
+        DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route or experimental local_fusion"),
         DeclareLaunchArgument("rviz", default_value="true"),
         OpaqueFunction(function=_nodes)])

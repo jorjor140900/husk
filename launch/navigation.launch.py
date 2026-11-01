@@ -36,6 +36,11 @@ def _nodes(context):
     if mode not in ("nav2", "vision"):
         raise ValueError("steering_mode must be nav2 or vision")
     vision = mode == "vision"
+    guidance=LaunchConfiguration("guidance_mode").perform(context)
+    if guidance not in ("global_route","local_fusion"):
+        raise ValueError("guidance_mode must be global_route or local_fusion")
+    local=guidance=="local_fusion"
+    if local and not vision:raise ValueError("local_fusion requires vision steering")
     if trial and not vision:raise ValueError("supervised_trial requires vision steering")
     if allow:
         if profile.get("bridge", {}).get("forward_commands") is not True:
@@ -73,6 +78,11 @@ def _nodes(context):
         for display in view["Visualization Manager"]["Displays"]:
             if display.get("Name") in ("Goal preview plan","Navigation plan"):
                 display["Enabled"]=False
+        if local:
+            view["Visualization Manager"]["Displays"].append({"Class":"rviz_default_plugins/Map",
+                "Name":"Local AI + live LiDAR","Enabled":True,"Alpha":.45,"Color Scheme":"map",
+                "Topic":{"Value":"/husky_nav/local_fusion_grid","Reliability Policy":"Reliable",
+                         "Durability Policy":"Volatile","History Policy":"Keep Last","Depth":1}})
         with tempfile.NamedTemporaryFile("w",prefix="husky-vision-rviz-",suffix=".rviz",delete=False) as target:
             yaml.safe_dump(view,target);rviz_file=target.name
     parent = LaunchConfiguration("ground_parent_frame").perform(context)
@@ -96,7 +106,7 @@ def _nodes(context):
              remappings=[("/husky_nav/nav2_cmd_vel","/husky_nav/vision_cmd_vel"),
                          ("/husky_nav/vision_status","/husky_nav/vision_control_status")] if vision else []),
         Node(package="husky_drivable_area",executable="goal_dispatch",output="screen",
-             parameters=[{"allow_motion":allow,"guide_only":vision}]),
+             parameters=[{"allow_motion":allow,"guide_only":vision,"local_guidance":local}]),
         Node(package="husky_drivable_area",executable="laser_safety",namespace="husky_control",output="screen",
              parameters=[str(share/"config/laser_safety.yaml"),profile["footprint"],
                          {"base_frame":base,"odom_frame":odom,"max_linear_mps":.05,"max_angular_rps":.2,**trial_parameters,**reference_parameters}],
@@ -109,6 +119,11 @@ def _nodes(context):
         nodes.append(Node(package="husky_drivable_area",executable="vision_goal_controller",output="screen",parameters=[{
             "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],
             "base_frame":base,"odom_frame":odom,"half_width_m":profile["footprint"]["half_width_m"],
+            "guidance_mode":guidance,"front_m":profile["footprint"]["front_m"],
+            "rear_m":profile["footprint"]["rear_m"],"margin_m":profile["footprint"]["margin_m"],
+            # VLP16 point-source min_range=0.4 was read from this robot. Its
+            # LaserScan reports zero; never use that zero to fill a blind zone.
+            "lidar_min_range_m":robot.get("local_scan_min_range_m",.4),
             "side_margin_m":profile["footprint"].get("lateral_margin_m",profile["footprint"]["margin_m"]),
             "image_topic":LaunchConfiguration("image_topic").perform(context),**trial_parameters,**reference_parameters}]))
     if camera.get("publish_camera_tf",True):
@@ -122,6 +137,7 @@ def _nodes(context):
             ("nav2_planner","planner_server","planner_server"),("nav2_bt_navigator","bt_navigator","bt_navigator")):
         if (not allow or vision) and name in ("controller_server", "bt_navigator"):
             continue
+        if local and name=="planner_server":continue
         remappings = []
         if name == "controller_server":
             remappings = [("cmd_vel", "/husky_nav/nav2_cmd_vel")]
@@ -133,6 +149,7 @@ def _nodes(context):
                           remappings=remappings))
     for name, managed in (("localization",["map_server","amcl"]),
                           ("navigation",["controller_server","planner_server","bt_navigator"] if allow and not vision else ["planner_server"])):
+        if local and name=="navigation":continue
         nodes.append(Node(package="nav2_lifecycle_manager",executable="lifecycle_manager",name="lifecycle_manager_"+name,
                           output="screen",parameters=[{"autostart":True,"node_names":managed,"use_sim_time":False}]))
     nodes.append(Node(package="rviz2",executable="rviz2",arguments=["-d",rviz_file],
@@ -150,6 +167,7 @@ def generate_launch_description():
         DeclareLaunchArgument("allow_motion",default_value="false"),
         DeclareLaunchArgument("supervised_trial",default_value="false"),
         DeclareLaunchArgument("steering_mode",default_value="nav2",description="vision = image/AI steering, map goal guidance only"),
+        DeclareLaunchArgument("guidance_mode",default_value="global_route",description="local_fusion = experimental image + live scan-plane local planning; no global path required"),
         DeclareLaunchArgument("image_topic",default_value="/camera/image_raw"),
         DeclareLaunchArgument("ground_parent_frame",default_value="base_footprint",description="Real robot TF ground anchor"),
         DeclareLaunchArgument("rviz",default_value="true"),OpaqueFunction(function=_nodes)])

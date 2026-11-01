@@ -26,16 +26,27 @@ from .transport import image_to_bgr, fill_compressed_image
 from .vision_grid import decode_segmentation
 from .vision_goal import VisionReferenceConfig, sample_ground_labels, route_direction, plan_vision_reference
 from .vision_goal_overlay import draw_vision_reference
+from .vision_local import LocalFusionConfig, LocalLidarGrid, local_goal_target, fused_sampler, validate_local_scan
 
 
 class VisionGoalNode(Node):
     def __init__(self):
         super().__init__("vision_goal_controller")
         defaults=dict(camera_calibration="",camera_mount="",base_frame="base_link",odom_frame="odom",
-            image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.)
+            image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,
+            front_m=.5,rear_m=.56,margin_m=.15,lidar_min_range_m=.4,guidance_mode="global_route",
+            supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.)
         for key,value in defaults.items():
             self.declare_parameter(key,value)
         value=lambda key:self.get_parameter(key).value
+        self.guidance_mode=value("guidance_mode")
+        if self.guidance_mode not in ("global_route","local_fusion"):
+            raise ValueError("guidance_mode must be global_route or local_fusion")
+        self.local_fusion=self.guidance_mode=="local_fusion"
+        self.local_config=LocalFusionConfig(front_m=value("front_m"),rear_m=value("rear_m"),
+            half_width_m=value("half_width_m"),margin_m=value("margin_m"),side_margin_m=value("side_margin_m"),
+            lidar_min_range_m=value("lidar_min_range_m")) if self.local_fusion else None
+        self.local_scan=None;self.scan_pending=None;self.last_scan_ns=0;self.measured_motion=(0.,0.)
         self.supervised_trial=value("supervised_trial")
         self.trial_goal_session=value("trial_goal_session")
         from husky_link_core.supervised_trial import selected_limits
@@ -78,6 +89,12 @@ class VisionGoalNode(Node):
             self.create_subscription(Path,"/husky_nav/goal_plan",self.new_route,qos),
             self.create_subscription(Odometry,"/husky_link/odom",self.odometry,sensor),
             self.create_subscription(Image,value("image_topic"),self.image,sensor)]
+        if self.local_fusion:
+            from sensor_msgs.msg import LaserScan
+            from nav_msgs.msg import OccupancyGrid
+            self.grid_type=OccupancyGrid
+            self.local_grid_pub=self.create_publisher(OccupancyGrid,"/husky_nav/local_fusion_grid",1)
+            self.subs.append(self.create_subscription(LaserScan,"/husky_link/scan",self.laser_scan,sensor))
         self.cancel_service=self.create_service(Trigger,"/husky_nav/cancel_vision_goal",self.cancel)
         self.retry_timer=self.create_timer(.02,self.retry)
         self.timer=self.create_timer(.05,self.tick)
@@ -105,13 +122,14 @@ class VisionGoalNode(Node):
     def new_goal(self,message):
         self.goal=None;self.route=None;self.pending=None
         self.completed=False
-        self.clear("waiting_for_goal_guide")
+        self.clear("waiting_for_local_evidence" if getattr(self,"local_fusion",False) else "waiting_for_goal_guide")
         p=message.pose.position
         if message.header.frame_id!="map" or not all(math.isfinite(v) for v in (p.x,p.y,p.z)):
             self.reason="invalid_goal";return
         self.goal=message
 
     def new_route(self,message):
+        if getattr(self,"local_fusion",False):return
         self.route=None
         try:
             if self.goal is None or message.header.frame_id!="map":
@@ -143,8 +161,59 @@ class VisionGoalNode(Node):
             pose=np.array([p.x,p.y,math.atan2(rotation[1,0],rotation[0,0])])
             if np.isfinite(pose).all():
                 self.pose=(pose,stamp_ns(message.header.stamp),time.monotonic())
+                self.measured_motion=(float(message.twist.twist.linear.x),float(message.twist.twist.angular.z))
         except (ValueError,TypeError):
             pass
+
+    def laser_scan(self,message):
+        try:
+            ns=stamp_ns(message.header.stamp);received=time.monotonic()
+            if not fresh_stamp(ns,received,self.get_clock().now().nanoseconds,received,.3):
+                raise ValueError("local_lidar_stale")
+            if ns<=self.last_scan_ns:return
+            if not message.header.frame_id:raise ValueError("local_lidar_frame_missing")
+            validate_local_scan(message)
+            if self.scan_pending is None or not fresh_stamp(self.scan_pending[1],self.scan_pending[2],
+                    self.get_clock().now().nanoseconds,received,.3):
+                self.scan_pending=(message,ns,received)
+            self.retry_lidar()
+        except (ValueError,TypeError,OverflowError) as exc:
+            self.local_scan=self.scan_pending=None;self.clear(str(exc))
+
+    def retry_lidar(self):
+        if self.scan_pending is None:return
+        message,ns,received=self.scan_pending
+        if not fresh_stamp(ns,received,self.get_clock().now().nanoseconds,time.monotonic(),.3):
+            self.local_scan=self.scan_pending=None;self.clear("local_lidar_expired_waiting_for_tf");return
+        try:
+            base_from_sensor=self.tf_matrix(self.base,message.header.frame_id,ns)
+            odom_from_base=self.tf_matrix(self.odom_frame,self.base,ns)
+            grid=LocalLidarGrid(message,base_from_sensor,self.local_config)
+            self.local_scan=(grid,odom_from_base,ns,received)
+            self.last_scan_ns=ns;self.scan_pending=None
+        except TransformException:
+            pass  # Keep this exact scan until its original deadline.
+        except (ValueError,TypeError,OverflowError,cv2.error) as exc:
+            self.local_scan=self.scan_pending=None;self.clear("local_lidar_invalid:"+str(exc))
+
+    def live_local_scan(self):
+        if self.local_scan is None:raise ValueError("local_lidar_missing")
+        grid,odom_from_scan,ns,received=self.local_scan
+        if not fresh_stamp(ns,received,self.get_clock().now().nanoseconds,time.monotonic(),.3):
+            raise ValueError("local_lidar_stale")
+        return grid,odom_from_scan,ns
+
+    def publish_local_grid(self,sample,ns):
+        if self.local_grid_pub.get_subscription_count()==0:return
+        step=.05;xs=np.arange(0,3.6,step);ys=np.arange(-2.,2.,step)
+        xx,yy=np.meshgrid(xs+step/2,ys+step/2)
+        labels=sample(np.column_stack([xx.ravel(),yy.ravel()]))
+        msg=self.grid_type();msg.header.frame_id=self.mount.ground_frame
+        msg.header.stamp.sec,msg.header.stamp.nanosec=divmod(ns,10**9)
+        msg.info.resolution=step;msg.info.width=len(xs);msg.info.height=len(ys)
+        msg.info.origin.position.y=-2.;msg.info.origin.orientation.w=1.
+        msg.data=np.where(labels==1,0,np.where(labels==0,100,-1)).astype(np.int8).tolist()
+        self.local_grid_pub.publish(msg)
 
     def image(self,message):
         if (message.header.frame_id!=self.mount.camera_frame or
@@ -188,6 +257,7 @@ class VisionGoalNode(Node):
             self.clear(str(exc)[:120])
 
     def retry(self):
+        if getattr(self,"local_fusion",False):self.retry_lidar()
         if self.pending is None:
             return
         ns,labels,received=self.pending
@@ -196,29 +266,53 @@ class VisionGoalNode(Node):
         if self.completed:
             self.pending=None;self.clear("goal_reached")
             self.overlay(ns,labels,[],self.reason);return
-        if self.goal is None or self.route is None:
+        if self.goal is None or (not getattr(self,"local_fusion",False) and self.route is None):
             self.pending=None;self.clear("waiting_for_goal_guide")
             self.overlay(ns,labels,[],self.reason);return
         try:
-            route,points,_=self.route
-            age=(self.get_clock().now().nanoseconds-stamp_ns(route.header.stamp))/1e9
-            if not -.05<=age<=5:
-                raise ValueError("global_guide_stale")
+            if not getattr(self,"local_fusion",False):
+                route,points,_=self.route
+                age=(self.get_clock().now().nanoseconds-stamp_ns(route.header.stamp))/1e9
+                if not -.05<=age<=5:raise ValueError("global_guide_stale")
             ground_from_map=self.tf_matrix(self.mount.ground_frame,"map",ns)
             odom_from_ground=self.tf_matrix(self.odom_frame,self.mount.ground_frame,ns)
-            mapped=points@ground_from_map[:2,:2].T+ground_from_map[:2,3]
             p=self.goal.pose.position
             goal=np.array([p.x,p.y])@ground_from_map[:2,:2].T+ground_from_map[:2,3]
-            target=route_direction(mapped,goal)
             sample=lambda p:sample_ground_labels(p,labels,self.camera,self.mount)
-            reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config)
+            local_detail={}
+            if getattr(self,"local_fusion",False):
+                grid,odom_from_scan,lidar_ns=self.live_local_scan()
+                odom_from_base=self.tf_matrix(self.odom_frame,self.base,ns)
+                ground_from_base=np.linalg.inv(odom_from_ground)@odom_from_base
+                if np.linalg.norm(ground_from_base[:2,3])>.02 or abs(math.atan2(ground_from_base[1,0],ground_from_base[0,0]))>.01:
+                    raise ValueError("local_ground_base_alignment_required")
+                scan_from_ground=np.linalg.inv(odom_from_scan)@odom_from_ground
+                sample=fused_sampler(sample,grid,scan_from_ground)
+                target=local_goal_target(goal)
+                reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config,
+                    candidate_check=lambda path:grid.reference_clear(path,scan_from_ground,self.start_x))
+                self.publish_local_grid(sample,ns)
+                local_detail=dict(local_fusion=True,global_plan_required=False,
+                    lidar_source_stamp_ns=lidar_ns,lidar_finite_rays=grid.finite_rays,
+                    lidar_unknown_rays=grid.unknown_rays,lidar_metadata_normalized=grid.metadata_normalized,
+                    lidar_grid_resolution_m=grid.res,lidar_rectangle_sampling_extra_m=grid.discretization_extra_m,
+                    lidar_configured_min_range_m=grid.config.lidar_min_range_m,
+                    lidar_reference_footprint_checked=True,lidar_stop_sweep_required=True,
+                    lidar_deskew_validated=False,
+                    lidar_footprint_model="sampled_rectangles_in_scan_plane",lidar_height_coverage_validated=False,
+                    near_field_evidence="finite_scan_plane_rays_and_measured_robot_hull")
+            else:
+                mapped=points@ground_from_map[:2,:2].T+ground_from_map[:2,3]
+                target=route_direction(mapped,goal)
+                reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config)
             if not len(reference):
-                raise ValueError(reason)
+                raise ValueError("local_fusion:"+reason if getattr(self,"local_fusion",False) else reason)
             if not fresh_stamp(ns,received,self.get_clock().now().nanoseconds,time.monotonic(),.5):
                 raise ValueError("vision_planning_too_old")
             metric=reference@odom_from_ground[:2,:2].T+odom_from_ground[:2,3]
             self.reference=metric;self.source_ns=ns;self.source_received=received
-            self.reason="tracking_image_reference";self.detail=detail
+            self.reason="tracking_local_fused_reference" if getattr(self,"local_fusion",False) else "tracking_image_reference"
+            self.detail={**detail,**local_detail}
             path=Path();path.header.frame_id=self.odom_frame
             path.header.stamp.sec,path.header.stamp.nanosec=divmod(ns,10**9)
             for x,y in metric:
@@ -260,7 +354,8 @@ class VisionGoalNode(Node):
                 supervised_trial=getattr(self,"supervised_trial",False),
                 trial_goal_session=getattr(self,"trial_goal_session",False),
                 trial_extended_session=getattr(self,"trial_extended_session",False),
-                trial_extended_duration_sec=getattr(self,"trial_extended_duration_sec",300.))
+                trial_extended_duration_sec=getattr(self,"trial_extended_duration_sec",300.),
+                local_fusion=getattr(self,"local_fusion",False))
             result=fill_compressed_image(CompressedImage(),image,message.header,80)
             self.overlay_pub.publish(result);self.last_overlay_stamp=ns
             self.last_display=(ns,labels)
@@ -302,7 +397,26 @@ class VisionGoalNode(Node):
             return Demand(reason="goal_not_ahead")
         speed=min(demand.linear,math.sqrt(2*self.controller.max_deceleration_mps2*max(distance-.15,0)))
         scale=speed/max(demand.linear,1e-9)
+        if getattr(self,"local_fusion",False):
+            reason=self.local_command_reason(speed,demand.angular*scale)
+            if reason:return Demand(reason=reason)
         return Demand(speed,demand.angular*scale,"tracking",demand.cross_track_m,distance,demand.target_robot_xy)
+
+    def local_command_reason(self,v,w):
+        try:
+            grid,odom_from_scan,ns=self.live_local_scan()
+            pose=self.pose[0];c,s=math.cos(pose[2]),math.sin(pose[2])
+            odom_from_current=np.eye(4);odom_from_current[:2,:2]=[[c,-s],[s,c]]
+            odom_from_current[:2,3]=pose[:2]
+            scan_from_current=np.linalg.inv(odom_from_scan)@odom_from_current
+            age=max(0.,(self.get_clock().now().nanoseconds-ns)/1e9,
+                (self.get_clock().now().nanoseconds-self.pose[1])/1e9)
+            if not grid.command_clear((v,w),self.measured_motion,scan_from_current,age,
+                    (self.controller.cruise_speed_mps,self.controller.max_angular_speed_rps)):
+                return "local_lidar_stop_sweep_blocked_or_unknown"
+        except (ValueError,TypeError,OverflowError) as exc:
+            return str(exc)
+        return None
 
     def tick(self):
         now=time.monotonic();dt=max(1e-6,now-self.last_tick);self.last_tick=now
@@ -311,11 +425,15 @@ class VisionGoalNode(Node):
         except (ValueError,TypeError,OverflowError):
             demand=Demand(reason="invalid_vision_control_inputs")
         v,w=self.limiter.step(demand,dt)
+        if getattr(self,"local_fusion",False) and demand.reason=="tracking":
+            reason=self.local_command_reason(v,w)
+            if reason:
+                demand=Demand(reason=reason);v=w=0.;self.limiter.reset()
         self.publish_command(v,w)
         self.status_pub.publish(String(data=json.dumps(dict(valid=demand.reason=="tracking",reason=demand.reason,
             reference_reason=self.reason,source_stamp_ns=self.source_ns,linear_x=v,angular_z=w,
             remaining_to_goal_m=demand.remaining_m,controller_path_topic="/husky_nav/vision_reference",
-            steering_source="image_ai",map_use="goal_route_guidance",**self.detail,
+            steering_source="image_ai",map_use="goal_position_only" if getattr(self,"local_fusion",False) else "goal_route_guidance",**self.detail,
             driver_output=False,ready_for_autonomous_control=False),allow_nan=False)))
         if demand.reason=="image_reference_stale" and self.reference is not None:
             self.clear(demand.reason)
