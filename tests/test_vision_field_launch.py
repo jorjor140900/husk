@@ -39,7 +39,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         with mock.patch.dict("sys.modules",modules): spec.loader.exec_module(self.module)
         self.context = dict(profile=str(self.profile),map="/site/map.yaml",camera_device=str(self.device),
-                            allow_motion="false",supervised_trial="false",rviz="true",camera_only="false",guidance_mode="global_route")
+                            allow_motion="false",supervised_trial="false",rviz="true",camera_only="false",guidance_mode="global_route",assume_near_field_clear="false")
 
     def test_pipeline_has_one_camera_correct_frame_cuda_and_actual_controller_overlay_mode(self):
         nodes = self.module._nodes(self.context)
@@ -82,3 +82,5 @@ class FieldLaunchTests(unittest.TestCase):
     def test_local_mode_is_explicitly_forwarded_to_navigation(self):
         self.context['guidance_mode']='local_fusion'
         self.assertEqual(self.module._nodes(self.context)[3].arguments['guidance_mode'],'local_fusion')
+        self.context['assume_near_field_clear']='true'
+        self.assertEqual(self.module._nodes(self.context)[3].arguments['assume_near_field_clear'],'true')

@@ -47,7 +47,7 @@ class VisionLaunchTests(unittest.TestCase):
                                     independent_permission_gate_checked=False))
         (root/"robot.json").write_text(json.dumps(self.profile))
         self.context=dict(profile=str(root/"robot.json"),map=str(root/"map.yaml"),allow_motion="false",supervised_trial="false",
-            steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw",guidance_mode="global_route")
+            steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw",guidance_mode="global_route",assume_near_field_clear="false")
 
     def nodes(self):
         nodes=self.module._nodes(self.context)
@@ -157,6 +157,20 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertEqual(displays['Local AI + live LiDAR']['Topic']['Value'],'/husky_nav/local_fusion_grid')
         self.context['steering_mode']='nav2'
         with self.assertRaisesRegex(ValueError,'requires vision'):self.nodes()
+
+    def test_near_field_assumption_requires_explicit_supervised_local_mode(self):
+        self.context['assume_near_field_clear']='true'
+        with self.assertRaisesRegex(ValueError,'requires local_fusion'):self.nodes()
+        self.context['guidance_mode']='local_fusion'
+        with self.assertRaisesRegex(ValueError,'supervised_trial'):self.nodes()
+        from husky_link_core.supervised_trial import MODE,LIMITS
+        self.context['supervised_trial']='true'
+        self.profile.update(operation_mode=MODE,trial_limits=LIMITS)
+        Path(self.context['profile']).write_text(json.dumps(self.profile))
+        nodes=self.nodes()
+        self.assertTrue(nodes['vision_goal_controller'].parameters[0]['assume_near_field_clear'])
+        self.assertTrue(nodes['laser_safety'].parameters[-1]['supervised_trial'])
+        self.assertFalse(nodes['navigation_gate'].parameters[0]['allow_motion'])
 
 
 if __name__=="__main__":

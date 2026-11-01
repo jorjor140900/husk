@@ -40,6 +40,7 @@ flowchart LR
 cd ~/husk-live
 git fetch origin
 git switch experiment/local-ai-lidar
+git pull --ff-only origin experiment/local-ai-lidar
 python3 -m venv .venv-local-demo
 .venv-local-demo/bin/python -m pip install -r requirements-local-fusion-demo.txt
 .venv-local-demo/bin/python tools/demo_local_fusion.py \
@@ -117,6 +118,37 @@ ros2 topic echo /husky_nav/vision_control_status --once --full-length
 การเปิด motion ภายหลังยังต้องใช้ allow_motion และ reset/enable/operator session เดิมทุกชั้น
 limit เดิมยังมีผล รวมเพดานการหมุนสะสมของ trial; การสร้างทางอ้อมได้ไม่ได้ยกเลิกเพดานนี้
 
+## ตัวเลือกเมื่อผู้คุมรับรองพื้นที่ใกล้หุ่น
+
+เพิ่ม `assume_near_field_clear:=true` ได้เฉพาะ `guidance_mode:=local_fusion`
+พร้อม `supervised_trial:=true` เท่านั้น ค่าเริ่มต้นยังเป็น false
+ตัวเลือกนี้ใช้คำยืนยันของผู้คุมแทนหลักฐาน LiDAR เฉพาะ **เซลล์ unknown**
+ในกล่อง footprint ปัจจุบัน + margin + ระยะเผื่อ sampling
+สำหรับขนาดหุ่นเดิม กล่องอยู่ประมาณ X=-0.87..0.81m, Y=-0.57..0.57m จาก base_link ณ เวลา scan
+ไม่ได้ยกเว้นพื้นที่ด้านหน้าทั้งหมดหรือยกเว้นตลอดเส้นทาง
+
+```bash
+QT_QPA_PLATFORM=xcb ros2 launch husky_vision vision_field.launch.py \
+  profile:="$HOME/husky_vision_ws/robot/robot-nojoy-015.json" \
+  map:="$HOME/husky_vision_ws/maps/outdoor1.yaml" \
+  guidance_mode:=local_fusion \
+  supervised_trial:=true \
+  assume_near_field_clear:=true \
+  allow_motion:=false
+```
+
+เมื่อเปิดส่งคำสั่งจริงใช้ allow_motion=true และ reset/enable/operator session เดิม
+ภาพจะขึ้น `NEAR UNKNOWN ASSUMED` และ status มี `near_field_assumption_enabled=true`
+รวมจำนวนเซลล์ที่ใช้ assumption และขอบเขตกล่อง ตัวเลือกนี้ไม่เปลี่ยน labels ดิบให้เป็น free
+และไม่อ้างว่าพื้นที่นั้นถูกวัดแล้ว
+
+จุดวัตถุที่วัดได้จริงยังขวางทาง แม้อยู่ในกล่องนี้หรือใกล้กว่า minimum ที่ใช้เริ่ม clearing ray
+ตรวจจุดวัดกับสี่เหลี่ยมตัวหุ่นตาม yaw จริง รวม margin เดิมและระยะเผื่อระหว่าง samples
+แยกจากการตรวจ coverage บนกริด เพื่อไม่บวกระยะเผื่อกริดซ้ำจนจุดนอก margin กลายเป็นจุดขวาง
+พื้นที่ unknown นอกกล่อง ภาพ veto/unknown, LiDAR ขาด/เก่า/ผิด, TF/odometry เก่า,
+permission, watchdog และเพดาน trial ยังตรวจตามเดิม
+ต้อง restart launch เพื่อเปลี่ยนตัวเลือกนี้ ไม่ใช้ parameter toggle ขณะ session กำลังวิ่ง
+
 ## ขอบเขตที่ต้องรู้ก่อนทดลองจริง
 
 นี่เป็นข้อ1: local fusion ของภาพกับ **LaserScan ระนาบเดิม** ยังไม่ได้ทำข้อ2ที่ใช้ cloud 3D
@@ -127,9 +159,11 @@ status จึงยังรายงาน height coverage และ deskew ว
 ค่า `lidar_min_range_m` ของ node/launch เป็น 0.4m ตาม `min_range` ที่เคยอ่านจากต้นทาง VLP16
 แม้ LaserScan ของหุ่นรายงาน range_min=0 จะไม่ใช้ศูนย์นั้นเติมเขตบอดให้เป็นทางว่าง
 ค่าอ่านจาก `robot.local_scan_min_range_m` ได้เมื่อตั้งใน profile ตามข้อมูลติดตั้งจริง
-ถ้าเขตบอดนอกตัวหุ่นทับบริเวณที่ต้องตรวจ โหมดนี้จะหยุด ต้องแก้ coverage/ติดตั้งเซนเซอร์
-หรือพัฒนาส่วน 3D ต่อ การลดค่าตามภาพที่ดูโล่งไม่ได้เพิ่มข้อมูลที่เซนเซอร์มองเห็น
-sensor ใน demo/native fixture เป็นแบบจำลองที่เห็นจาก 0.1m จึงไม่ใช่ผลยืนยัน coverage ของหุ่นจริง
+เมื่อไม่เปิด near-field assumption ถ้าเขตบอดนอกตัวหุ่นทับบริเวณที่ต้องตรวจ โหมดนี้จะหยุด
+ต้องแก้ coverage/ติดตั้งเซนเซอร์หรือพัฒนาส่วน 3D ต่อ
+เมื่อเปิด assumption จะใช้การรับรองของผู้คุมเฉพาะในกล่องข้างต้นแทน ไม่ได้เพิ่มข้อมูลเซนเซอร์
+การลด minimum ตามภาพที่ดูโล่งไม่ได้เพิ่มข้อมูลที่เซนเซอร์มองเห็น
+sensor ใน demo/native fixture เป็นแบบจำลอง จึงไม่ใช่ผลยืนยัน coverage ของหุ่นจริง
 
 โหมดนี้เหมาะกับ goal ด้านหน้าและทางเดินต่อเนื่อง ไม่มีการหมุนกลับ/ถอยหรือแก้ทางตันระดับอาคาร
 ไม่มีการสร้างทางผ่าน image veto/unknown เพื่อฝืนไปถึง goal และจุดผิดที่ยังส่งมาสดก็ยังขวางทางได้
@@ -137,18 +171,22 @@ sensor ใน demo/native fixture เป็นแบบจำลองที่�
 
 ## ผลทดสอบของชุดนี้
 
-- Unit tests 409 cases ผ่าน
+- Unit tests 414 cases ผ่าน
 - Native ROS2: ไม่มี global planner/action client, ส่ง empty global route มาก็ไม่ล้าง reference ใหม่,
   เส้นในภาพตรงกับ controller/capture, หยุดเมื่อมีวัตถุใกล้/LiDAR ขาดหรือ unknown/ภาพ veto หรือเก่า/ยกเลิก goal
   และถึง goal จำลอง 2m ภายใน tolerance 0.15m โดย gate ฝั่ง preview ยังคงเป็นศูนย์
 - Native โหมด global_route เดิมยังผ่านการทดสอบถึง goal จำลอง พร้อม TF ล่าช้า 90ms
+- Native local_fusion ที่ใช้ min_range=0.4m และเปิด near-field assumption ผ่านการทดสอบข้างต้น
+  ถึง goal จำลอง 2m ด้วย error 0.146m; จุดวัตถุใกล้ตัวที่วัดได้ยังทำให้คำสั่งเป็นศูนย์
 - อ่าน geometry ของ scan จริงใน `husky-ghost-20261030-050159.bag` ได้ครบ 34 เฟรม
   แต่เมื่อใช้ min_range=0.4m ตามต้นทาง **ทั้ง34เฟรมยังไม่ผ่านการรองรับ footprint ปัจจุบัน**
-  และจุดทดสอบท้ายหุ่นที่ X=-0.60m ยังเป็น unknown ทุกเฟรม ข้อมูลนี้จึงยังใช้เปิดเดินโหมดใหม่ไม่ได้
-  ต้องเริ่ม preview และแก้/ยืนยัน coverage ใกล้ตัวเมื่อได้หุ่น ไม่มีภาพกล้องใน bag นี้ให้ทดสอบ fusion จริง
+  และจุดทดสอบท้ายหุ่นที่ X=-0.60m ยังเป็น unknown ทุกเฟรม ผลนี้เป็นการทดสอบแบบไม่เปิด assumption
+  เมื่อเปิด assumption การตรวจ footprint ปัจจุบันและ stop sweep ของคำสั่ง 0.15m/s ผ่านครบ 34 เฟรม
+  โดย labels ดิบเหมือนเดิมทุกเซลล์ จุดวัดจริงยังถูกตรวจระยะตามขนาดหุ่นและ margin เดิม
+  ไม่มีภาพกล้องใน bag นี้ให้ทดสอบ fusion จริง
 
-ผล native/demo ใช้ภาพและ sensor แบบจำลองซึ่งระยะต่ำสุด 0.1m
-จึงใช้ยืนยัน software behavior เท่านั้น ไม่ใช่ผลวิ่งของ VLP16 บนหุ่นจริง
+ผล native/demo ใช้ภาพและ sensor แบบจำลอง (native ทดสอบทั้งระยะต่ำสุด 0.1m และ 0.4m)
+ส่วน bag เป็นข้อมูลหุ่นอยู่นิ่ง จึงใช้ยืนยัน software behavior เท่านั้น ไม่ใช่ผลวิ่งจริง
 
 ## กลับไปชุดเดิม
 

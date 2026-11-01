@@ -44,7 +44,10 @@ def room_scan(pose,circles):
     return NS(ranges=ranges,angle_min=-math.pi,angle_increment=2*math.pi/count,
         angle_max=-math.pi+(count-1)*2*math.pi/count,range_min=.1,range_max=50.,scan_time=0.,time_increment=0.)
 
-out=Path('/results/local-fusion-validation/native');out.mkdir(exist_ok=True)
+assume_near=os.environ.get('HUSKY_TEST_NEAR_ASSUMPTION')=='1'
+sensor_min=.4 if assume_near else .1
+out=Path('/results/local-fusion-validation')/('native-near-assumption' if assume_near else 'native')
+out.mkdir(exist_ok=True)
 camera=dict(image_width=640,image_height=480,distortion_model='plumb_bob',
     camera_matrix=dict(data=[500.,0.,319.5,0.,500.,239.5,0.,0.,1.]),distortion_coefficients=dict(data=[0.]*5))
 mount=dict(height_m=.99,pitch_down_deg=20.,roll_deg=0.,yaw_deg=0.,camera_x_m=-.26,camera_y_m=.21,
@@ -54,8 +57,8 @@ rclpy.init(args=['--ros-args','-p','camera_calibration:='+str(out/'camera.yaml')
     '-p','guidance_mode:=local_fusion','-p','guide_only:=true','-p','local_guidance:=true',
     '-p','supervised_trial:=true','-p','trial_goal_session:=true','-p','trial_extended_session:=true',
     '-p','trial_extended_duration_sec:=900.0','-p','allow_motion:=false',
-    # This ideal fixture sensor observes from 0.1m. The field VLP16 keeps 0.4m.
-    '-p','lidar_min_range_m:=0.1'])
+    '-p','lidar_min_range_m:='+str(sensor_min),
+    '-p','assume_near_field_clear:='+str(assume_near).lower()])
 vision=VisionGoalNode();dispatch=GoalDispatch();gate=NavigationGate();fixture=Node('isolated_local_fusion_fixture')
 executor=SingleThreadedExecutor()
 for node in (vision,dispatch,gate,fixture):executor.add_node(node)
@@ -113,6 +116,7 @@ def publish():
         scan=LaserScan();scan.header.frame_id='laser';scan.header.stamp=stamp
         for name in ('angle_min','angle_max','angle_increment','range_min','range_max','time_increment','scan_time'):
             setattr(scan,name,float(getattr(raw,name)))
+        scan.range_min=sensor_min
         scan.ranges=(np.full(len(raw.ranges),np.inf) if state['unknown'] else raw.ranges).astype(np.float32).tolist();scan_pub.publish(scan)
     world_y=state['y']+si*hit[:,0]+co*hit[:,1]
     mask=(valid&(np.abs(world_y)<1.2)).reshape(480,640).astype(np.uint8)*255
@@ -138,6 +142,7 @@ def stopped():return len(commands)>=4 and all(v==0 and w==0 for v,w in commands[
 try:
     spin(1.5);goal(4.);spin(2.)
     assert dispatch.client is None and vision.route is None
+    assert vision.assume_near_field_clear is assume_near
     assert any(v>.01 for v,w in commands),statuses[-5:]
     assert any(len(p.poses)>20 for p in references)
     assert grids and set(grids[-1].data)<={-1,0,100}
@@ -171,7 +176,7 @@ try:
         actual_yellow_matches_capture_and_controller_reference=True,live_obstacle_stops=True,
         missing_lidar_stops=True,unknown_lidar_stops=True,image_veto_stops=True,stale_image_stops=True,
         cancel_stops=True,delayed_tf_sec=.09,synthetic_goal_reached=True,synthetic_goal_distance_m=2.,
-        synthetic_sensor_min_range_m=.1,
+        synthetic_sensor_min_range_m=sensor_min,near_field_assumption_enabled=assume_near,
         goal_error_m=error,planning_only_gate_stays_zero=True,no_global_cmd_vel=True,
         note='Ideal synthetic snapshot scan rays, image labels, odometry and TF. No physical/terrain/height validation.')
     (out/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)

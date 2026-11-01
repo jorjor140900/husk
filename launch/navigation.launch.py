@@ -41,6 +41,9 @@ def _nodes(context):
         raise ValueError("guidance_mode must be global_route or local_fusion")
     local=guidance=="local_fusion"
     if local and not vision:raise ValueError("local_fusion requires vision steering")
+    assume_near=LaunchConfiguration("assume_near_field_clear").perform(context).lower()=="true"
+    from husky_drivable_area.vision_local import validate_near_field_assumption
+    validate_near_field_assumption(assume_near,local,trial)
     if trial and not vision:raise ValueError("supervised_trial requires vision steering")
     if allow:
         if profile.get("bridge", {}).get("forward_commands") is not True:
@@ -120,6 +123,7 @@ def _nodes(context):
             "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],
             "base_frame":base,"odom_frame":odom,"half_width_m":profile["footprint"]["half_width_m"],
             "guidance_mode":guidance,"front_m":profile["footprint"]["front_m"],
+            "assume_near_field_clear":assume_near,
             "rear_m":profile["footprint"]["rear_m"],"margin_m":profile["footprint"]["margin_m"],
             # VLP16 point-source min_range=0.4 was read from this robot. Its
             # LaserScan reports zero; never use that zero to fill a blind zone.
@@ -168,6 +172,7 @@ def generate_launch_description():
         DeclareLaunchArgument("supervised_trial",default_value="false"),
         DeclareLaunchArgument("steering_mode",default_value="nav2",description="vision = image/AI steering, map goal guidance only"),
         DeclareLaunchArgument("guidance_mode",default_value="global_route",description="local_fusion = experimental image + live scan-plane local planning; no global path required"),
+        DeclareLaunchArgument("assume_near_field_clear",default_value="false",description="Supervised local_fusion only: operator assumes unknown cells near the stationary hull are clear; measured hits still block"),
         DeclareLaunchArgument("image_topic",default_value="/camera/image_raw"),
         DeclareLaunchArgument("ground_parent_frame",default_value="base_footprint",description="Real robot TF ground anchor"),
         DeclareLaunchArgument("rviz",default_value="true"),OpaqueFunction(function=_nodes)])

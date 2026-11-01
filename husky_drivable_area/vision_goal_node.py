@@ -26,7 +26,8 @@ from .transport import image_to_bgr, fill_compressed_image
 from .vision_grid import decode_segmentation
 from .vision_goal import VisionReferenceConfig, sample_ground_labels, route_direction, plan_vision_reference
 from .vision_goal_overlay import draw_vision_reference
-from .vision_local import LocalFusionConfig, LocalLidarGrid, local_goal_target, fused_sampler, validate_local_scan
+from .vision_local import (LocalFusionConfig, LocalLidarGrid, local_goal_target, fused_sampler,
+    validate_local_scan,validate_near_field_assumption)
 
 
 class VisionGoalNode(Node):
@@ -34,7 +35,7 @@ class VisionGoalNode(Node):
         super().__init__("vision_goal_controller")
         defaults=dict(camera_calibration="",camera_mount="",base_frame="base_link",odom_frame="odom",
             image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,
-            front_m=.5,rear_m=.56,margin_m=.15,lidar_min_range_m=.4,guidance_mode="global_route",
+            front_m=.5,rear_m=.56,margin_m=.15,lidar_min_range_m=.4,guidance_mode="global_route",assume_near_field_clear=False,
             supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.)
         for key,value in defaults.items():
             self.declare_parameter(key,value)
@@ -43,11 +44,13 @@ class VisionGoalNode(Node):
         if self.guidance_mode not in ("global_route","local_fusion"):
             raise ValueError("guidance_mode must be global_route or local_fusion")
         self.local_fusion=self.guidance_mode=="local_fusion"
+        self.supervised_trial=value("supervised_trial")
+        self.assume_near_field_clear=value("assume_near_field_clear")
+        validate_near_field_assumption(self.assume_near_field_clear,self.local_fusion,self.supervised_trial)
         self.local_config=LocalFusionConfig(front_m=value("front_m"),rear_m=value("rear_m"),
             half_width_m=value("half_width_m"),margin_m=value("margin_m"),side_margin_m=value("side_margin_m"),
-            lidar_min_range_m=value("lidar_min_range_m")) if self.local_fusion else None
+            lidar_min_range_m=value("lidar_min_range_m"),assume_near_field_clear=self.assume_near_field_clear) if self.local_fusion else None
         self.local_scan=None;self.scan_pending=None;self.last_scan_ns=0;self.measured_motion=(0.,0.)
-        self.supervised_trial=value("supervised_trial")
         self.trial_goal_session=value("trial_goal_session")
         from husky_link_core.supervised_trial import selected_limits
         self.trial_extended_session=value("trial_extended_session")
@@ -297,6 +300,9 @@ class VisionGoalNode(Node):
                     lidar_unknown_rays=grid.unknown_rays,lidar_metadata_normalized=grid.metadata_normalized,
                     lidar_grid_resolution_m=grid.res,lidar_rectangle_sampling_extra_m=grid.discretization_extra_m,
                     lidar_configured_min_range_m=grid.config.lidar_min_range_m,
+                    near_field_assumed_unknown_cells=grid.assumed_unknown_cells,
+                    near_field_assumption_bounds_xy_m=dict(zip(('x_min','x_max','y_min','y_max'),grid.near_field_bounds)),
+                    lidar_reference_measured_only=not grid.config.assume_near_field_clear,
                     lidar_reference_footprint_checked=True,lidar_stop_sweep_required=True,
                     lidar_deskew_validated=False,
                     lidar_footprint_model="sampled_rectangles_in_scan_plane",lidar_height_coverage_validated=False,
@@ -355,7 +361,8 @@ class VisionGoalNode(Node):
                 trial_goal_session=getattr(self,"trial_goal_session",False),
                 trial_extended_session=getattr(self,"trial_extended_session",False),
                 trial_extended_duration_sec=getattr(self,"trial_extended_duration_sec",300.),
-                local_fusion=getattr(self,"local_fusion",False))
+                local_fusion=getattr(self,"local_fusion",False),
+                assume_near_field_clear=getattr(self,"assume_near_field_clear",False))
             result=fill_compressed_image(CompressedImage(),image,message.header,80)
             self.overlay_pub.publish(result);self.last_overlay_stamp=ns
             self.last_display=(ns,labels)
@@ -433,6 +440,7 @@ class VisionGoalNode(Node):
         self.status_pub.publish(String(data=json.dumps(dict(valid=demand.reason=="tracking",reason=demand.reason,
             reference_reason=self.reason,source_stamp_ns=self.source_ns,linear_x=v,angular_z=w,
             remaining_to_goal_m=demand.remaining_m,controller_path_topic="/husky_nav/vision_reference",
+            near_field_assumption_enabled=getattr(self,"assume_near_field_clear",False),
             steering_source="image_ai",map_use="goal_position_only" if getattr(self,"local_fusion",False) else "goal_route_guidance",**self.detail,
             driver_output=False,ready_for_autonomous_control=False),allow_nan=False)))
         if demand.reason=="image_reference_stale" and self.reference is not None:

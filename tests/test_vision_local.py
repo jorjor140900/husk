@@ -7,7 +7,8 @@ import numpy as np
 
 from husky_drivable_area.collision import circle_scan
 from husky_drivable_area.vision_goal import plan_vision_reference
-from husky_drivable_area.vision_local import LocalLidarGrid, LocalFusionConfig, fused_sampler, local_goal_target
+from husky_drivable_area.vision_local import (LocalLidarGrid, LocalFusionConfig, fused_sampler,
+    local_goal_target,validate_near_field_assumption)
 
 
 def scan(circles=(),unknown=False):
@@ -91,13 +92,51 @@ class LocalFusionTests(unittest.TestCase):
             with self.assertRaises(ValueError):local_goal_target(goal)
 
     def test_malformed_scan_or_uncompensated_acquisition_is_rejected(self):
-        for kind in ('nan','timed','angle','tilt'):
+        for kind in ('nan','zero','timed','angle','tilt'):
             message=scan();matrix=np.eye(4)
             if kind=='nan':message.ranges[10]=float('nan')
+            if kind=='zero':message.range_min=0.;message.ranges[10]=0.
             if kind=='timed':message.time_increment=.0001
             if kind=='angle':message.angle_max+=.1
             if kind=='tilt':matrix[2,2]=.9
             with self.subTest(kind=kind),self.assertRaises(ValueError):LocalLidarGrid(message,matrix)
+
+    def test_supervised_assumption_supports_only_bounded_near_unknown_cells(self):
+        matrix=np.eye(4);matrix[0,3]=-.2317
+        strict=LocalLidarGrid(scan(),matrix,LocalFusionConfig(lidar_min_range_m=.4))
+        assumed=LocalLidarGrid(scan(),matrix,LocalFusionConfig(lidar_min_range_m=.4,assume_near_field_clear=True))
+        self.assertFalse(strict.command_clear((.15,0),(0,0),np.eye(4),.1,(.15,.2)))
+        self.assertTrue(assumed.command_clear((.15,0),(0,0),np.eye(4),.1,(.15,.2)))
+        self.assertGreater(assumed.assumed_unknown_cells,0)
+        self.assertEqual(assumed.sample([[-.60,0.]]).tolist(),[255])
+        np.testing.assert_array_equal(strict.labels,assumed.labels)
+        blind=LocalLidarGrid(scan(unknown=True),matrix,LocalFusionConfig(lidar_min_range_m=.4,assume_near_field_clear=True))
+        self.assertFalse(blind.clear_poses([[1.5,0,0]]))
+        self.assertFalse(blind.command_clear((.05,0),(0,0),np.eye(4),.1,(.15,.2)))
+        self.assertEqual(len(plan_vision_reference(fused_sampler(lane,blind,np.eye(4)),1.,[3.,0.])[0]),0)
+
+    def test_assumption_never_removes_a_measured_obstacle_even_below_clearing_minimum(self):
+        matrix=np.eye(4);matrix[0,3]=-.2317
+        for x in (.70,-.60):
+            message=scan([(x+.2317,0.,.02)])
+            grid=LocalLidarGrid(message,matrix,LocalFusionConfig(lidar_min_range_m=.4,assume_near_field_clear=True))
+            self.assertFalse(grid.command_clear((.15,0),(0,0),np.eye(4),.1,(.15,.2)))
+            self.assertTrue(np.any(grid.labels==0))
+            self.assertTrue(np.all(grid.pose_support[grid.labels==0]==0))
+
+    def test_point_outside_configured_clearance_is_not_blocked_twice_by_grid_rounding(self):
+        matrix=np.eye(4);matrix[0,3]=-.2317
+        message=scan([(-.80+.2317,-.15,.01)])
+        grid=LocalLidarGrid(message,matrix,LocalFusionConfig(lidar_min_range_m=.4,assume_near_field_clear=True))
+        self.assertTrue(np.any(grid.labels==0),'Fixture must contain a measured obstacle')
+        self.assertTrue(grid.command_clear((.15,0),(0,0),np.eye(4),.1,(.15,.2)))
+
+    def test_assumption_is_boolean_and_rejected_outside_supervised_local_mode(self):
+        for local,trial in ((False,False),(True,False),(False,True)):
+            with self.assertRaises(ValueError):validate_near_field_assumption(True,local,trial)
+        validate_near_field_assumption(True,True,True)
+        with self.assertRaises(ValueError):LocalFusionConfig(assume_near_field_clear=1)
+        with self.assertRaises(ValueError):validate_near_field_assumption(True,True,'false')
 
 
 if __name__=='__main__':unittest.main()

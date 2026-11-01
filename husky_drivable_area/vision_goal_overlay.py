@@ -7,7 +7,7 @@ from .ground_overlay import robot_axis_pixels
 from .nav2_camera_path import project_nav2_path
 
 
-def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,local_fusion=False):
+def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,local_fusion=False,assume_near_field_clear=False):
     image=frame.copy()
     mask=cv2.resize((labels==1).astype(np.uint8),(frame.shape[1],frame.shape[0]),interpolation=cv2.INTER_NEAREST)>0
     green=np.full_like(frame,(0,200,0))
@@ -42,6 +42,8 @@ def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_
             banner="SUPERVISED: LiDAR OFF | 0.15m/s | backup 100m/%ds"%trial_extended_duration_sec
         if local_fusion:
             banner=banner.replace("LiDAR OFF","LOCAL LiDAR required")
+        if assume_near_field_clear:
+            banner=banner.replace("LOCAL LiDAR required","NEAR UNKNOWN ASSUMED")
         cv2.putText(image,banner,(7,81),
                     cv2.FONT_HERSHEY_SIMPLEX,.42,(255,255,255),1)
     return image

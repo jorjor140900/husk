@@ -33,6 +33,7 @@ def _nodes(context):
     mount = CameraMount.load(expanded_path(camera["mount_path"]))
     common = dict(profile=str(profile_file), map=value("map"), steering_mode="vision",
                   guidance_mode=value("guidance_mode"),
+                  assume_near_field_clear=value("assume_near_field_clear"),
                   supervised_trial=value("supervised_trial"),
                   allow_motion=value("allow_motion"), rviz=value("rviz"), image_topic="/camera/image_raw")
     perception = dict(use_webcam="false", image_topic="/camera/image_raw", device="cuda",
@@ -64,5 +65,6 @@ def generate_launch_description():
         DeclareLaunchArgument("allow_motion", default_value="false"),
         DeclareLaunchArgument("supervised_trial", default_value="false"),
         DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route or experimental local_fusion"),
+        DeclareLaunchArgument("assume_near_field_clear",default_value="false",description="Supervised local_fusion only; bounded near-field operator assumption"),
         DeclareLaunchArgument("rviz", default_value="true"),
         OpaqueFunction(function=_nodes)])
