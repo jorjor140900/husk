@@ -22,7 +22,7 @@
     ]
   ],
   "completed_waypoints": 4,
-  "error_m": 0.1468109124530189,
+  "error_m": 0.1469423925725225,
   "centre_grass_non_drivable": true,
   "no_global_cmd_vel": true,
   "active_navigation_and_trial_gates": true,

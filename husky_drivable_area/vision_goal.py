@@ -109,8 +109,11 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
     if not np.all(sample(seed)==1):
         return empty,"start_blocked_narrow_or_unobserved",{}
     # A compact bird's-eye sampling grid supplies a corridor-centering cost.
+    minimum_length=config.min_length_m
+    if goal_priority and target[0]>start_x+.1:
+        minimum_length=min(minimum_length,max(.05,float(target[0]-start_x)-1.1*config.step_m))
     forward=config.max_forward_m
-    if goal_priority and target[0]>=start_x+config.min_length_m:
+    if goal_priority and target[0]>=start_x+minimum_length:
         forward=min(forward,float(target[0]))
     xs=np.arange(start_x,forward+config.step_m/2,config.step_m)
     if goal_priority:xs=xs[xs<=forward+1e-9]
@@ -142,7 +145,7 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
     # to reach a visually disconnected branch farther away.
     for end_index in range(len(xs)-1,1,-4):
         end=xs[end_index]
-        if end-start_x<config.min_length_m:
+        if end-start_x<minimum_length:
             break
         # No candidate at this or a shorter X can improve the goal distance
         # already achieved. Avoid evaluating every short prefix each frame.
@@ -200,14 +203,26 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
         if best is not None and not goal_priority:
             return best[1],"ok",best[2]
     if goal_priority:
+        # Include the exact circle through the clicked local target. A fixed
+        # radius/angle lattice can otherwise turn past a nearby waypoint.
+        goal_radius=None;goal_angle=None
+        if 0<target[0]-start_x<config.min_length_m and np.linalg.norm(target)<1.75 and abs(target[1])>1e-6:
+            radius=float(target@target/(2*abs(target[1])))
+            angle=2*math.atan2(abs(target[1]),target[0])
+            if radius>=max(1/config.max_curvature,start_x) and angle<=math.radians(85):
+                goal_radius=radius;goal_angle=angle
         # Turning candidates keep a nonzero terminal heading. Unlike the
         # lane-change smoothstep above they can follow a visible junction arm.
         for sign in (-1,1):
-            for radius in np.arange(max(1/config.max_curvature,start_x+.05),2.01,.15):
-                for degrees in (25,40,55,70,85):
-                    angle=math.radians(degrees);begin=math.asin(start_x/radius)
+            radii=np.arange(max(1/config.max_curvature,start_x+.05),2.01,.15)
+            if goal_radius is not None:radii=np.unique(np.r_[radii,goal_radius])
+            for radius in radii:
+                angles=[math.radians(v) for v in (25,40,55,70,85)] if radius<=2.01 else []
+                if goal_radius==radius and sign*target[1]>0:angles.append(goal_angle)
+                for angle in angles:
+                    begin=math.asin(start_x/radius)
                     length=radius*(angle-begin)
-                    if length<config.min_length_m:continue
+                    if length<minimum_length:continue
                     a=np.linspace(begin,angle,int(math.ceil(length/config.step_m))+1)
                     points=np.column_stack([radius*np.sin(a),sign*radius*(1-np.cos(a))])
                     goal_error=float(np.linalg.norm(points[-1]-target))

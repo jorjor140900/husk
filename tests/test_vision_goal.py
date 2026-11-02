@@ -14,6 +14,29 @@ def lane(points,centre=0.,half=.6):
 
 
 class VisionGoalTests(unittest.TestCase):
+    def test_measured_near_waypoint_does_not_overshoot_its_lateral_coordinate(self):
+        for sign in (-1,1):
+            target=np.array([1.4591349766356165,sign*.38263434220985104])
+            path,reason,detail=plan_vision_reference(lambda p:np.ones(len(p),np.uint8),
+                1.0085270909607027,target,goal_priority=True)
+            self.assertEqual(reason,'ok')
+            np.testing.assert_allclose(path[-1],target,atol=1e-8)
+            self.assertLess(detail['max_curvature'],1.5)
+            self.assertLess(detail['reference_end_to_target_m'],1e-8)
+
+    def test_exact_goal_arc_cannot_override_an_image_veto(self):
+        target=np.array([1.4591349766356165,.38263434220985104])
+        def sample(p):
+            return np.where(np.linalg.norm(p-target,axis=1)<.15,0,1).astype(np.uint8)
+        _,_,detail=plan_vision_reference(sample,1.0085270909607027,target,goal_priority=True)
+        self.assertGreater(detail.get('reference_end_to_target_m',1.),.15)
+
+    def test_almost_straight_exact_arc_remains_bounded_and_close_goal_survives_grid_rounding(self):
+        for target in ([1.4,.00001],[1.2,0.]):
+            path,reason,_=plan_vision_reference(lambda p:np.ones(len(p),np.uint8),1.0085270909607027,target,goal_priority=True)
+            self.assertEqual(reason,'ok');self.assertLess(len(path),500)
+            self.assertLess(np.linalg.norm(path[-1]-target),.03)
+
     def test_goal_priority_does_not_follow_an_offset_corridor_centre_away_from_a_clear_goal(self):
         sample=lambda p:lane(p,centre=.3,half=.8)
         legacy,_,_=plan_vision_reference(sample,.8,[2.5,0.])

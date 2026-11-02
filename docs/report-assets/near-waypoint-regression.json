@@ -1,0 +1,22 @@
+{
+  "source": "user control_status; original image mask not supplied",
+  "source_goal_stamp_ns": 1793605663822090028,
+  "start_x_m": 1.0085270909607027,
+  "target_ground_xy_m": [
+    1.4591349766356165,
+    0.38263434220985104
+  ],
+  "old_reference_end_xy_m": [
+    1.358585857069134,
+    0.7072350325357953
+  ],
+  "old_endpoint_error_m": 0.33981720616483563,
+  "synthetic_all_drivable_mask": true,
+  "new_reference_end_xy_m": [
+    1.4591349766356163,
+    0.382634342209851
+  ],
+  "new_endpoint_error_m": 2.2887833992611187e-16,
+  "reason": "ok",
+  "physical_robot_validated": false
+}
