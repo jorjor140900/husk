@@ -172,6 +172,36 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertTrue(nodes['laser_safety'].parameters[-1]['supervised_trial'])
         self.assertFalse(nodes['navigation_gate'].parameters[0]['allow_motion'])
 
+    def test_image_only_uses_direct_goals_and_no_lidar_costmap_planner(self):
+        from husky_link_core.supervised_trial import MODE,LONG_GOAL_LIMITS
+        self.context.update(guidance_mode='image_only',supervised_trial='true')
+        self.profile.update(operation_mode=MODE,trial_limits=LONG_GOAL_LIMITS)
+        Path(self.context['profile']).write_text(json.dumps(self.profile))
+        def share(package):
+            self.assertNotEqual(package,'husky_vision_nav2')
+            return str(self.root)
+        with mock.patch.object(self.module,'get_package_share_directory',side_effect=share):
+            nodes=self.nodes()
+        self.assertNotIn('planner_server',nodes);self.assertNotIn('vision_grid',nodes)
+        self.assertNotIn('controller_server',nodes);self.assertNotIn('bt_navigator',nodes)
+        self.assertTrue(nodes['goal_dispatch'].parameters[0]['local_guidance'])
+        self.assertEqual(nodes['vision_goal_controller'].parameters[0]['guidance_mode'],'image_only')
+        for name in ('robot_bridge','navigation_gate','laser_safety','vision_goal_controller'):
+            self.assertTrue(nodes[name].parameters[-1]['supervised_trial'])
+            self.assertTrue(nodes[name].parameters[-1]['trial_extended_session'])
+        self.assertEqual(nodes['laser_safety'].parameters[-1]['trial_extended_duration_sec'],900.)
+        self.assertFalse(nodes['robot_bridge'].parameters[0]['forward_commands'])
+        view=yaml.safe_load(Path(nodes['rviz2'].arguments[1]).read_text())
+        displays={row['Name']:row for row in view['Visualization Manager']['Displays']}
+        self.assertFalse(displays['Global planning costmap']['Enabled'])
+        self.assertFalse(displays['AI veto mask']['Enabled'])
+        self.assertNotIn('Local AI + live LiDAR',displays)
+
+    def test_image_only_cannot_silently_skip_collision_checks_in_normal_mode(self):
+        self.context['guidance_mode']='image_only'
+        with self.assertRaisesRegex(ValueError,'supervised_trial'):self.nodes()
+
+
 
 if __name__=="__main__":
     unittest.main()

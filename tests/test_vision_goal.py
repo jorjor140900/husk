@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from husky_drivable_area.vision_goal import (VisionReferenceConfig, plan_vision_reference,
-    route_direction, sample_ground_labels)
+    route_direction, sample_ground_labels,validate_guidance_mode)
 from husky_drivable_area.ground_geometry import CameraCalibration, CameraMount
 from husky_drivable_area.vision_goal_overlay import draw_vision_reference
 from test_ground_geometry import camera_mapping,mount_mapping
@@ -14,6 +14,17 @@ def lane(points,centre=0.,half=.6):
 
 
 class VisionGoalTests(unittest.TestCase):
+    def test_image_only_requires_explicit_supervision_and_vision_steering(self):
+        with self.assertRaisesRegex(ValueError,'supervised_trial'):
+            validate_guidance_mode('image_only')
+        with self.assertRaisesRegex(ValueError,'requires vision'):
+            validate_guidance_mode('image_only',False,True)
+        validate_guidance_mode('image_only',True,True)
+        validate_guidance_mode('local_fusion')
+        validate_guidance_mode('global_route')
+        with self.assertRaisesRegex(ValueError,'guidance_mode'):
+            validate_guidance_mode('imag_only',True,True)
+
     def test_straight_corridor_yields_straight_reference_even_if_global_route_bends(self):
         path,reason,detail=plan_vision_reference(lane,1.,[2.5,.3])
         self.assertEqual(reason,"ok")

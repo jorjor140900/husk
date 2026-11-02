@@ -44,9 +44,11 @@ def room_scan(pose,circles):
     return NS(ranges=ranges,angle_min=-math.pi,angle_increment=2*math.pi/count,
         angle_max=-math.pi+(count-1)*2*math.pi/count,range_min=.1,range_max=50.,scan_time=0.,time_increment=0.)
 
+image_only=os.environ.get('HUSKY_TEST_IMAGE_ONLY')=='1'
 assume_near=os.environ.get('HUSKY_TEST_NEAR_ASSUMPTION')=='1'
-sensor_min=.4 if assume_near else .1
-out=Path('/results/local-fusion-validation')/('native-near-assumption' if assume_near else 'native')
+assert not (image_only and assume_near),'Test modes must be selected separately'
+sensor_min=.4 if assume_near or image_only else .1
+out=Path('/results/local-fusion-validation')/('native-image-only' if image_only else 'native-near-assumption' if assume_near else 'native')
 out.mkdir(exist_ok=True)
 camera=dict(image_width=640,image_height=480,distortion_model='plumb_bob',
     camera_matrix=dict(data=[500.,0.,319.5,0.,500.,239.5,0.,0.,1.]),distortion_coefficients=dict(data=[0.]*5))
@@ -54,7 +56,7 @@ mount=dict(height_m=.99,pitch_down_deg=20.,roll_deg=0.,yaw_deg=0.,camera_x_m=-.2
     ground_frame='vision_ground',camera_frame='camera_optical_frame')
 (out/'camera.yaml').write_text(yaml.safe_dump(camera));(out/'mount.json').write_text(json.dumps(mount))
 rclpy.init(args=['--ros-args','-p','camera_calibration:='+str(out/'camera.yaml'),'-p','camera_mount:='+str(out/'mount.json'),
-    '-p','guidance_mode:=local_fusion','-p','guide_only:=true','-p','local_guidance:=true',
+    '-p','guidance_mode:='+('image_only' if image_only else 'local_fusion'),'-p','guide_only:=true','-p','local_guidance:=true',
     '-p','supervised_trial:=true','-p','trial_goal_session:=true','-p','trial_extended_session:=true',
     '-p','trial_extended_duration_sec:=900.0','-p','allow_motion:=false',
     '-p','lidar_min_range_m:='+str(sensor_min),
@@ -145,17 +147,28 @@ try:
     assert vision.assume_near_field_clear is assume_near
     assert any(v>.01 for v,w in commands),statuses[-5:]
     assert any(len(p.poses)>20 for p in references)
-    assert grids and set(grids[-1].data)<={-1,0,100}
+    if image_only:
+        assert not grids and vision.local_scan is None
+        assert fixture.count_subscribers('/husky_link/scan')==0
+        assert not statuses[-1]['lidar_obstacle_checks_enabled']
+    else:
+        assert grids and set(grids[-1].data)<={-1,0,100}
     assert any(n>100 for ns,n,frame in overlays)
     path_stamps={p.header.stamp.sec*10**9+p.header.stamp.nanosec for p in references if p.poses}
     assert any(ns in path_stamps and n>100 for ns,n,frame in overlays)
     cv2.imwrite(str(out/'controller-overlay.jpg'),next(frame for ns,n,frame in reversed(overlays) if n>100))
-    state['obstacle']=True;spin(.8);assert stopped(),statuses[-4:]
+    state['obstacle']=True;spin(.8)
+    if image_only:assert any(v>.01 for v,w in commands[-5:]),statuses[-4:]
+    else:assert stopped(),statuses[-4:]
     state['obstacle']=False;spin(.8);assert any(v>.01 for v,w in commands[-5:])
-    before=len(commands);state['lidar']=False;spin(.7);assert stopped(),statuses[-4:]
-    assert len(commands)-before>=3,'Controller stopped publishing instead of emitting zero commands'
+    before=len(commands);state['lidar']=False;spin(.7)
+    if image_only:assert any(v>.01 for v,w in commands[-5:]),statuses[-4:]
+    else:assert stopped(),statuses[-4:]
+    assert len(commands)-before>=3,'Controller stopped publishing'
     assert fixture.get_clock().now().nanoseconds-vision.last_seg_ns<500_000_000,'AI also went stale in missing-LiDAR case'
-    state['lidar']=True;state['unknown']=True;spin(.7);assert stopped()
+    state['lidar']=True;state['unknown']=True;spin(.7)
+    if image_only:assert any(v>.01 for v,w in commands[-5:]),statuses[-4:]
+    else:assert stopped()
     state['unknown']=False;spin(.8);assert any(v>.01 for v,w in commands[-5:])
     state['blocked']=True;spin(.7);assert stopped()
     state['blocked']=False;spin(.8);state['ai']=False;spin(.8);assert stopped()
@@ -173,12 +186,17 @@ try:
     assert fixture.count_publishers('/cmd_vel')==0
     report=dict(result='passed',native_ros2=True,synthetic=True,physical_robot=False,
         no_global_planner_or_action_client=True,empty_global_route_does_not_clear_local_reference=True,
-        actual_yellow_matches_capture_and_controller_reference=True,live_obstacle_stops=True,
-        missing_lidar_stops=True,unknown_lidar_stops=True,image_veto_stops=True,stale_image_stops=True,
+        guidance_mode='image_only' if image_only else 'local_fusion',
+        actual_yellow_matches_capture_and_controller_reference=True,image_veto_stops=True,stale_image_stops=True,
         cancel_stops=True,delayed_tf_sec=.09,synthetic_goal_reached=True,synthetic_goal_distance_m=2.,
         synthetic_sensor_min_range_m=sensor_min,near_field_assumption_enabled=assume_near,
         goal_error_m=error,planning_only_gate_stays_zero=True,no_global_cmd_vel=True,
         note='Ideal synthetic snapshot scan rays, image labels, odometry and TF. No physical/terrain/height validation.')
+    if image_only:
+        report.update(no_lidar_subscriber=True,lidar_obstacles_do_not_stop=True,
+            missing_lidar_does_not_stop=True,unknown_lidar_does_not_stop=True)
+    else:
+        report.update(live_obstacle_stops=True,missing_lidar_stops=True,unknown_lidar_stops=True)
     (out/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
 finally:
     executor.shutdown()

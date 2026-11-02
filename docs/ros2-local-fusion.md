@@ -3,6 +3,9 @@
 โหมดทดลอง `guidance_mode:=local_fusion` อยู่ใน branch `experiment/local-ai-lidar`
 ชุดเดิมอยู่ที่ commit `7eb83b3` และยังเป็นค่า default `guidance_mode:=global_route`
 
+ถ้าต้องการใช้ภาพและ AI อย่างเดียวโดยไม่ให้ LiDAR หยุดสิ่งกีดขวาง ให้ใช้โหมดแยก
+[`image_only`](ros2-image-only.md) โหมด `local_fusion` ในหน้านี้ยังตรวจ LiDAR ตามเดิม
+
 ## เปลี่ยนอะไร
 
 RViz ส่งพิกัด goal ให้ตัวสร้างเส้นเหลืองโดยตรง โหมดนี้ไม่เปิด planner_server

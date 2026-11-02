@@ -17,8 +17,6 @@ def _nodes(context):
     from husky_drivable_area.ground_geometry import CameraCalibration, CameraMount
     from husky_drivable_area.robot_profile import load_robot_profile, expanded_path
     share = Path(get_package_share_directory("husky_drivable_area"))
-    # The layer must actually be installed; absence cannot silently disable AI.
-    get_package_share_directory("husky_vision_nav2")
     filename = Path(LaunchConfiguration("profile").perform(context)).expanduser()
     profile = json.loads(filename.read_text())
     for key in ("calibration_path", "mount_path"):
@@ -37,10 +35,14 @@ def _nodes(context):
         raise ValueError("steering_mode must be nav2 or vision")
     vision = mode == "vision"
     guidance=LaunchConfiguration("guidance_mode").perform(context)
-    if guidance not in ("global_route","local_fusion"):
-        raise ValueError("guidance_mode must be global_route or local_fusion")
+    from husky_drivable_area.vision_goal import validate_guidance_mode
+    validate_guidance_mode(guidance,vision,trial)
     local=guidance=="local_fusion"
-    if local and not vision:raise ValueError("local_fusion requires vision steering")
+    image_only=guidance=="image_only"
+    direct_goal=local or image_only
+    if not image_only:
+        # Modes that use the costmap layers must have the plugin installed.
+        get_package_share_directory("husky_vision_nav2")
     assume_near=LaunchConfiguration("assume_near_field_clear").perform(context).lower()=="true"
     from husky_drivable_area.vision_local import validate_near_field_assumption
     validate_near_field_assumption(assume_near,local,trial)
@@ -81,6 +83,8 @@ def _nodes(context):
         for display in view["Visualization Manager"]["Displays"]:
             if display.get("Name") in ("Goal preview plan","Navigation plan"):
                 display["Enabled"]=False
+            if image_only and display.get("Name") in ("AI veto mask","Global planning costmap"):
+                display["Enabled"]=False
         if local:
             view["Visualization Manager"]["Displays"].append({"Class":"rviz_default_plugins/Map",
                 "Name":"Local AI + live LiDAR","Enabled":True,"Alpha":.45,"Color Scheme":"map",
@@ -100,8 +104,6 @@ def _nodes(context):
         Node(package="tf2_ros",executable="static_transform_publisher",name="navigation_ground_alias",
              arguments=["--x","0","--y","0","--z","0","--roll","0","--pitch","0","--yaw","0",
                         "--frame-id",parent,"--child-frame-id",mount.ground_frame]),
-        Node(package="husky_drivable_area",executable="vision_grid",output="screen",parameters=[{
-            "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],"odom_frame":odom}]),
         Node(package="husky_drivable_area",executable="field_permission",namespace="husky_control",output="screen",
              parameters=[{"external_topic":robot["external_permission_topic"]}]),
         Node(package="husky_drivable_area",executable="navigation_gate",output="screen",
@@ -109,7 +111,7 @@ def _nodes(context):
              remappings=[("/husky_nav/nav2_cmd_vel","/husky_nav/vision_cmd_vel"),
                          ("/husky_nav/vision_status","/husky_nav/vision_control_status")] if vision else []),
         Node(package="husky_drivable_area",executable="goal_dispatch",output="screen",
-             parameters=[{"allow_motion":allow,"guide_only":vision,"local_guidance":local}]),
+             parameters=[{"allow_motion":allow,"guide_only":vision,"local_guidance":direct_goal}]),
         Node(package="husky_drivable_area",executable="laser_safety",namespace="husky_control",output="screen",
              parameters=[str(share/"config/laser_safety.yaml"),profile["footprint"],
                          {"base_frame":base,"odom_frame":odom,"max_linear_mps":.05,"max_angular_rps":.2,**trial_parameters,**reference_parameters}],
@@ -118,6 +120,9 @@ def _nodes(context):
                          ("control/cmd_vel","/husky_nav/filtered_cmd_vel"),
                          ("control/cmd_vel_stamped","/husky_nav/filtered_cmd_vel_stamped")]),
     ]
+    if not image_only:
+        nodes.append(Node(package="husky_drivable_area",executable="vision_grid",output="screen",parameters=[{
+            "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],"odom_frame":odom}]))
     if vision:
         nodes.append(Node(package="husky_drivable_area",executable="vision_goal_controller",output="screen",parameters=[{
             "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],
@@ -141,7 +146,7 @@ def _nodes(context):
             ("nav2_planner","planner_server","planner_server"),("nav2_bt_navigator","bt_navigator","bt_navigator")):
         if (not allow or vision) and name in ("controller_server", "bt_navigator"):
             continue
-        if local and name=="planner_server":continue
+        if direct_goal and name=="planner_server":continue
         remappings = []
         if name == "controller_server":
             remappings = [("cmd_vel", "/husky_nav/nav2_cmd_vel")]
@@ -153,7 +158,7 @@ def _nodes(context):
                           remappings=remappings))
     for name, managed in (("localization",["map_server","amcl"]),
                           ("navigation",["controller_server","planner_server","bt_navigator"] if allow and not vision else ["planner_server"])):
-        if local and name=="navigation":continue
+        if direct_goal and name=="navigation":continue
         nodes.append(Node(package="nav2_lifecycle_manager",executable="lifecycle_manager",name="lifecycle_manager_"+name,
                           output="screen",parameters=[{"autostart":True,"node_names":managed,"use_sim_time":False}]))
     nodes.append(Node(package="rviz2",executable="rviz2",arguments=["-d",rviz_file],
@@ -171,7 +176,7 @@ def generate_launch_description():
         DeclareLaunchArgument("allow_motion",default_value="false"),
         DeclareLaunchArgument("supervised_trial",default_value="false"),
         DeclareLaunchArgument("steering_mode",default_value="nav2",description="vision = image/AI steering, map goal guidance only"),
-        DeclareLaunchArgument("guidance_mode",default_value="global_route",description="local_fusion = experimental image + live scan-plane local planning; no global path required"),
+        DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route, local_fusion, or supervised image_only without LiDAR obstacle stops"),
         DeclareLaunchArgument("assume_near_field_clear",default_value="false",description="Supervised local_fusion only: operator assumes unknown cells near the stationary hull are clear; measured hits still block"),
         DeclareLaunchArgument("image_topic",default_value="/camera/image_raw"),
         DeclareLaunchArgument("ground_parent_frame",default_value="base_footprint",description="Real robot TF ground anchor"),

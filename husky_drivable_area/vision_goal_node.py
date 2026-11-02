@@ -24,7 +24,8 @@ from .ground_geometry import CameraCalibration, CameraMount, project_path
 from .ground_overlay import reference_seed
 from .transport import image_to_bgr, fill_compressed_image
 from .vision_grid import decode_segmentation
-from .vision_goal import VisionReferenceConfig, sample_ground_labels, route_direction, plan_vision_reference
+from .vision_goal import (VisionReferenceConfig, sample_ground_labels, route_direction,
+    plan_vision_reference,validate_guidance_mode)
 from .vision_goal_overlay import draw_vision_reference
 from .vision_local import (LocalFusionConfig, LocalLidarGrid, local_goal_target, fused_sampler,
     validate_local_scan,validate_near_field_assumption)
@@ -41,10 +42,10 @@ class VisionGoalNode(Node):
             self.declare_parameter(key,value)
         value=lambda key:self.get_parameter(key).value
         self.guidance_mode=value("guidance_mode")
-        if self.guidance_mode not in ("global_route","local_fusion"):
-            raise ValueError("guidance_mode must be global_route or local_fusion")
         self.local_fusion=self.guidance_mode=="local_fusion"
+        self.image_only=self.guidance_mode=="image_only"
         self.supervised_trial=value("supervised_trial")
+        validate_guidance_mode(self.guidance_mode,supervised_trial=self.supervised_trial)
         self.assume_near_field_clear=value("assume_near_field_clear")
         validate_near_field_assumption(self.assume_near_field_clear,self.local_fusion,self.supervised_trial)
         self.local_config=LocalFusionConfig(front_m=value("front_m"),rear_m=value("rear_m"),
@@ -103,6 +104,10 @@ class VisionGoalNode(Node):
         self.timer=self.create_timer(.05,self.tick)
         cv2.setNumThreads(1)
 
+    @property
+    def direct_goal(self):
+        return getattr(self,"local_fusion",False) or getattr(self,"image_only",False)
+
     def tf_matrix(self,target,source,ns):
         tf=self.buffer.lookup_transform(target,source,Time(nanoseconds=ns,clock_type=self.get_clock().clock_type))
         q,t=tf.transform.rotation,tf.transform.translation
@@ -125,14 +130,14 @@ class VisionGoalNode(Node):
     def new_goal(self,message):
         self.goal=None;self.route=None;self.pending=None
         self.completed=False
-        self.clear("waiting_for_local_evidence" if getattr(self,"local_fusion",False) else "waiting_for_goal_guide")
+        self.clear("waiting_for_local_evidence" if self.direct_goal else "waiting_for_goal_guide")
         p=message.pose.position
         if message.header.frame_id!="map" or not all(math.isfinite(v) for v in (p.x,p.y,p.z)):
             self.reason="invalid_goal";return
         self.goal=message
 
     def new_route(self,message):
-        if getattr(self,"local_fusion",False):return
+        if self.direct_goal:return
         self.route=None
         try:
             if self.goal is None or message.header.frame_id!="map":
@@ -169,6 +174,7 @@ class VisionGoalNode(Node):
             pass
 
     def laser_scan(self,message):
+        if not getattr(self,"local_fusion",False):return
         try:
             ns=stamp_ns(message.header.stamp);received=time.monotonic()
             if not fresh_stamp(ns,received,self.get_clock().now().nanoseconds,received,.3):
@@ -269,11 +275,11 @@ class VisionGoalNode(Node):
         if self.completed:
             self.pending=None;self.clear("goal_reached")
             self.overlay(ns,labels,[],self.reason);return
-        if self.goal is None or (not getattr(self,"local_fusion",False) and self.route is None):
+        if self.goal is None or (not self.direct_goal and self.route is None):
             self.pending=None;self.clear("waiting_for_goal_guide")
             self.overlay(ns,labels,[],self.reason);return
         try:
-            if not getattr(self,"local_fusion",False):
+            if not self.direct_goal:
                 route,points,_=self.route
                 age=(self.get_clock().now().nanoseconds-stamp_ns(route.header.stamp))/1e9
                 if not -.05<=age<=5:raise ValueError("global_guide_stale")
@@ -307,6 +313,11 @@ class VisionGoalNode(Node):
                     lidar_deskew_validated=False,
                     lidar_footprint_model="sampled_rectangles_in_scan_plane",lidar_height_coverage_validated=False,
                     near_field_evidence="finite_scan_plane_rays_and_measured_robot_hull")
+            elif getattr(self,"image_only",False):
+                target=local_goal_target(goal)
+                reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config)
+                local_detail=dict(global_plan_required=False,lidar_reference_footprint_checked=False,
+                    lidar_stop_sweep_required=False,near_field_evidence="operator_supervised_image_only")
             else:
                 mapped=points@ground_from_map[:2,:2].T+ground_from_map[:2,3]
                 target=route_direction(mapped,goal)
@@ -317,7 +328,8 @@ class VisionGoalNode(Node):
                 raise ValueError("vision_planning_too_old")
             metric=reference@odom_from_ground[:2,:2].T+odom_from_ground[:2,3]
             self.reference=metric;self.source_ns=ns;self.source_received=received
-            self.reason="tracking_local_fused_reference" if getattr(self,"local_fusion",False) else "tracking_image_reference"
+            self.reason=("tracking_local_fused_reference" if getattr(self,"local_fusion",False) else
+                "tracking_image_only_reference" if getattr(self,"image_only",False) else "tracking_image_reference")
             self.detail={**detail,**local_detail}
             path=Path();path.header.frame_id=self.odom_frame
             path.header.stamp.sec,path.header.stamp.nanosec=divmod(ns,10**9)
@@ -362,6 +374,7 @@ class VisionGoalNode(Node):
                 trial_extended_session=getattr(self,"trial_extended_session",False),
                 trial_extended_duration_sec=getattr(self,"trial_extended_duration_sec",300.),
                 local_fusion=getattr(self,"local_fusion",False),
+                image_only=getattr(self,"image_only",False),
                 assume_near_field_clear=getattr(self,"assume_near_field_clear",False))
             result=fill_compressed_image(CompressedImage(),image,message.header,80)
             self.overlay_pub.publish(result);self.last_overlay_stamp=ns
@@ -441,7 +454,9 @@ class VisionGoalNode(Node):
             reference_reason=self.reason,source_stamp_ns=self.source_ns,linear_x=v,angular_z=w,
             remaining_to_goal_m=demand.remaining_m,controller_path_topic="/husky_nav/vision_reference",
             near_field_assumption_enabled=getattr(self,"assume_near_field_clear",False),
-            steering_source="image_ai",map_use="goal_position_only" if getattr(self,"local_fusion",False) else "goal_route_guidance",**self.detail,
+            guidance_mode=getattr(self,"guidance_mode","global_route"),
+            lidar_obstacle_checks_enabled=getattr(self,"local_fusion",False) or not getattr(self,"supervised_trial",False),
+            steering_source="image_ai",map_use="goal_position_only" if self.direct_goal else "goal_route_guidance",**self.detail,
             driver_output=False,ready_for_autonomous_control=False),allow_nan=False)))
         if demand.reason=="image_reference_stale" and self.reference is not None:
             self.clear(demand.reason)

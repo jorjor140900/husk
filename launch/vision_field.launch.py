@@ -64,7 +64,7 @@ def generate_launch_description():
         DeclareLaunchArgument("camera_device", default_value="/dev/v4l/by-id/usb-Generic_Web_Camera_200901010001-video-index0"),
         DeclareLaunchArgument("allow_motion", default_value="false"),
         DeclareLaunchArgument("supervised_trial", default_value="false"),
-        DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route or experimental local_fusion"),
+        DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route, local_fusion, or supervised image_only"),
         DeclareLaunchArgument("assume_near_field_clear",default_value="false",description="Supervised local_fusion only; bounded near-field operator assumption"),
         DeclareLaunchArgument("rviz", default_value="true"),
         OpaqueFunction(function=_nodes)])

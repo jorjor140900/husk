@@ -216,6 +216,39 @@ class VisionGoalCallbackTests(unittest.TestCase):
         self.assertEqual(status['lidar_source_stamp_ns'],10*10**9)
         self.assertGreater(status['linear_x'],0.)
 
+    def test_image_only_plans_direct_goal_without_route_or_lidar_and_ignores_scan_callbacks(self):
+        n=self.node;n.local_fusion=False;n.image_only=True;n.guidance_mode='image_only'
+        n.supervised_trial=True;n.route=None;n.reference=None;n.start_x=1.;n.config=VisionReferenceConfig()
+        n.pending=(10*10**9,np.ones((480,640),np.uint8),time.monotonic())
+        n.live_local_scan=mock.Mock(side_effect=AssertionError('image_only must not request LiDAR'))
+        n.local_command_reason=mock.Mock(side_effect=AssertionError('image_only must not check a scan sweep'))
+        with mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*_:np.ones(len(p),np.uint8)):
+            n.retry()
+        self.assertIsNotNone(n.reference)
+        reference=n.reference
+        n.new_route(NS(poses=[]));n.laser_scan(object())
+        self.assertIs(n.reference,reference)
+        n.tick();status=json.loads(n.status_pub.publish.call_args.args[0].data)
+        self.assertTrue(status['valid']);self.assertGreater(status['linear_x'],0.)
+        self.assertEqual(status['guidance_mode'],'image_only')
+        self.assertEqual(status['map_use'],'goal_position_only')
+        self.assertFalse(status['lidar_obstacle_checks_enabled'])
+        self.assertFalse(status['lidar_stop_sweep_required'])
+        n.live_local_scan.assert_not_called();n.local_command_reason.assert_not_called()
+
+    def test_image_only_still_stops_for_image_veto_and_old_reference(self):
+        n=self.node;n.local_fusion=False;n.image_only=True;n.supervised_trial=True
+        n.route=None;n.start_x=1.;n.config=VisionReferenceConfig()
+        n.pending=(10*10**9,np.ones((480,640),np.uint8),time.monotonic())
+        with mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*_:np.zeros(len(p),np.uint8)):
+            n.retry()
+        self.assertIsNone(n.reference);self.assertEqual(n.reason,'start_blocked_narrow_or_unobserved')
+        n.tick();self.assertEqual(n.command_pub.publish.call_args.args[0].twist.linear.x,0.)
+        n.reference=np.column_stack([np.linspace(1,3,41),np.zeros(41)])
+        n.source_ns=self.now-600_000_000
+        n.tick();self.assertEqual(n.command_pub.publish.call_args.args[0].twist.linear.x,0.)
+        self.assertEqual(json.loads(n.status_pub.publish.call_args.args[0].data)['reason'],'image_reference_stale')
+
     def test_new_near_obstacle_stops_an_existing_local_reference_immediately(self):
         n=self.prepare_local();n.reference=np.column_stack([np.linspace(1,3,41),np.zeros(41)])
         n.tick();self.assertGreater(n.command_pub.publish.call_args.args[0].twist.linear.x,0.)

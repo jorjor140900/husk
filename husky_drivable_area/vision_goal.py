@@ -14,6 +14,15 @@ from .control import validate_path
 from .ground_geometry import ground_to_image
 
 
+def validate_guidance_mode(mode,vision=True,supervised_trial=False):
+    if mode not in ("global_route","local_fusion","image_only"):
+        raise ValueError("guidance_mode must be global_route, local_fusion or image_only")
+    if mode in ("local_fusion","image_only") and not vision:
+        raise ValueError(mode+" requires vision steering")
+    if mode=="image_only" and supervised_trial is not True:
+        raise ValueError("image_only requires explicit supervised_trial")
+
+
 @dataclass(frozen=True)
 class VisionReferenceConfig:
     half_width_m: float = .33

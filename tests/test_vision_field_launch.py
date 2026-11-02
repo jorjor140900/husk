@@ -84,3 +84,10 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(self.module._nodes(self.context)[3].arguments['guidance_mode'],'local_fusion')
         self.context['assume_near_field_clear']='true'
         self.assertEqual(self.module._nodes(self.context)[3].arguments['assume_near_field_clear'],'true')
+
+    def test_image_only_and_supervision_reach_navigation(self):
+        self.context.update(guidance_mode='image_only',supervised_trial='true')
+        arguments=self.module._nodes(self.context)[3].arguments
+        self.assertEqual(arguments['guidance_mode'],'image_only')
+        self.assertEqual(arguments['supervised_trial'],'true')
+        self.assertEqual(arguments['assume_near_field_clear'],'false')
