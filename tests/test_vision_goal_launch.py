@@ -47,7 +47,7 @@ class VisionLaunchTests(unittest.TestCase):
                                     independent_permission_gate_checked=False))
         (root/"robot.json").write_text(json.dumps(self.profile))
         self.context=dict(profile=str(root/"robot.json"),map=str(root/"map.yaml"),allow_motion="false",supervised_trial="false",
-            steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw",guidance_mode="global_route",assume_near_field_clear="false")
+            steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw",guidance_mode="global_route",waypoint_mode="false",assume_near_field_clear="false")
 
     def nodes(self):
         nodes=self.module._nodes(self.context)
@@ -210,6 +210,14 @@ class VisionLaunchTests(unittest.TestCase):
         for name in ('vision_goal_controller','laser_safety'):
             self.assertTrue(nodes[name].parameters[-1]['trial_turning_session'])
             self.assertTrue(nodes[name].parameters[-1]['trial_extended_session'])
+
+    def test_waypoint_mode_routes_clicks_through_queue_instead_of_replacing_goal(self):
+        self.context.update(guidance_mode='local_fusion',waypoint_mode='true')
+        nodes=self.nodes()
+        self.assertIn('waypoint_queue',nodes)
+        self.assertIn(('/goal_pose','/husky_nav/waypoint_goal'),nodes['goal_dispatch'].remappings)
+        self.context['guidance_mode']='global_route'
+        with self.assertRaisesRegex(ValueError,'waypoint_mode'):self.nodes()
 
 
 

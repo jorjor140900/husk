@@ -87,6 +87,19 @@ class NavigationGateTests(unittest.TestCase):
         self.assertTrue(status["downstream_collision_filter_required"])
         self.assertFalse(status["ready_for_autonomous_control"])
 
+    def test_waypoint_transition_forces_zero_without_latching_a_navigation_fault(self):
+        self.node.waypoint_mode=True
+        for reason,pending in [('goal_reached',False),('waiting_for_capture_tf',True)]:
+            self.node.vision=(dict(valid=False,reason=reason,waypoint_transition_pending=pending),100.)
+            status=self.tick()
+            self.assertTrue(status['request_allowed'])
+            self.assertEqual(status['reason'],'waypoint_transition_zero')
+            self.assertEqual(status['linear_x'],0.)
+        self.node.vision=(dict(valid=False,reason='image_reference_stale'),100.)
+        self.assertFalse(self.tick()['request_allowed'])
+        self.node.vision=(dict(valid=False,reason='goal_reached'),99.)
+        self.assertFalse(self.tick()['request_allowed'])
+
     def test_extended_gate_ceiling_is_explicit_and_never_admits_overspeed(self):
         self.twist.linear.x=.15
         self.assertEqual(self.tick()['reason'],'invalid_nav2_command')

@@ -22,6 +22,8 @@ class NavigationGate(Node):
     def __init__(self, **kwargs):
         super().__init__("navigation_gate", **kwargs)
         self.declare_parameter("allow_motion", False)
+        self.declare_parameter('waypoint_mode',False)
+        self.waypoint_mode=self.get_parameter('waypoint_mode').value
         self.declare_parameter("supervised_trial", False)
         self.supervised_trial=self.get_parameter("supervised_trial").value
         self.declare_parameter("trial_extended_session",False)
@@ -84,9 +86,12 @@ class NavigationGate(Node):
             return "disabled", None
         if not self.permission[0] or now-self.permission[1] > .3:
             return "permission_missing_or_stale", None
-        if self.vision is None or self.vision[0].get("valid") is not True:
+        holding=(getattr(self,'waypoint_mode',False) and self.vision is not None and
+            0<=now-self.vision[1]<=.2 and (self.vision[0].get('reason')=='goal_reached' or
+            self.vision[0].get('waypoint_transition_pending') is True))
+        if not holding and (self.vision is None or self.vision[0].get("valid") is not True):
             return "vision_invalid", None
-        if not fresh_stamp(self.vision[0].get("source_stamp_ns",0),self.vision[1],ros_ns,now,.5):
+        if not holding and not fresh_stamp(self.vision[0].get("source_stamp_ns",0),self.vision[1],ros_ns,now,.5):
             return "vision_stale", None
         if self.odom is None:
             return "no_odometry", None
@@ -100,6 +105,7 @@ class NavigationGate(Node):
                 return "localization_stale", None
         except TransformException:
             return "localization_unavailable", None
+        if holding:return 'waypoint_transition_zero',Twist()
         if self.command is None:
             return "no_nav2_command", None
         command, received = self.command

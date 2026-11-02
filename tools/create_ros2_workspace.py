@@ -29,6 +29,7 @@ def ros_files():
     files["docs/ros2-local-fusion.md"] = ROOT / "docs/ros2-local-fusion.md"
     files["docs/ros2-image-only.md"] = ROOT / "docs/ros2-image-only.md"
     files["docs/ros2-junction-turn.md"] = ROOT / "docs/ros2-junction-turn.md"
+    files["docs/ros2-waypoints.md"] = ROOT / "docs/ros2-waypoints.md"
     files.update({f"{PACKAGE}/{path.name}": path for path in (ROOT / SOURCE_PACKAGE).glob("*.py")
                   if path.name != "__init__.py"})
     files.update({str(path.relative_to(ROOT)): path for directory, pattern in (

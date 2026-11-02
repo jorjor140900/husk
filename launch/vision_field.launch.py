@@ -33,6 +33,7 @@ def _nodes(context):
     mount = CameraMount.load(expanded_path(camera["mount_path"]))
     common = dict(profile=str(profile_file), map=value("map"), steering_mode="vision",
                   guidance_mode=value("guidance_mode"),
+                  waypoint_mode=value('waypoint_mode'),
                   assume_near_field_clear=value("assume_near_field_clear"),
                   supervised_trial=value("supervised_trial"),
                   allow_motion=value("allow_motion"), rviz=value("rviz"), image_topic="/camera/image_raw")
@@ -63,6 +64,7 @@ def generate_launch_description():
         DeclareLaunchArgument("camera_only", default_value="false", description="Image-only yellow/red preview without robot, map or controller"),
         DeclareLaunchArgument("camera_device", default_value="/dev/v4l/by-id/usb-Generic_Web_Camera_200901010001-video-index0"),
         DeclareLaunchArgument("allow_motion", default_value="false"),
+        DeclareLaunchArgument('waypoint_mode',default_value='false'),
         DeclareLaunchArgument("supervised_trial", default_value="false"),
         DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route, local_fusion, or supervised image_only"),
         DeclareLaunchArgument("assume_near_field_clear",default_value="false",description="Supervised local_fusion only; bounded near-field operator assumption"),

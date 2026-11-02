@@ -9,7 +9,7 @@ if os.environ.get('HUSKY_ISOLATED_TEST')!='1' or set(p.name for p in Path('/sys/
     raise SystemExit('Run only with HUSKY_ISOLATED_TEST=1 in a network-isolated ROS container.')
 
 from collections import deque
-import json,math,time
+import json,math,time,subprocess,sys
 from types import SimpleNamespace as NS
 import cv2
 import numpy as np
@@ -21,7 +21,7 @@ from rclpy.qos import QoSProfile,ReliabilityPolicy,DurabilityPolicy
 from geometry_msgs.msg import PoseStamped,TransformStamped,Twist,TwistStamped
 from nav_msgs.msg import Odometry,Path as RosPath,OccupancyGrid
 from sensor_msgs.msg import Image,LaserScan,CompressedImage
-from std_msgs.msg import Header,String
+from std_msgs.msg import Header,String,Bool
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster,StaticTransformBroadcaster
 from husky_vision.vision_goal_node import VisionGoalNode
@@ -45,27 +45,47 @@ def room_scan(pose,circles):
         angle_max=-math.pi+(count-1)*2*math.pi/count,range_min=.1,range_max=50.,scan_time=0.,time_increment=0.)
 
 image_only=os.environ.get('HUSKY_TEST_IMAGE_ONLY')=='1'
-junction=os.environ.get('HUSKY_TEST_JUNCTION')=='1'
+queue_mode=os.environ.get('HUSKY_TEST_WAYPOINTS')=='1'
+junction=os.environ.get('HUSKY_TEST_JUNCTION')=='1' or queue_mode
 assume_near=os.environ.get('HUSKY_TEST_NEAR_ASSUMPTION')=='1'
 assert not (image_only and assume_near),'Test modes must be selected separately'
 sensor_min=.4 if assume_near or image_only else .1
-out=Path('/results/local-fusion-validation')/('native-junction' if junction else 'native-image-only' if image_only else 'native-near-assumption' if assume_near else 'native')
+out=Path('/results/local-fusion-validation')/('native-waypoints' if queue_mode else 'native-junction' if junction else 'native-image-only' if image_only else 'native-near-assumption' if assume_near else 'native')
 out.mkdir(exist_ok=True)
 camera=dict(image_width=640,image_height=480,distortion_model='plumb_bob',
     camera_matrix=dict(data=[500.,0.,319.5,0.,500.,239.5,0.,0.,1.]),distortion_coefficients=dict(data=[0.]*5))
 mount=dict(height_m=.99,pitch_down_deg=20.,roll_deg=0.,yaw_deg=0.,camera_x_m=-.26,camera_y_m=.21,
     ground_frame='vision_ground',camera_frame='camera_optical_frame')
 (out/'camera.yaml').write_text(yaml.safe_dump(camera));(out/'mount.json').write_text(json.dumps(mount))
-rclpy.init(args=['--ros-args','-p','camera_calibration:='+str(out/'camera.yaml'),'-p','camera_mount:='+str(out/'mount.json'),
+ros_args=['--ros-args','-p','camera_calibration:='+str(out/'camera.yaml'),'-p','camera_mount:='+str(out/'mount.json'),
     '-p','guidance_mode:='+('image_only' if image_only else 'local_fusion'),'-p','guide_only:=true','-p','local_guidance:=true',
     '-p','supervised_trial:=true','-p','trial_goal_session:=true','-p','trial_extended_session:=true',
-    '-p','trial_extended_duration_sec:=900.0','-p','allow_motion:=false',
+    '-p','trial_extended_duration_sec:=900.0','-p','allow_motion:='+str(queue_mode).lower(),
     '-p','trial_turning_session:='+str(junction).lower(),
     '-p','lidar_min_range_m:='+str(sensor_min),
-    '-p','assume_near_field_clear:='+str(assume_near).lower()])
-vision=VisionGoalNode();dispatch=GoalDispatch();gate=NavigationGate();fixture=Node('isolated_local_fusion_fixture')
+    '-p','assume_near_field_clear:='+str(assume_near).lower(),'-p','waypoint_mode:='+str(queue_mode).lower()]+([
+    '-r','goal_dispatch:/goal_pose:=/husky_nav/waypoint_goal',
+    '-r','navigation_gate:/husky_nav/nav2_cmd_vel:=/husky_nav/vision_cmd_vel',
+    '-r','navigation_gate:/husky_nav/vision_status:=/husky_nav/vision_control_status',
+    '-r','laser_safety:/husky_control/odom:=/husky_link/odom',
+    '-r','laser_safety:/husky_control/control/requested_cmd_vel:=/husky_nav/guarded_request'] if queue_mode else [])
+rclpy.init(args=ros_args)
+vision_script='from husky_vision.vision_goal_node import main\nfrom rclpy.executors import ExternalShutdownException\ntry: main()\nexcept ExternalShutdownException: pass'
+vision_process=subprocess.Popen([sys.executable,'-c',vision_script]+ros_args) if queue_mode else None
+vision=None if queue_mode else VisionGoalNode()
+dispatch=GoalDispatch();gate=NavigationGate();fixture=Node('isolated_local_fusion_fixture')
 executor=SingleThreadedExecutor()
-for node in (vision,dispatch,gate,fixture):executor.add_node(node)
+for node in (vision,dispatch,gate,fixture):
+    if node is not None:executor.add_node(node)
+queue_node=None
+safety_node=None
+if queue_mode:
+    from husky_vision.waypoint_node import WaypointNode
+    from husky_vision.safety_node import LaserSafetyNode
+    queue_node=WaypointNode();executor.add_node(queue_node)
+    safety_node=LaserSafetyNode(namespace='husky_control');executor.add_node(safety_node)
+    gate.enabled=True
+permission_pub=fixture.create_publisher(Bool,'/husky_control/motion_permitted',1)
 sensor=QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT)
 latched=QoSProfile(depth=1,reliability=ReliabilityPolicy.RELIABLE,durability=DurabilityPolicy.TRANSIENT_LOCAL)
 image_pub=fixture.create_publisher(Image,'/camera/image_raw',sensor)
@@ -105,6 +125,7 @@ previous=time.monotonic();last_empty=0.
 def publish():
     global previous,last_empty
     now=time.monotonic();dt=min(now-previous,.15);previous=now
+    if queue_mode:permission_pub.publish(Bool(data=True))
     if state['simulate']:
         state['x']+=state['v']*math.cos(state['yaw'])*dt;state['y']+=state['v']*math.sin(state['yaw'])*dt;state['yaw']+=state['w']*dt
     stamp=fixture.get_clock().now().to_msg();yaw=state['yaw'];co,si=math.cos(yaw),math.sin(yaw)
@@ -128,6 +149,9 @@ def publish():
         world_x=state['x']+co*hit[:,0]-si*hit[:,1]
         lane=((np.abs(world_y)<.9)&(world_x<2.9))|((np.abs(world_x-2)<.9)&(world_y>-.9))
         mask=(valid&lane).reshape(480,640).astype(np.uint8)*255
+    if queue_mode:
+        lane=((np.abs(world_y)<.9)&(world_x<3.9))|((np.abs(world_x-3)<.9)&(world_y>-.9)&(world_y<3.9))|((np.abs(world_y-3)<.9)&(world_x<3.9))
+        mask=(valid&lane).reshape(480,640).astype(np.uint8)*255
     if state['blocked']:mask[:]=0
     frame=np.full((480,640,3),55,np.uint8);frame[mask>0]=145
     header=Header(frame_id=m.camera_frame,stamp=stamp);image_pub.publish(fill_image(Image(),frame,header))
@@ -148,6 +172,33 @@ def goal(x,y=0.):
     message.pose.position.x=x;message.pose.position.y=y;message.pose.orientation.w=1.;goal_pub.publish(message)
 def stopped():return len(commands)>=4 and all(v==0 and w==0 for v,w in commands[-4:])
 try:
+    if queue_mode:
+        spin(1.5)
+        route=[(1.2,0.),(3.,1.5),(1.5,3.),(0.,3.)]
+        for x,y in route:goal(x,y);spin(.15)
+        assert len(queue_node.queue.points)==4 and not any(s['valid'] for s in statuses)
+        client=fixture.create_client(Trigger,'/husky_nav/waypoints/start')
+        assert client.wait_for_service(timeout_sec=1.)
+        future=client.call_async(Trigger.Request());wait_until=time.monotonic()+3.
+        while not future.done() and time.monotonic()<wait_until:executor.spin_once(timeout_sec=.01)
+        assert future.done() and future.result().success,(future.done(),future.result() if future.done() else None,queue_node.reason)
+        state['simulate']=True;deadline=time.monotonic()+120
+        while time.monotonic()<deadline:
+            executor.spin_once(timeout_sec=.005)
+            if safety_node.trial.fault:
+                raise AssertionError((safety_node.trial.fault,safety_node.trial_fault_context,state,statuses[-2:]))
+            if queue_node.reason=='queue_completed':break
+        assert queue_node.reason=='queue_completed',(state,queue_node.reason,queue_node.queue.index,statuses[-2:])
+        error=math.hypot(state['x'],state['y']-3.)
+        assert error<=.15 and fixture.count_publishers('/cmd_vel')==0
+        assert not safety_node.trial.fault,safety_node.trial.fault
+        assert any(v>0 for v,w in guarded)
+        report=dict(result='passed',native_ros2=True,synthetic=True,physical_robot=False,
+            route_xy_m=route,completed_waypoints=queue_node.queue.index,error_m=error,
+            centre_grass_non_drivable=True,no_global_cmd_vel=True,active_navigation_and_trial_gates=True,
+            no_latched_fault_at_waypoint_transitions=True)
+        (out/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
+        raise SystemExit(0)
     if junction:
         assert image_only
         spin(1.5);state['simulate']=True;goal(2.,3.)
@@ -223,5 +274,9 @@ try:
     (out/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
 finally:
     executor.shutdown()
-    for node in (vision,dispatch,gate,fixture):node.destroy_node()
+    if queue_node is not None:queue_node.destroy_node()
+    if safety_node is not None:safety_node.destroy_node()
+    for node in (vision,dispatch,gate,fixture):
+        if node is not None:node.destroy_node()
+    if vision_process is not None:vision_process.terminate();vision_process.wait(timeout=5.)
     rclpy.try_shutdown()

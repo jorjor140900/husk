@@ -41,6 +41,8 @@ def _nodes(context):
     local=guidance=="local_fusion"
     image_only=guidance=="image_only"
     direct_goal=local or image_only
+    waypoint_mode=LaunchConfiguration('waypoint_mode').perform(context).lower()=='true'
+    if waypoint_mode and not direct_goal:raise ValueError('waypoint_mode requires image_only or local_fusion')
     if not image_only:
         # Modes that use the costmap layers must have the plugin installed.
         get_package_share_directory("husky_vision_nav2")
@@ -91,6 +93,11 @@ def _nodes(context):
                 "Name":"Local AI + live LiDAR","Enabled":True,"Alpha":.45,"Color Scheme":"map",
                 "Topic":{"Value":"/husky_nav/local_fusion_grid","Reliability Policy":"Reliable",
                          "Durability Policy":"Volatile","History Policy":"Keep Last","Depth":1}})
+        if waypoint_mode:
+            view['Visualization Manager']['Displays'].append({'Class':'rviz_default_plugins/Path',
+                'Name':'Waypoint queue (guide)','Enabled':True,'Line Style':'Lines','Line Width':.03,
+                'Color':'0; 180; 255','Topic':{'Value':'/husky_nav/waypoints','Reliability Policy':'Reliable',
+                    'Durability Policy':'Transient Local','History Policy':'Keep Last','Depth':1}})
         with tempfile.NamedTemporaryFile("w",prefix="husky-vision-rviz-",suffix=".rviz",delete=False) as target:
             yaml.safe_dump(view,target);rviz_file=target.name
     parent = LaunchConfiguration("ground_parent_frame").perform(context)
@@ -108,10 +115,11 @@ def _nodes(context):
         Node(package="husky_drivable_area",executable="field_permission",namespace="husky_control",output="screen",
              parameters=[{"external_topic":robot["external_permission_topic"]}]),
         Node(package="husky_drivable_area",executable="navigation_gate",output="screen",
-             parameters=[{"allow_motion":allow,"base_frame":base,"odom_frame":odom,**trial_parameters}],
+             parameters=[{"allow_motion":allow,"base_frame":base,"odom_frame":odom,'waypoint_mode':waypoint_mode,**trial_parameters}],
              remappings=[("/husky_nav/nav2_cmd_vel","/husky_nav/vision_cmd_vel"),
                          ("/husky_nav/vision_status","/husky_nav/vision_control_status")] if vision else []),
         Node(package="husky_drivable_area",executable="goal_dispatch",output="screen",
+             remappings=[('/goal_pose','/husky_nav/waypoint_goal')] if waypoint_mode else [],
              parameters=[{"allow_motion":allow,"guide_only":vision,"local_guidance":direct_goal}]),
         Node(package="husky_drivable_area",executable="laser_safety",namespace="husky_control",output="screen",
              parameters=[str(share/"config/laser_safety.yaml"),profile["footprint"],
@@ -121,6 +129,8 @@ def _nodes(context):
                          ("control/cmd_vel","/husky_nav/filtered_cmd_vel"),
                          ("control/cmd_vel_stamped","/husky_nav/filtered_cmd_vel_stamped")]),
     ]
+    if waypoint_mode:
+        nodes.append(Node(package='husky_drivable_area',executable='waypoint_queue',output='screen'))
     if not image_only:
         nodes.append(Node(package="husky_drivable_area",executable="vision_grid",output="screen",parameters=[{
             "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],"odom_frame":odom}]))
@@ -175,6 +185,7 @@ def generate_launch_description():
         DeclareLaunchArgument("profile",description="Measured robot/robot.json"),
         DeclareLaunchArgument("map",description="Previously saved map YAML"),
         DeclareLaunchArgument("allow_motion",default_value="false"),
+        DeclareLaunchArgument('waypoint_mode',default_value='false',description='RViz goals append to queue; explicit waypoints/start dispatches in order'),
         DeclareLaunchArgument("supervised_trial",default_value="false"),
         DeclareLaunchArgument("steering_mode",default_value="nav2",description="vision = image/AI steering, map goal guidance only"),
         DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route, local_fusion, or supervised image_only without LiDAR obstacle stops"),

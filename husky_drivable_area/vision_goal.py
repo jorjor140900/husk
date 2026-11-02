@@ -164,6 +164,9 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
                 continue
             normals=np.column_stack([-dy,np.ones(len(x))])/np.sqrt(1+dy*dy)[:,None]
             points=np.column_stack([x,y])
+            goal_error=float(np.linalg.norm(points[-1]-target))
+            if goal_priority and best is not None and goal_error>best[0][0]+1e-12:
+                continue
             strip=points[:,None,:]+normals[:,None,:]*offsets[None,:,None]
             if not strip_observed(strip.reshape(-1,2)):
                 continue
@@ -207,6 +210,8 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
                     if length<config.min_length_m:continue
                     a=np.linspace(begin,angle,int(math.ceil(length/config.step_m))+1)
                     points=np.column_stack([radius*np.sin(a),sign*radius*(1-np.cos(a))])
+                    goal_error=float(np.linalg.norm(points[-1]-target))
+                    if best is not None and goal_error>best[0][0]+1e-12:continue
                     normals=np.column_stack([-sign*np.sin(a),np.cos(a)])
                     if not strip_observed((points[:,None,:]+normals[:,None,:]*offsets[None,:,None]).reshape(-1,2)):
                         continue

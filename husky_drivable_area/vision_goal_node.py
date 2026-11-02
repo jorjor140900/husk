@@ -129,6 +129,7 @@ class VisionGoalNode(Node):
             self.overlay(ns,labels,[],reason)
 
     def new_goal(self,message):
+        self.goal_received=time.monotonic()
         self.goal=None;self.route=None;self.pending=None
         self.completed=False
         self.clear("waiting_for_local_evidence" if self.direct_goal else "waiting_for_goal_guide")
@@ -394,7 +395,7 @@ class VisionGoalNode(Node):
         if self.goal is None:
             return Demand(reason="waiting_for_goal")
         if self.completed:
-            return Demand(reason="goal_reached")
+            return Demand(reason="goal_reached",remaining_m=getattr(self,'completed_distance',None))
         if self.pose is None or not fresh_stamp(self.pose[1],self.pose[2],ns,now,.3):
             return Demand(reason="odometry_invalid_or_stale")
         try:
@@ -412,6 +413,8 @@ class VisionGoalNode(Node):
             return Demand(reason="image_reference_stale")
         demand=pursuit(self.reference,self.pose[0],self.controller)
         if demand.reason!="tracking":
+            if demand.reason=='goal_reached':
+                return Demand(reason='reference_end_before_goal',remaining_m=distance)
             return demand
         delta=goal-self.pose[0][:2];yaw=self.pose[0][2]
         if not getattr(self,"image_only",False) and float(delta@[math.cos(yaw),math.sin(yaw)])<=0:
@@ -456,6 +459,10 @@ class VisionGoalNode(Node):
                 demand=Demand(reason=reason);v=w=0.;self.limiter.reset()
         self.publish_command(v,w)
         self.status_pub.publish(String(data=json.dumps(dict(valid=demand.reason=="tracking",reason=demand.reason,
+            goal_stamp_ns=stamp_ns(self.goal.header.stamp) if self.goal is not None else None,
+            waypoint_transition_pending=self.reference is None and self.goal is not None and
+                self.reason in ('waiting_for_local_evidence','waiting_for_capture_tf') and
+                0<=now-getattr(self,'goal_received',float('-inf'))<=.5,
             reference_reason=self.reason,source_stamp_ns=self.source_ns,linear_x=v,angular_z=w,
             remaining_to_goal_m=demand.remaining_m,controller_path_topic="/husky_nav/vision_reference",
             near_field_assumption_enabled=getattr(self,"assume_near_field_clear",False),
@@ -466,6 +473,7 @@ class VisionGoalNode(Node):
         if demand.reason=="image_reference_stale" and self.reference is not None:
             self.clear(demand.reason)
         if demand.reason=="goal_reached" and not self.completed:
+            self.completed_distance=demand.remaining_m
             self.completed=True;self.pending=None;self.clear("goal_reached")
 
 
