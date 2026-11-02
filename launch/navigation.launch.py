@@ -40,6 +40,10 @@ def _nodes(context):
     validate_guidance_mode(guidance,vision,trial)
     local=guidance=="local_fusion"
     image_only=guidance=="image_only"
+    hold_arg=LaunchConfiguration("reference_hold_sec").perform(context)
+    reference_hold=2. if hold_arg=="auto" and image_only else .5 if hold_arg=="auto" else float(hold_arg)
+    if not .5<=reference_hold<=2. or reference_hold>.5 and not (image_only and trial):
+        raise ValueError("extended reference hold requires supervised image_only; maximum 2 seconds")
     direct_goal=local or image_only
     waypoint_mode=LaunchConfiguration('waypoint_mode').perform(context).lower()=='true'
     if waypoint_mode and not direct_goal:raise ValueError('waypoint_mode requires image_only or local_fusion')
@@ -115,7 +119,7 @@ def _nodes(context):
         Node(package="husky_drivable_area",executable="field_permission",namespace="husky_control",output="screen",
              parameters=[{"external_topic":robot["external_permission_topic"]}]),
         Node(package="husky_drivable_area",executable="navigation_gate",output="screen",
-             parameters=[{"allow_motion":allow,"base_frame":base,"odom_frame":odom,'waypoint_mode':waypoint_mode,**trial_parameters}],
+             parameters=[{"allow_motion":allow,"base_frame":base,"odom_frame":odom,"reference_hold_sec":reference_hold,'waypoint_mode':waypoint_mode,**trial_parameters}],
              remappings=[("/husky_nav/nav2_cmd_vel","/husky_nav/vision_cmd_vel"),
                          ("/husky_nav/vision_status","/husky_nav/vision_control_status")] if vision else []),
         Node(package="husky_drivable_area",executable="goal_dispatch",output="screen",
@@ -139,7 +143,7 @@ def _nodes(context):
         nodes.append(Node(package="husky_drivable_area",executable="vision_goal_controller",output="screen",parameters=[{
             "camera_calibration":camera["calibration_path"],"camera_mount":camera["mount_path"],
             "base_frame":base,"odom_frame":odom,"half_width_m":profile["footprint"]["half_width_m"],
-            "guidance_mode":guidance,"front_m":profile["footprint"]["front_m"],
+            "guidance_mode":guidance,"reference_hold_sec":reference_hold,"front_m":profile["footprint"]["front_m"],
             "assume_near_field_clear":assume_near,
             "rear_m":profile["footprint"]["rear_m"],"margin_m":profile["footprint"]["margin_m"],
             # VLP16 point-source min_range=0.4 was read from this robot. Its
@@ -191,6 +195,7 @@ def generate_launch_description():
         DeclareLaunchArgument("steering_mode",default_value="nav2",description="vision = image/AI steering, map goal guidance only"),
         DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route, local_fusion, or supervised image_only without LiDAR obstacle stops"),
         DeclareLaunchArgument("assume_near_field_clear",default_value="false",description="Supervised local_fusion only: operator assumes unknown cells near the stationary hull are clear; measured hits still block"),
+        DeclareLaunchArgument("reference_hold_sec",default_value="auto",description="auto: 2s supervised image_only, 0.5s otherwise; original source stamp retained"),
         DeclareLaunchArgument("image_topic",default_value="/camera/image_raw"),
         DeclareLaunchArgument("ground_parent_frame",default_value="base_footprint",description="Real robot TF ground anchor"),
         DeclareLaunchArgument("rviz",default_value="true"),OpaqueFunction(function=_nodes)])

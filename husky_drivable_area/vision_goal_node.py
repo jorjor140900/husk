@@ -39,7 +39,7 @@ class VisionGoalNode(Node):
         defaults=dict(camera_calibration="",camera_mount="",base_frame="base_link",odom_frame="odom",
             image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,
             front_m=.5,rear_m=.56,margin_m=.15,lidar_min_range_m=.4,guidance_mode="global_route",assume_near_field_clear=False,
-            supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,trial_turning_session=False)
+            supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,trial_turning_session=False,reference_hold_sec=.5)
         for key,value in defaults.items():
             self.declare_parameter(key,value)
         value=lambda key:self.get_parameter(key).value
@@ -47,6 +47,9 @@ class VisionGoalNode(Node):
         self.local_fusion=self.guidance_mode=="local_fusion"
         self.image_only=self.guidance_mode=="image_only"
         self.supervised_trial=value("supervised_trial")
+        self.reference_hold_sec=value('reference_hold_sec')
+        if not .5<=self.reference_hold_sec<=2. or self.reference_hold_sec>.5 and not (self.image_only and self.supervised_trial):
+            raise ValueError('extended reference hold requires supervised image_only; maximum 2 seconds')
         validate_guidance_mode(self.guidance_mode,supervised_trial=self.supervised_trial)
         self.assume_near_field_clear=value("assume_near_field_clear")
         validate_near_field_assumption(self.assume_near_field_clear,self.local_fusion,self.supervised_trial)
@@ -111,6 +114,10 @@ class VisionGoalNode(Node):
     @property
     def direct_goal(self):
         return getattr(self,"local_fusion",False) or getattr(self,"image_only",False)
+
+    def reference_fresh(self):
+        return self.reference is not None and fresh_stamp(self.source_ns,self.source_received,
+            self.get_clock().now().nanoseconds,time.monotonic(),getattr(self,'reference_hold_sec',.5))
 
     def tf_matrix(self,target,source,ns):
         tf=self.buffer.lookup_transform(target,source,Time(nanoseconds=ns,clock_type=self.get_clock().clock_type))
@@ -243,11 +250,17 @@ class VisionGoalNode(Node):
         if pending is not None and pending[0]==ns:
             self.overlay_pending=None
             self.overlay(*pending)
-        if ns-self.last_seg_ns>500_000_000 or ns-self.last_overlay_stamp>500_000_000:
+        if (ns-self.last_seg_ns>500_000_000 or ns-self.last_overlay_stamp>500_000_000) and not self.reference_fresh():
             self.overlay(ns,np.full((self.camera.height,self.camera.width),255,np.uint8),[],"waiting for fresh AI")
 
     def segmentation(self,message):
         try:
+            envelope=json.loads(message.data)
+            if isinstance(envelope,dict) and envelope.get('valid') is False and envelope.get('reason') in ('camera_timeout','stale_input','stale_result','stale_segmentation_before_preview'):
+                reason=envelope['reason']
+                if self.reference_fresh():
+                    self.detail.update(holding_reference_reason=reason);return
+                self.pending=None;self.clear(reason);return
             packet,labels=decode_segmentation(message.data)
             source=packet["source_header"];stamp=source["stamp"]
             if (source["frame_id"]!=self.mount.camera_frame or
@@ -276,7 +289,10 @@ class VisionGoalNode(Node):
             return
         ns,labels,received=self.pending
         if not fresh_stamp(ns,received,self.get_clock().now().nanoseconds,time.monotonic(),.5):
-            self.pending=None;self.clear("capture_expired_waiting_for_tf");return
+            self.pending=None
+            if self.reference_fresh():self.detail.update(holding_reference_reason='capture_expired_waiting_for_tf')
+            else:self.clear('capture_expired_waiting_for_tf')
+            return
         if self.completed:
             self.pending=None;self.clear("goal_reached")
             self.overlay(ns,labels,[],self.reason);return
@@ -322,8 +338,7 @@ class VisionGoalNode(Node):
                 target=local_goal_target(goal,allow_side_goal=True)
                 reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config,goal_priority=True)
                 previous=None
-                if self.reference is not None and fresh_stamp(self.source_ns,self.source_received,
-                        self.get_clock().now().nanoseconds,time.monotonic(),.5):
+                if self.reference_fresh():
                     ground_from_odom=np.linalg.inv(odom_from_ground)
                     old=self.reference@ground_from_odom[:2,:2].T+ground_from_odom[:2,3]
                     previous=reusable_reference(old,sample,self.start_x,self.config.half_width_m+self.config.side_margin_m)
@@ -365,10 +380,9 @@ class VisionGoalNode(Node):
             self.overlay(ns,labels,reference,"image reference ready")
         except TransformException as exc:
             # Retry this capture, not a new one. A missing NEXT transform does
-            # not invalidate an existing reference within its original 500 ms
+            # not invalidate an existing reference within its configured bounded
             # source budget; neither its stamp nor receipt time is renewed.
-            if self.reference is None or not fresh_stamp(
-                    self.source_ns,self.source_received,self.get_clock().now().nanoseconds,time.monotonic(),.5):
+            if not self.reference_fresh():
                 self.clear("waiting_for_capture_tf")
             self.detail.update(capture_tf_waiting=True,capture_tf_error=str(exc)[:240])
         except (ValueError,TypeError,KeyError,OverflowError,cv2.error) as exc:
@@ -434,7 +448,7 @@ class VisionGoalNode(Node):
             return Demand(reason="goal_reached",remaining_m=distance)
         if self.reference is None:
             return Demand(reason=self.reason)
-        if not fresh_stamp(self.source_ns,self.source_received,ns,now,.5):
+        if not fresh_stamp(self.source_ns,self.source_received,ns,now,getattr(self,'reference_hold_sec',.5)):
             return Demand(reason="image_reference_stale")
         demand=pursuit(self.reference,self.pose[0],self.controller)
         if demand.reason!="tracking":
@@ -449,6 +463,7 @@ class VisionGoalNode(Node):
             try:local_goal_target(delta@rotation,allow_side_goal=True)
             except ValueError:return Demand(reason="goal_requires_reorientation")
         speed=min(demand.linear,math.sqrt(2*self.controller.max_deceleration_mps2*max(distance-.15,0)))
+        if getattr(self,'reference_hold_sec',.5)>.5 and (ns-self.source_ns)/1e9>.5:speed=min(speed,.05)
         scale=speed/max(demand.linear,1e-9)
         if getattr(self,"local_fusion",False):
             reason=self.local_command_reason(speed,demand.angular*scale)
@@ -478,6 +493,9 @@ class VisionGoalNode(Node):
         except (ValueError,TypeError,OverflowError):
             demand=Demand(reason="invalid_vision_control_inputs")
         v,w=self.limiter.step(demand,dt)
+        held=getattr(self,'reference_hold_sec',.5)>.5 and self.source_ns>0 and (self.get_clock().now().nanoseconds-self.source_ns)/1e9>.5
+        if held and v>.05:
+            w*=.05/v;v=.05;self.limiter.linear=v;self.limiter.angular=w
         if getattr(self,"local_fusion",False) and demand.reason=="tracking":
             reason=self.local_command_reason(v,w)
             if reason:
@@ -490,6 +508,8 @@ class VisionGoalNode(Node):
                 0<=now-getattr(self,'goal_received',float('-inf'))<=.5,
             reference_reason=self.reason,source_stamp_ns=self.source_ns,linear_x=v,angular_z=w,
             remaining_to_goal_m=demand.remaining_m,controller_path_topic="/husky_nav/vision_reference",
+            reference_hold_sec=getattr(self,'reference_hold_sec',.5),reference_age_ms=(self.get_clock().now().nanoseconds-self.source_ns)/1e6 if self.source_ns else None,
+            using_held_reference=held,
             near_field_assumption_enabled=getattr(self,"assume_near_field_clear",False),
             guidance_mode=getattr(self,"guidance_mode","global_route"),
             lidar_obstacle_checks_enabled=getattr(self,"local_fusion",False) or not getattr(self,"supervised_trial",False),

@@ -62,6 +62,7 @@ ros_args=['--ros-args','-p','camera_calibration:='+str(out/'camera.yaml'),'-p','
     '-p','supervised_trial:=true','-p','trial_goal_session:=true','-p','trial_extended_session:=true',
     '-p','trial_extended_duration_sec:=900.0','-p','allow_motion:='+str(queue_mode).lower(),
     '-p','trial_turning_session:='+str(junction).lower(),'-p','pause_on_vision_gap:='+str(queue_mode).lower(),
+    '-p','reference_hold_sec:='+('2.0' if queue_mode else '0.5'),
     '-p','lidar_min_range_m:='+str(sensor_min),
     '-p','assume_near_field_clear:='+str(assume_near).lower(),'-p','waypoint_mode:='+str(queue_mode).lower()]+([
     '-r','goal_dispatch:/goal_pose:=/husky_nav/waypoint_goal',
@@ -187,6 +188,13 @@ try:
         state['simulate']=True;spin(2.)
         assert safety_node.trial.active and not safety_node.trial.fault
         budget_started=safety_node.trial.started
+        state['ai']=False;spin(.9)
+        assert statuses[-1]['valid'] and statuses[-1]['using_held_reference'],statuses[-1]
+        assert 0<statuses[-1]['linear_x']<=.05,statuses[-1]
+        spin(1.3)
+        assert not statuses[-1]['valid'] and not safety_node.trial.fault,statuses[-1]
+        state['ai']=True;spin(1.2)
+        assert safety_node.trial.started==budget_started and not safety_node.trial.fault
         state['blocked']=True;spin(.6)
         assert any(s['reason']=='vision_paused_waiting_for_fresh_reference' and s['linear_x']==0 for s in filter_statuses[-10:])
         assert safety_node.trial.active and not safety_node.trial.fault
@@ -208,6 +216,7 @@ try:
             route_xy_m=route,completed_waypoints=queue_node.queue.index,error_m=error,
             centre_grass_non_drivable=True,no_global_cmd_vel=True,active_navigation_and_trial_gates=True,
             vision_gap_pauses_then_recovers=True,session_budget_not_reset_on_recovery=True,
+            bounded_two_second_hold=True,held_reference_speed_cap_mps=.05,
             no_latched_fault_at_waypoint_transitions=True)
         (out/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
         raise SystemExit(0)

@@ -23,7 +23,9 @@ optical flow ใช้ภาพกว้าง 160 พิกเซลแล้�
 เมื่อเส้นเดิมยังสด ตัวคอนโทรลแปลงเส้นเดิมจาก odom กลับเข้าภาพใหม่
 ตรวจแถบทั้งความกว้างด้วย mask ปัจจุบันก่อน reuse geometry พร้อม hysteresis
 ถ้าค้น candidate ใหม่ไม่สำเร็จแต่เส้นเดิมผ่านการตรวจภาพใหม่ ก็ใช้เส้นที่ตรวจใหม่นี้ได้
-ถ้าไม่มีภาพใหม่/TF ใช้ reference ได้ภายใน deadline เดิม 0.5 s เท่านั้น
+โหมด supervised image_only ใช้ reference ล่าสุดได้ไม่เกิน 2 s จาก source timestamp เดิม
+หลังอายุ 0.5 s จำกัดความเร็วไม่เกิน 0.05 m/s; โหมดอื่นยังใช้ deadline 0.5 s
+กำหนดผ่าน reference_hold_sec:=2.0 ให้ controller และ navigation gate ตรงกัน
 ภาพใหม่ที่มี veto/unknown บนแถบไม่สามารถทำให้ reference เก่าผ่านการ revalidation
 status มี `reference_reused_after_current_mask_check` เพื่อระบุการใช้ geometry เดิม
 
@@ -127,3 +129,11 @@ candidate ยังต้องผ่าน mask และ curvature; ไม่�
 ถ้า vision_control_status ยัง tracking และความเร็วไม่เป็นศูนย์ แต่ฐานหยุด ให้ดู
 `/husky_control/safety/status` และ `/husky_link/status` เพื่อหาเหตุหลังชั้น controller
 เส้นเหลืองกับ private command เพียงอย่างเดียวไม่ยืนยันว่าคำสั่งผ่านถึงฐาน
+
+## แก้ค้างหลังภาพขาดช่วง
+
+กรณี gate เป็น vision_stale แต่ controller ล่าสุดยัง tracking ให้พักแทน latch fault
+known invalid AI packet จาก camera_timeout/stale_input/stale_result ใช้ reference ที่ยังไม่หมดอายุได้
+ไม่มีการต่อ source timestamp; ข้อมูลผิดรูปแบบและ image veto ปัจจุบันยังถอน reference
+เมื่อเกิน 2 s พักศูนย์ รอ reference ใหม่แล้วกลับเดินใน session เดิมโดยไม่ reset งบ
+หลังอัปเดตต้อง restart field launch และ reset trial เพื่อเคลียร์ fault ที่ค้างจากรุ่นก่อน

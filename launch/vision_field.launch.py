@@ -32,7 +32,7 @@ def _nodes(context):
         raise ValueError("camera_device must resolve to the connected /dev/videoN; plug the camera or override camera_device")
     mount = CameraMount.load(expanded_path(camera["mount_path"]))
     common = dict(profile=str(profile_file), map=value("map"), steering_mode="vision",
-                  guidance_mode=value("guidance_mode"),
+                  guidance_mode=value("guidance_mode"), reference_hold_sec=value("reference_hold_sec"),
                   waypoint_mode=value('waypoint_mode'),
                   assume_near_field_clear=value("assume_near_field_clear"),
                   supervised_trial=value("supervised_trial"),
@@ -68,6 +68,7 @@ def generate_launch_description():
         DeclareLaunchArgument("allow_motion", default_value="false"),
         DeclareLaunchArgument('waypoint_mode',default_value='false'),
         DeclareLaunchArgument("supervised_trial", default_value="false"),
+        DeclareLaunchArgument("reference_hold_sec",default_value="auto"),
         DeclareLaunchArgument("guidance_mode",default_value="global_route",description="global_route, local_fusion, or supervised image_only"),
         DeclareLaunchArgument("assume_near_field_clear",default_value="false",description="Supervised local_fusion only; bounded near-field operator assumption"),
         DeclareLaunchArgument("rviz", default_value="true"),

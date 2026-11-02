@@ -17,9 +17,10 @@ def recoverable_vision_gap(enabled,reason,navigation):
     return (enabled is True and reason=='trial_navigation_gate_closed' and
         isinstance(navigation,dict) and navigation.get('enabled') is True and
         navigation.get('allow_motion') is True and navigation.get('reason') in ('vision_invalid','vision_stale') and
+        (navigation.get('reason')=='vision_stale' and navigation.get('vision_reason')=='tracking' or
         navigation.get('vision_reason') in ('start_blocked_narrow_or_unobserved',
             'no_observed_image_corridor','waiting_for_capture_tf','image_reference_stale',
-            'capture_expired_waiting_for_tf','vision_planning_too_old'))
+            'capture_expired_waiting_for_tf','vision_planning_too_old','camera_timeout','stale_input','stale_result')))
 
 
 def selected_limits(goal=False,extended=False,duration=300.,*,turning=False):

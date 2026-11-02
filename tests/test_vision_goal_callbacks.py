@@ -84,6 +84,22 @@ class VisionGoalCallbackTests(unittest.TestCase):
         self.assertEqual(self.node.command_pub.publish.call_args.args[0].twist.linear.x,0.)
         self.assertIsNone(self.node.reference)
 
+    def test_extended_hold_is_slow_bounded_and_never_renews_capture(self):
+        n=self.node;n.reference_hold_sec=2.;source=n.source_ns;received=n.source_received
+        n.controller=ControllerConfig(cruise_speed_mps=.15,max_path_offset_m=1.5)
+        n.limiter=CommandLimiter(n.controller)
+        n.limiter.linear=.15
+        self.now=10_800_000_000;n.pose=(n.pose[0],self.now,time.monotonic())
+        n.segmentation(NS(data=json.dumps(dict(valid=False,reason='camera_timeout'))))
+        n.tick();status=json.loads(n.status_pub.publish.call_args.args[0].data)
+        self.assertTrue(status['valid']);self.assertTrue(status['using_held_reference'])
+        self.assertGreater(status['linear_x'],0.);self.assertLessEqual(status['linear_x'],.05)
+        self.assertEqual((n.source_ns,n.source_received),(source,received))
+        self.now=12_100_000_000;n.pose=(n.pose[0],self.now,time.monotonic())
+        n.tick();status=json.loads(n.status_pub.publish.call_args.args[0].data)
+        self.assertFalse(status['valid']);self.assertEqual(status['linear_x'],0.)
+        self.assertIsNone(n.reference)
+
     def test_cancel_clears_goal_route_reference_and_publishes_zero(self):
         self.node.last_display=(10,np.ones((16,16),np.uint8))
         result=self.node.cancel(None,NS())

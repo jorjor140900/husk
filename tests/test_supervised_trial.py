@@ -8,6 +8,8 @@ class TrialBudgetTests(unittest.TestCase):
         from husky_link_core.supervised_trial import recoverable_vision_gap
         nav=dict(enabled=True,allow_motion=True,reason='vision_invalid',vision_reason='start_blocked_narrow_or_unobserved')
         self.assertTrue(recoverable_vision_gap(True,'trial_navigation_gate_closed',nav))
+        self.assertTrue(recoverable_vision_gap(True,'trial_navigation_gate_closed',
+            dict(nav,reason='vision_stale',vision_reason='tracking')))
         self.assertFalse(recoverable_vision_gap(False,'trial_navigation_gate_closed',nav))
         for reason in ('motion_not_permitted','permission_timeout','trial_time_limit','trial_navigation_gate_stale'):
             self.assertFalse(recoverable_vision_gap(True,reason,nav))

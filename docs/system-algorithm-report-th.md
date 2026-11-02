@@ -756,3 +756,10 @@ trace ผู้ใช้ระยะ 20 s พบว่าตัวกรอง�
 เพิ่ม pause_on_vision_gap เฉพาะ image_only เมื่อ navigation gate ที่เปิดอยู่รายงานภาพ/เส้น/TF รอชั่วคราวตามรายการที่กำหนด ให้ output ศูนย์แต่ไม่ latch trial fault เมื่อ reference สดกลับมาและผ่าน clear hold 0.5 s จึงกลับเดินภายใน permission/session เดิม งบเวลา ระยะ และมุมยังสะสมต่อระหว่างพัก ไม่มีการ re-arm หรือต่อ session อัตโนมัติ การ stop/disable, permission หาย, odometry/การสื่อสารผิดเงื่อนไข และเพดาน trial ยังใช้การหยุดเดิม
 
 ผล native ROS2 จำลองยืนยันการพักจากภาพที่ไม่รองรับทาง ส่งศูนย์ในช่วงนั้น แล้วกลับส่งคำสั่งเมื่อ reference ใช้ได้ โดยเวลาเริ่ม budget เดิมไม่เปลี่ยนและคิว U ถึงครบ 4 จุด เป็นผลจำลอง ไม่มี publisher ถึง /cmd_vel ของหุ่นจริง ดู [สรุปเหตุจาก trace](report-assets/vision-pause-root-cause.json) และ [ผล native](report-assets/native-waypoint-result.json)
+
+
+## ภาคผนวก ญ: ช่วงถือเส้นอ้างอิงแบบจำกัดเวลา
+
+ปรับ supervised image_only ให้ controller และ navigation gate ยอมรับเส้นล่าสุดไม่เกิน 2 วินาทีจาก source timestamp เดิม หลังอายุ 0.5 วินาทีจำกัดความเร็ว 0.05 m/s ส่วนภาพใหม่ที่จะนำมาสร้างเส้นยังต้องสดไม่เกิน 0.5 วินาที ไม่เปลี่ยน watchdog คำสั่งหรือ permission หากหมดอายุให้พักรอเส้นใหม่แล้วกลับเดินใน session เดิม โดยไม่ต่อเวลา session หรือ reset งบ ข้อมูลผิดรูปแบบและหลักฐานภาพปัจจุบันที่ห้ามผ่านยังหยุดได้
+
+แก้กรณี navigation gate รายงาน vision_stale ขณะที่ controller ล่าสุด tracking ซึ่งเดิมทำให้ latch fault และแยก known timeout/stale AI packet ออกจาก malformed packet ชุด unit tests ผ่าน 450 กรณี การทดสอบ native ROS2 รอบใหม่นี้หยุดตามคำขอผู้ใช้ก่อนสรุปผล จึงยังไม่ยืนยันผล native หรือหุ่นจริงของการเปลี่ยนแปลงรอบนี้

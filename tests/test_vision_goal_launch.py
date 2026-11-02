@@ -47,7 +47,7 @@ class VisionLaunchTests(unittest.TestCase):
                                     independent_permission_gate_checked=False))
         (root/"robot.json").write_text(json.dumps(self.profile))
         self.context=dict(profile=str(root/"robot.json"),map=str(root/"map.yaml"),allow_motion="false",supervised_trial="false",
-            steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw",guidance_mode="global_route",waypoint_mode="false",assume_near_field_clear="false")
+            steering_mode="vision",ground_parent_frame="base_footprint",rviz="false",image_topic="/camera/image_raw",reference_hold_sec="auto",guidance_mode="global_route",waypoint_mode="false",assume_near_field_clear="false")
 
     def nodes(self):
         nodes=self.module._nodes(self.context)

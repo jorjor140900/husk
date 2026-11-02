@@ -119,6 +119,13 @@ class NavigationGateTests(unittest.TestCase):
         self.assertEqual(self.tick()["reason"],"nav2_command_stale")
         self.assertEqual(self.node.output.publish.call_args.args[0].linear.x,0)
 
+    def test_configured_hold_accepts_one_second_but_never_three(self):
+        self.node.reference_hold_sec=2.
+        self.node.vision[0]['source_stamp_ns']=9*10**9
+        self.assertTrue(self.tick()['request_allowed'])
+        self.node.vision[0]['source_stamp_ns']=7*10**9
+        self.assertEqual(self.tick()['reason'],'vision_stale')
+
     def test_missing_localization_and_reverse_or_excessive_speed_are_blocked(self):
         self.node.buffer.lookup_transform.side_effect = RuntimeError()
         self.assertEqual(self.tick()["reason"],"localization_unavailable")

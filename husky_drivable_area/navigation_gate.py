@@ -24,6 +24,9 @@ class NavigationGate(Node):
         self.declare_parameter("allow_motion", False)
         self.declare_parameter('waypoint_mode',False)
         self.waypoint_mode=self.get_parameter('waypoint_mode').value
+        self.declare_parameter('reference_hold_sec',.5)
+        self.reference_hold_sec=self.get_parameter('reference_hold_sec').value
+        if not .5<=self.reference_hold_sec<=2.:raise ValueError('reference_hold_sec must be within 0.5..2 seconds')
         self.declare_parameter("supervised_trial", False)
         self.supervised_trial=self.get_parameter("supervised_trial").value
         self.declare_parameter("trial_extended_session",False)
@@ -91,7 +94,7 @@ class NavigationGate(Node):
             self.vision[0].get('waypoint_transition_pending') is True))
         if not holding and (self.vision is None or self.vision[0].get("valid") is not True):
             return "vision_invalid", None
-        if not holding and not fresh_stamp(self.vision[0].get("source_stamp_ns",0),self.vision[1],ros_ns,now,.5):
+        if not holding and not fresh_stamp(self.vision[0].get("source_stamp_ns",0),self.vision[1],ros_ns,now,getattr(self,'reference_hold_sec',.5)):
             return "vision_stale", None
         if self.odom is None:
             return "no_odometry", None
