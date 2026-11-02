@@ -12,6 +12,16 @@ LONG_GOAL_LIMITS = dict(EXTENDED_GOAL_LIMITS,max_duration_sec=900.)
 TURN_GOAL_LIMITS = dict(LONG_GOAL_LIMITS,max_rotation_rad=2*math.pi)
 
 
+def recoverable_vision_gap(enabled,reason,navigation):
+    """Pause at zero, within an existing operator session; never re-arm."""
+    return (enabled is True and reason=='trial_navigation_gate_closed' and
+        isinstance(navigation,dict) and navigation.get('enabled') is True and
+        navigation.get('allow_motion') is True and navigation.get('reason') in ('vision_invalid','vision_stale') and
+        navigation.get('vision_reason') in ('start_blocked_narrow_or_unobserved',
+            'no_observed_image_corridor','waiting_for_capture_tf','image_reference_stale',
+            'capture_expired_waiting_for_tf','vision_planning_too_old'))
+
+
 def selected_limits(goal=False,extended=False,duration=300.,*,turning=False):
     if type(goal) is not bool or type(extended) is not bool or extended and not goal:
         raise ValueError('extended session requires explicit goal session')

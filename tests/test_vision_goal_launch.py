@@ -186,6 +186,7 @@ class VisionLaunchTests(unittest.TestCase):
         self.assertNotIn('controller_server',nodes);self.assertNotIn('bt_navigator',nodes)
         self.assertTrue(nodes['goal_dispatch'].parameters[0]['local_guidance'])
         self.assertEqual(nodes['vision_goal_controller'].parameters[0]['guidance_mode'],'image_only')
+        self.assertTrue(nodes['laser_safety'].parameters[-1]['pause_on_vision_gap'])
         for name in ('robot_bridge','navigation_gate','laser_safety','vision_goal_controller'):
             self.assertTrue(nodes[name].parameters[-1]['supervised_trial'])
             self.assertTrue(nodes[name].parameters[-1]['trial_extended_session'])

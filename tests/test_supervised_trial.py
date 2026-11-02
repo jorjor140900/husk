@@ -4,6 +4,15 @@ import unittest
 from husky_link_core.supervised_trial import TrialBudget, LIMITS, MODE, trial_mode, bounded_command
 
 class TrialBudgetTests(unittest.TestCase):
+    def test_only_explicit_live_vision_gaps_pause_without_rearming(self):
+        from husky_link_core.supervised_trial import recoverable_vision_gap
+        nav=dict(enabled=True,allow_motion=True,reason='vision_invalid',vision_reason='start_blocked_narrow_or_unobserved')
+        self.assertTrue(recoverable_vision_gap(True,'trial_navigation_gate_closed',nav))
+        self.assertFalse(recoverable_vision_gap(False,'trial_navigation_gate_closed',nav))
+        for reason in ('motion_not_permitted','permission_timeout','trial_time_limit','trial_navigation_gate_stale'):
+            self.assertFalse(recoverable_vision_gap(True,reason,nav))
+        for key,value in [('enabled',False),('allow_motion',False),('reason','disabled'),('vision_reason','invalid_capture_geometry')]:
+            self.assertFalse(recoverable_vision_gap(True,'trial_navigation_gate_closed',dict(nav,**{key:value})))
     def budget(self):
         budget=TrialBudget();budget.observe((0,0,0,10_000_000_000),1.);budget.reset(1.)
         return budget

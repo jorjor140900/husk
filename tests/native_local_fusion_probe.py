@@ -61,7 +61,7 @@ ros_args=['--ros-args','-p','camera_calibration:='+str(out/'camera.yaml'),'-p','
     '-p','guidance_mode:='+('image_only' if image_only else 'local_fusion'),'-p','guide_only:=true','-p','local_guidance:=true',
     '-p','supervised_trial:=true','-p','trial_goal_session:=true','-p','trial_extended_session:=true',
     '-p','trial_extended_duration_sec:=900.0','-p','allow_motion:='+str(queue_mode).lower(),
-    '-p','trial_turning_session:='+str(junction).lower(),
+    '-p','trial_turning_session:='+str(junction).lower(),'-p','pause_on_vision_gap:='+str(queue_mode).lower(),
     '-p','lidar_min_range_m:='+str(sensor_min),
     '-p','assume_near_field_clear:='+str(assume_near).lower(),'-p','waypoint_mode:='+str(queue_mode).lower()]+([
     '-r','goal_dispatch:/goal_pose:=/husky_nav/waypoint_goal',
@@ -102,6 +102,7 @@ static.sendTransform([transform('map','odom'),transform('base_link','vision_grou
     transform('base_link','laser',x=-.2317,z=.88155)])
 state=dict(x=0.,y=0.,yaw=0.,v=0.,w=0.,ai=True,lidar=True,unknown=False,obstacle=False,blocked=False,simulate=False)
 commands=[];guarded=[];statuses=[];references=[];overlays=[];grids=[];tf_pending=deque()
+filter_statuses=[]
 def command(message):
     state['v']=message.twist.linear.x;state['w']=message.twist.angular.z
     commands.append((state['v'],state['w']))
@@ -110,6 +111,7 @@ def overlay(message):
     yellow=(frame[90:,:,0]<80)&(frame[90:,:,1]>180)&(frame[90:,:,2]>180)
     overlays.append((message.header.stamp.sec*10**9+message.header.stamp.nanosec,int(yellow.sum()),frame))
 subs=[fixture.create_subscription(TwistStamped,'/husky_nav/vision_cmd_vel',command,1),
+    fixture.create_subscription(String,'/husky_control/safety/status',lambda m:filter_statuses.append(json.loads(m.data)),1),
     fixture.create_subscription(Twist,'/husky_nav/guarded_request',lambda m:guarded.append((m.linear.x,m.angular.z)),1),
     fixture.create_subscription(String,'/husky_nav/vision_control_status',lambda m:statuses.append(json.loads(m.data)),1),
     fixture.create_subscription(RosPath,'/husky_nav/vision_reference',lambda m:references.append(m),1),
@@ -182,7 +184,16 @@ try:
         future=client.call_async(Trigger.Request());wait_until=time.monotonic()+3.
         while not future.done() and time.monotonic()<wait_until:executor.spin_once(timeout_sec=.01)
         assert future.done() and future.result().success,(future.done(),future.result() if future.done() else None,queue_node.reason)
-        state['simulate']=True;deadline=time.monotonic()+120
+        state['simulate']=True;spin(2.)
+        assert safety_node.trial.active and not safety_node.trial.fault
+        budget_started=safety_node.trial.started
+        state['blocked']=True;spin(.6)
+        assert any(s['reason']=='vision_paused_waiting_for_fresh_reference' and s['linear_x']==0 for s in filter_statuses[-10:])
+        assert safety_node.trial.active and not safety_node.trial.fault
+        state['blocked']=False;spin(1.2)
+        assert safety_node.trial.started==budget_started and not safety_node.trial.fault
+        assert any(s['command_allowed'] and s['linear_x']>0 for s in filter_statuses[-10:])
+        deadline=time.monotonic()+120
         while time.monotonic()<deadline:
             executor.spin_once(timeout_sec=.005)
             if safety_node.trial.fault:
@@ -196,6 +207,7 @@ try:
         report=dict(result='passed',native_ros2=True,synthetic=True,physical_robot=False,
             route_xy_m=route,completed_waypoints=queue_node.queue.index,error_m=error,
             centre_grass_non_drivable=True,no_global_cmd_vel=True,active_navigation_and_trial_gates=True,
+            vision_gap_pauses_then_recovers=True,session_budget_not_reset_on_recovery=True,
             no_latched_fault_at_waypoint_transitions=True)
         (out/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
         raise SystemExit(0)

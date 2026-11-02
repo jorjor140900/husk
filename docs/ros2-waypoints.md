@@ -95,6 +95,21 @@ clear ขอ cancel goal ปัจจุบันและล้างคิว�
 ก่อนเริ่มคิวใหม่ ปุ่ม Space ของ operator ยังคงหยุดการอนุญาตทันทีตามเดิม
 ข้อมูล/TF/การสื่อสารผิดเงื่อนไขยังหยุดตามเดิม คิวไม่ข้ามจุดเพื่อหลบ fault
 
+## ภาพกลับมาแล้วแต่ฐานยังหยุด: vision pause
+
+ใน image_only ชั้น trial เปิด `pause_on_vision_gap=true`:
+เมื่อ gate ปิดชั่วคราวเพราะ start_blocked/no corridor/รอ capture TF/reference เก่า
+จะส่งศูนย์และรายงาน `vision_paused_waiting_for_fresh_reference` แทนการ latch fault ค้าง
+เมื่อ reference สดกลับมาและผ่าน gate ต่อเนื่อง 0.5 s จึงส่งคำสั่งตามเส้นอีกครั้ง
+ต้องยังมี permission สดและ session เดิมทำงานอยู่ ไม่มีการ re-arm, ต่อเวลา หรือ reset งบระยะ/มุม
+
+การกด Space, disable, permission หาย, odom ขาด, ข้อมูลผิดรูปแบบ, gateway/การสื่อสารขาด
+และเพดาน trial ยังหยุดตามเดิม ไม่ใช่กรณีที่กลับเดินเองด้วย vision pause
+โหมดอื่นยังใช้ fault latch เดิม
+
+หากค้างจาก fault เก่าก่อนอัปเดต ให้หยุด console, อัปเดต/build และ restart field launch
+แล้ว reset_trial/enable/g ครั้งใหม่ งบเก่าจะไม่ถูกล้างอัตโนมัติจากเฟรมที่กลับมา
+
 ระหว่างเปลี่ยน goal ย่อย gate ส่งศูนย์เป็นการพักตามปกติ ไม่ latch fault จากการถึงจุด
 การรอ reference ของ goal ใหม่มีช่วงเตรียมไม่เกิน 0.5 s พร้อมตรวจ permission/odom/TF ตามเดิม
 หากข้อมูลไม่กลับมาภายในช่วงนั้นหรือภาพระบุว่าไม่มีทาง จะหยุดตามเงื่อนไขเดิม

@@ -20,7 +20,7 @@ from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker
 from std_srvs.srv import Trigger
-from husky_link_core.supervised_trial import TrialBudget, selected_limits, bounded_command, odometry_sample
+from husky_link_core.supervised_trial import TrialBudget, selected_limits, bounded_command, odometry_sample,recoverable_vision_gap
 
 from .collision import CollisionConfig, check_sweep, scan_points
 from .control import CommandLimiter, ControllerConfig, Demand, fresh_stamp, quaternion_matrix
@@ -31,7 +31,7 @@ class LaserSafetyNode(Node):
     def __init__(self, **kwargs):
         super().__init__("laser_safety", **kwargs)
         for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link", "supervised_trial": False, "trial_goal_session": False, "trial_extended_session": False, "trial_extended_duration_sec": 300.,
-                            "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,"trial_turning_session":False,
+                            "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,"trial_turning_session":False,'pause_on_vision_gap':False,
                             "request_timeout_sec": 0.3, "permission_timeout_sec": 0.3,
                             "release_hold_sec": 0.5, "output_acceleration_mps2": 0.25,
                             "output_angular_acceleration_rps2": 0.8}.items():
@@ -39,6 +39,9 @@ class LaserSafetyNode(Node):
         value = lambda name: self.get_parameter(name).value
         self.supervised_trial = value("supervised_trial")
         if type(self.supervised_trial) is not bool:raise ValueError("supervised_trial must be bool")
+        self.pause_on_vision_gap=value('pause_on_vision_gap')
+        if type(self.pause_on_vision_gap) is not bool or self.pause_on_vision_gap and not self.supervised_trial:
+            raise ValueError('pause_on_vision_gap requires supervised_trial')
         goal_session=value("trial_goal_session")
         if type(goal_session) is not bool or goal_session and not self.supervised_trial:
             raise ValueError("trial_goal_session requires explicit supervised_trial")
@@ -174,6 +177,8 @@ class LaserSafetyNode(Node):
         if not fresh_stamp(stamp_ns(odom.header.stamp), received, ros_ns, now, self.timeouts["odom"]):
             return "stale_odometry", None
         if self.trial is not None:
+            budget_reason=self.trial.check(now,ros_ns)
+            if budget_reason!='clear':return budget_reason,None
             if self.navigation_status is None or now-self.navigation_status[1]>.2:
                 return "trial_navigation_gate_stale",None
             if not self.navigation_status[0]["request_allowed"]:
@@ -217,11 +222,14 @@ class LaserSafetyNode(Node):
             reason, poses = self._check()
         except (ValueError, TypeError, OverflowError, FloatingPointError):
             reason, poses = "invalid_geometry_or_motion", None
-        if was_active and reason != "clear":
+        vision_paused=recoverable_vision_gap(getattr(self,'pause_on_vision_gap',False),reason,
+            self.navigation_status[0] if self.navigation_status else None)
+        if was_active and reason != "clear" and not vision_paused:
             if self.trial_fault_context is None:
                 self.trial_fault_context=dict(reason=reason,navigation_gate=(
                     self.navigation_status[0].copy() if self.navigation_status else None))
             self.trial.stop(reason)
+        if vision_paused:reason='vision_paused_waiting_for_fresh_reference'
         if reason == "clear":
             if self.clear_since is None:
                 self.clear_since = now
@@ -234,8 +242,8 @@ class LaserSafetyNode(Node):
             command.linear.x, command.angular.z = self.proposed
             # Begin the ROS2 motion budget only when a nonzero command can
             # actually leave the filter, after the full clear hold. Startup
-            # gates may still settle while output is zero. After this point,
-            # any lost gate latches until an explicit stopped reset.
+            # gates may still settle while output is zero. Explicit image-only
+            # vision pauses keep this budget running; other faults latch.
             if self.trial is not None and not self.trial.active and any(self.proposed):
                 self.trial.reset(now)
         else:
@@ -251,6 +259,8 @@ class LaserSafetyNode(Node):
             "trial_limits": self.trial_limits if self.supervised_trial else None,
             "navigation_gate_reason": self.navigation_status[0].get("reason") if self.navigation_status else None,
             "trial_fault_context": self.trial_fault_context,
+            "pause_on_vision_gap":getattr(self,'pause_on_vision_gap',False),
+            "vision_pause_reason":self.navigation_status[0].get('vision_reason') if vision_paused else None,
             "physical_robot_validated": False})))
         if self.marker.get_subscription_count() > 0:
             self._draw(poses, reason)
