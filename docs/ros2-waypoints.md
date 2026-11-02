@@ -1,9 +1,22 @@
 # คิว waypoint สำหรับทางรูป U
 
+**อัปเดตตัวกรอง mask รอบนี้ต้องใช้ `--update-code --update-detector`**
+เพราะมีการเพิ่มพารามิเตอร์ optical flow ใน detector ด้วย การ update-code อย่างเดียวคง detector เก่าไว้
+
+```bash
+cd ~/husk-live
+git pull --ff-only origin experiment/local-ai-lidar
+python3 tools/create_ros2_workspace.py --workspace "$HOME/husky_vision_ws" \
+  --update-code --update-detector
+```
+
+จากนั้น build husky_vision และ restart field launch ตามขั้นตอนเดิม
+
 ## ลดเส้นกระพริบ
 
 field launch ใช้ `stabilize_mask:=true` เป็นค่าเริ่มต้นสำหรับ navigation:
 กรอง probability ข้ามภาพโดย optical flow ก่อน blend (current weight 0.35)
+optical flow ใช้ภาพกว้าง 160 พิกเซลแล้ว scale กลับเข้าสู่ภาพจริง เพื่อลดภาระ CPU
 หลักฐานปัจจุบันที่ต่ำกว่า probability floor และ colour veto ยังชนะทันที
 ไม่ได้เติม binary non-drivable ทั้งหมดให้เป็น free และไม่ยืด source timestamp
 
@@ -20,6 +33,10 @@ status มี `reference_reused_after_current_mask_check` เพื่อระ�
 `waiting_for_goal_guide` ของรุ่นก่อน หรือ `waiting_for_waypoint_or_start` ของรุ่นใหม่
 หมายถึงไม่มี goal ที่คอนโทรลใช้อยู่ ต้องตรวจคิวและสั่ง start เมื่อมีจุดแต่ยังไม่ได้เริ่ม
 ไม่ใช้เส้นจาก goal ก่อนหน้าเดินต่อหลัง cancel/clear/เปลี่ยน goal
+
+เฟรม stale_input/stale_result หนึ่งเฟรมจะไม่ส่ง packet ล้างผลอื่นที่ source ยังสดไม่เกิน 0.5 s
+ไม่ต่ออายุผลเดิม หากครบอายุหรือกล้องขาดยัง invalidate ตามเดิม
+status ของ AI เพิ่ม `drivable_pixels` และ `mask_pixels` เพื่อแยก mask ว่างจากการขาด publication
 
 probability smoothing เพิ่มงาน CPU; ถ้าต้องเปรียบเทียบกับชุด fast เดิม ใช้
 `stabilize_mask:=false` ตอนเปิด launch ส่วนการ revalidate reference และกรองเส้นแดงยังมีผล

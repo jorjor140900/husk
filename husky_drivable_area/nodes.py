@@ -367,6 +367,17 @@ class DrivableAreaNode(Node):
         return points
 
     def _invalidate(self, reason, header=None, age=None, timings=None):
+        # A single late sample must not retract a different result which is
+        # still fresh. Its original source deadline remains unchanged.
+        good=getattr(self,'_last_processed_header',None)
+        if good is not None and reason in ('stale_input','stale_result'):
+            stamp=good.stamp.sec*10**9+good.stamp.nanosec
+            good_age=(self.get_clock().now().nanoseconds-stamp)/1e9
+            incoming=header.stamp.sec*10**9+header.stamp.nanosec if header is not None else stamp
+            if incoming!=stamp and stamp>0 and -.05<=good_age<=min(self._max_age,.5):
+                if reason=='stale_result':self._detector.reset()
+                self.get_logger().warning('Dropping late capture; keeping last fresh source within original deadline',throttle_duration_sec=2.)
+                return
         self._detector.reset()
         if getattr(self,"_reference_worker",None) is not None:
             self._reference_worker.reset()

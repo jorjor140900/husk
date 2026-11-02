@@ -276,6 +276,19 @@ class CallbackTests(unittest.TestCase):
         self.assertEqual(self.status()["path"], [])
         self.node._detector.reset.assert_called_once()
 
+    def test_late_capture_does_not_retract_another_still_fresh_segmentation(self):
+        self.node._max_age=.5
+        good=header(sec=9,nanosec=900_000_000)
+        self.node._last_processed_header=good
+        self.node._segmentation_pub=mock.Mock()
+        self.node._segmentation_pub.get_subscription_count.return_value=1
+        self.node._invalidate('stale_input',header(sec=8),2.)
+        self.node._segmentation_pub.publish.assert_not_called()
+        self.assertIs(self.node._last_processed_header,good)
+        self.node._last_processed_header=header(sec=9)
+        self.node._invalidate('stale_input',header(sec=8),2.)
+        self.assertFalse(json.loads(self.node._segmentation_pub.publish.call_args.args[0].data)['valid'])
+
     def test_input_already_stale_does_not_run_model(self):
         message = image_message()
         message.header.stamp.sec = 5

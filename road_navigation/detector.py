@@ -34,6 +34,7 @@ class DetectorConfig:
     probability_threshold: float = 0.62
     current_probability_floor: float = 0.50
     temporal_alpha: float = 0.65
+    temporal_flow_width: int = 0
     use_temporal: bool = True
     generate_reference_path: bool = True
     clearance_px: int = 8
@@ -53,11 +54,13 @@ class DetectorConfig:
         for name, value in asdict(self).items():
             if not isinstance(value, (int, float, bool)) or not math.isfinite(value):
                 raise ValueError(f"{name} must be a finite number")
-        for name in ("max_width", "analysis_width", "clearance_px", "max_lateral_step", "edge_low_threshold", "edge_high_threshold", "region_step"):
+        for name in ("max_width", "analysis_width", "clearance_px", "max_lateral_step", "edge_low_threshold", "edge_high_threshold", "region_step", "temporal_flow_width"):
             if type(getattr(self, name)) is not int:
                 raise ValueError(f"{name} must be an integer")
         if type(self.use_temporal) is not bool:
             raise ValueError("use_temporal must be boolean")
+        if self.temporal_flow_width!=0 and not 64<=self.temporal_flow_width<=self.max_width:
+            raise ValueError('temporal_flow_width must be 0 or within 64..max_width')
         if type(self.generate_reference_path) is not bool:
             raise ValueError("generate_reference_path must be boolean")
         if type(self.use_edge_barrier) is not bool:
@@ -127,6 +130,8 @@ class DetectionResult:
     def metadata(self) -> dict:
         return {
             "valid_image_path": self.valid_image_path,
+            "drivable_pixels": int(np.count_nonzero(self.raw_mask)),
+            "mask_pixels": int(self.raw_mask.size),
             "image_reference_enabled": self.reference_path_enabled,
             "reason": self.reason,
             "backend": self.backend,
@@ -241,7 +246,16 @@ class RoadDetector:
         if not cfg.use_temporal or self._previous_gray is None or self._previous_gray.shape != gray.shape:
             return probability.copy(), preferred
         # Backward flow maps each CURRENT pixel into the PREVIOUS image.
-        flow = cv2.calcOpticalFlowFarneback(gray, self._previous_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        width=min(cfg.temporal_flow_width or gray.shape[1],gray.shape[1])
+        if width<gray.shape[1]:
+            size=(width,max(16,round(gray.shape[0]*width/gray.shape[1])))
+            current_small=cv2.resize(gray,size,interpolation=cv2.INTER_AREA)
+            previous_small=cv2.resize(self._previous_gray,size,interpolation=cv2.INTER_AREA)
+            flow=cv2.calcOpticalFlowFarneback(current_small,previous_small,None,.5,3,15,3,5,1.2,0)
+            flow=cv2.resize(flow,(gray.shape[1],gray.shape[0]),interpolation=cv2.INTER_LINEAR)
+            flow*=np.array([gray.shape[1]/size[0],gray.shape[0]/size[1]],np.float32)
+        else:
+            flow=cv2.calcOpticalFlowFarneback(gray,self._previous_gray,None,.5,3,15,3,5,1.2,0)
         yy, xx = np.indices(gray.shape, dtype=np.float32)
         mx, my = xx + flow[:, :, 0], yy + flow[:, :, 1]
         inside = (mx >= 0) & (my >= 0) & (mx <= gray.shape[1] - 1) & (my <= gray.shape[0] - 1)

@@ -2,6 +2,7 @@
   "max_width": 640,
   "use_temporal": true,
   "temporal_alpha": 0.35,
+  "temporal_flow_width": 160,
   "generate_reference_path": false,
   "reject_green_vegetation": true,
   "vegetation_hue_min": 25,

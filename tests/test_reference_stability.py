@@ -1,11 +1,24 @@
 import unittest
 import numpy as np
+from unittest import mock
 from husky_drivable_area.reference_stability import reusable_reference,choose_stable_reference,EdgeSmoother
 from road_navigation.reference_geometry import BoundaryLine
 from road_navigation.detector import RoadDetector,DetectorConfig
 
 
 class ReferenceStabilityTests(unittest.TestCase):
+    def test_small_optical_flow_grid_preserves_output_dimensions_and_negative_veto(self):
+        detector=RoadDetector(DetectorConfig(use_temporal=True,temporal_flow_width=160,
+            temporal_alpha=.35,generate_reference_path=False))
+        frame=np.full((480,640,3),100,np.uint8)
+        p=np.full((480,640),.8,np.float32)
+        detector.process(frame,drivable_probability=p)
+        with mock.patch('cv2.calcOpticalFlowFarneback',return_value=np.zeros((120,160,2),np.float32)) as flow:
+            result=detector.process(frame,drivable_probability=np.full((480,640),.2,np.float32))
+        self.assertEqual(flow.call_args.args[0].shape,(120,160))
+        self.assertEqual(result.raw_mask.shape,(480,640))
+        self.assertEqual(result.metadata()['drivable_pixels'],0)
+
     def test_probability_flicker_is_filtered_but_strong_current_negative_wins(self):
         detector=RoadDetector(DetectorConfig(max_width=320,analysis_width=320,use_temporal=True,
             temporal_alpha=.35,generate_reference_path=False))
