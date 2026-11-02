@@ -101,7 +101,7 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
     if not math.isfinite(start_x) or not .05<=start_x<config.max_forward_m-config.min_length_m:
         return empty,"near_axis_not_observable",{}
     target=np.asarray(target,float)
-    if target.shape!=(2,) or not np.isfinite(target).all() or target[0]<=0:
+    if target.shape!=(2,) or not np.isfinite(target).all() or (target[0]<=0 and not goal_priority):
         return empty,"target_not_ahead",{}
     half=config.half_width_m+config.side_margin_m
     offsets=np.linspace(-half,half,int(math.ceil(2*half/config.step_m))+1)
@@ -115,13 +115,17 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
     xs=np.arange(start_x,forward+config.step_m/2,config.step_m)
     if goal_priority:xs=xs[xs<=forward+1e-9]
     ys=np.arange(-config.max_lateral_m,config.max_lateral_m+config.step_m/2,config.step_m)
-    xx,yy=np.meshgrid(xs,ys,indexing="ij")
-    observed=sample(np.column_stack([xx.ravel(),yy.ravel()])).reshape(xx.shape)==1
+    grid_xs=np.arange(0. if goal_priority else start_x,config.max_forward_m+config.step_m/2,config.step_m)
+    xx,yy=np.meshgrid(grid_xs,ys,indexing="ij")
+    labels=sample(np.column_stack([xx.ravel(),yy.ravel()])).reshape(xx.shape)
+    # Image-only supervision supplies the unseen near connector for a turn.
+    # Keep known image vetoes; never extend this assumption beyond start_x.
+    observed=(labels==1)|((labels==255)&(xx<start_x)&goal_priority)
     clearance=cv2.distanceTransform(np.pad(observed.astype(np.uint8),1),cv2.DIST_L2,3)[1:-1,1:-1]*config.step_m
     def strip_observed(points):
         # Cache calibrated projection once. Require all four neighbouring grid
         # samples, rather than interpolating a veto/unknown into free space.
-        coords=(points-[xs[0],ys[0]])/config.step_m
+        coords=(points-[grid_xs[0],ys[0]])/config.step_m
         if ((coords < -1e-8).any() or
                 (coords > np.array(observed.shape)-1+1e-8).any()):
             return False
@@ -130,8 +134,9 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
         return all(observed[ix,iy].all() for ix,iy in (
             (low[:,0],low[:,1]),(low[:,0],high[:,1]),
             (high[:,0],low[:,1]),(high[:,0],high[:,1])))
+    slope=target[1]/max(target[0],.01)
     ends=np.unique(np.r_[np.arange(-config.max_lateral_m+half,config.max_lateral_m-half,.05),
-                             0.,np.clip(target[1]/target[0]*xs[-1],-config.max_lateral_m+half,config.max_lateral_m-half)])
+                             0.,np.clip(slope*xs[-1],-config.max_lateral_m+half,config.max_lateral_m-half)])
     best=None
     # Prefer the longest observed prefix. A short reference never jumps a veto
     # to reach a visually disconnected branch farther away.
@@ -148,7 +153,7 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
         blend=3*t*t-2*t*t*t
         candidates=ends
         if goal_priority:
-            candidates=np.unique(np.r_[ends,np.clip(target[1]/target[0]*end,
+            candidates=np.unique(np.r_[ends,np.clip(slope*end,
                 -config.max_lateral_m+half,config.max_lateral_m-half)])
         for y_end in candidates:
             y=y_end*blend
@@ -165,7 +170,8 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
             if candidate_check is not None and not candidate_check(points):
                 continue
             yi=np.clip(np.rint((y-ys[0])/config.step_m).astype(int),0,len(ys)-1)
-            distance=clearance[np.arange(len(x)),yi]
+            xi=np.rint((x-grid_xs[0])/config.step_m).astype(int)
+            distance=clearance[xi,yi]
             centre=float(np.mean(1-np.minimum(distance/.6,1)))
             angle=math.atan2(y_end,end)
             goal_angle=math.atan2(target[1],target[0])
@@ -190,5 +196,29 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
                     unseen_near_field_m=float(start_x)))
         if best is not None and not goal_priority:
             return best[1],"ok",best[2]
+    if goal_priority:
+        # Turning candidates keep a nonzero terminal heading. Unlike the
+        # lane-change smoothstep above they can follow a visible junction arm.
+        for sign in (-1,1):
+            for radius in np.arange(max(1/config.max_curvature,start_x+.05),2.01,.15):
+                for degrees in (25,40,55,70,85):
+                    angle=math.radians(degrees);begin=math.asin(start_x/radius)
+                    length=radius*(angle-begin)
+                    if length<config.min_length_m:continue
+                    a=np.linspace(begin,angle,int(math.ceil(length/config.step_m))+1)
+                    points=np.column_stack([radius*np.sin(a),sign*radius*(1-np.cos(a))])
+                    normals=np.column_stack([-sign*np.sin(a),np.cos(a)])
+                    if not strip_observed((points[:,None,:]+normals[:,None,:]*offsets[None,:,None]).reshape(-1,2)):
+                        continue
+                    if candidate_check is not None and not candidate_check(points):continue
+                    goal_error=float(np.linalg.norm(points[-1]-target))
+                    score=(goal_error,.03/radius**2)
+                    if best is None or score<best[0]:
+                        best=(score,points,dict(reference_start_m=float(start_x),
+                            observed_reference_length_m=float(length),reference_forward_span_m=float(points[-1,0]-start_x),
+                            reference_max_lateral_m=float(np.abs(points[:,1]).max()),reserved_width_m=float(2*half),
+                            max_curvature=float(1/radius),guide_target_ground_xy=target.tolist(),footprint_checked=False,
+                            goal_priority=True,reference_end_ground_xy=points[-1].tolist(),reference_end_to_target_m=goal_error,
+                            unseen_near_field_m=float(start_x),reference_kind="junction_arc",terminal_heading_rad=sign*angle))
     if best is not None:return best[1],"ok",best[2]
     return empty,"no_observed_image_corridor",{}

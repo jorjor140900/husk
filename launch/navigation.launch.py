@@ -23,13 +23,14 @@ def _nodes(context):
         profile["camera"][key] = str(expanded_path(profile["camera"][key]))
     allow = LaunchConfiguration("allow_motion").perform(context).lower() == "true"
     trial = LaunchConfiguration("supervised_trial").perform(context).lower() == "true"
-    from husky_link_core.supervised_trial import trial_mode, profile_trial_limits, GOAL_LIMITS, EXTENDED_GOAL_LIMITS, LONG_GOAL_LIMITS
+    from husky_link_core.supervised_trial import trial_mode, profile_trial_limits, GOAL_LIMITS, EXTENDED_GOAL_LIMITS, LONG_GOAL_LIMITS,TURN_GOAL_LIMITS
     trial_mode(profile, trial)
     limits=profile_trial_limits(profile) if trial else None
-    extended=trial and limits in (EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS)
+    extended=trial and limits in (EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS,TURN_GOAL_LIMITS)
     goal_session=trial and (limits==GOAL_LIMITS or extended)
     trial_parameters=dict(supervised_trial=trial,trial_extended_session=extended)
-    reference_parameters=dict(trial_goal_session=goal_session,trial_extended_duration_sec=limits['max_duration_sec'] if extended else 300.)
+    reference_parameters=dict(trial_goal_session=goal_session,trial_extended_duration_sec=limits['max_duration_sec'] if extended else 300.,
+        trial_turning_session=trial and limits==TURN_GOAL_LIMITS)
     mode = LaunchConfiguration("steering_mode").perform(context)
     if mode not in ("nav2", "vision"):
         raise ValueError("steering_mode must be nav2 or vision")

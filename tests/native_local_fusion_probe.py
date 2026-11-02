@@ -45,10 +45,11 @@ def room_scan(pose,circles):
         angle_max=-math.pi+(count-1)*2*math.pi/count,range_min=.1,range_max=50.,scan_time=0.,time_increment=0.)
 
 image_only=os.environ.get('HUSKY_TEST_IMAGE_ONLY')=='1'
+junction=os.environ.get('HUSKY_TEST_JUNCTION')=='1'
 assume_near=os.environ.get('HUSKY_TEST_NEAR_ASSUMPTION')=='1'
 assert not (image_only and assume_near),'Test modes must be selected separately'
 sensor_min=.4 if assume_near or image_only else .1
-out=Path('/results/local-fusion-validation')/('native-image-only' if image_only else 'native-near-assumption' if assume_near else 'native')
+out=Path('/results/local-fusion-validation')/('native-junction' if junction else 'native-image-only' if image_only else 'native-near-assumption' if assume_near else 'native')
 out.mkdir(exist_ok=True)
 camera=dict(image_width=640,image_height=480,distortion_model='plumb_bob',
     camera_matrix=dict(data=[500.,0.,319.5,0.,500.,239.5,0.,0.,1.]),distortion_coefficients=dict(data=[0.]*5))
@@ -59,6 +60,7 @@ rclpy.init(args=['--ros-args','-p','camera_calibration:='+str(out/'camera.yaml')
     '-p','guidance_mode:='+('image_only' if image_only else 'local_fusion'),'-p','guide_only:=true','-p','local_guidance:=true',
     '-p','supervised_trial:=true','-p','trial_goal_session:=true','-p','trial_extended_session:=true',
     '-p','trial_extended_duration_sec:=900.0','-p','allow_motion:=false',
+    '-p','trial_turning_session:='+str(junction).lower(),
     '-p','lidar_min_range_m:='+str(sensor_min),
     '-p','assume_near_field_clear:='+str(assume_near).lower()])
 vision=VisionGoalNode();dispatch=GoalDispatch();gate=NavigationGate();fixture=Node('isolated_local_fusion_fixture')
@@ -122,6 +124,10 @@ def publish():
         scan.ranges=(np.full(len(raw.ranges),np.inf) if state['unknown'] else raw.ranges).astype(np.float32).tolist();scan_pub.publish(scan)
     world_y=state['y']+si*hit[:,0]+co*hit[:,1]
     mask=(valid&(np.abs(world_y)<1.2)).reshape(480,640).astype(np.uint8)*255
+    if junction:
+        world_x=state['x']+co*hit[:,0]-si*hit[:,1]
+        lane=((np.abs(world_y)<.9)&(world_x<2.9))|((np.abs(world_x-2)<.9)&(world_y>-.9))
+        mask=(valid&lane).reshape(480,640).astype(np.uint8)*255
     if state['blocked']:mask[:]=0
     frame=np.full((480,640,3),55,np.uint8);frame[mask>0]=145
     header=Header(frame_id=m.camera_frame,stamp=stamp);image_pub.publish(fill_image(Image(),frame,header))
@@ -137,11 +143,28 @@ timer=fixture.create_timer(1/15,publish);tf_timer=fixture.create_timer(.01,ready
 def spin(seconds):
     end=time.monotonic()+seconds
     while time.monotonic()<end:executor.spin_once(timeout_sec=.005)
-def goal(x):
+def goal(x,y=0.):
     message=PoseStamped();message.header.frame_id='map';message.header.stamp=fixture.get_clock().now().to_msg()
-    message.pose.position.x=x;message.pose.orientation.w=1.;goal_pub.publish(message)
+    message.pose.position.x=x;message.pose.position.y=y;message.pose.orientation.w=1.;goal_pub.publish(message)
 def stopped():return len(commands)>=4 and all(v==0 and w==0 for v,w in commands[-4:])
 try:
+    if junction:
+        assert image_only
+        spin(1.5);state['simulate']=True;goal(2.,3.)
+        deadline=time.monotonic()+60
+        while time.monotonic()<deadline:
+            executor.spin_once(timeout_sec=.005)
+            if statuses and statuses[-1]['reason']=='goal_reached':break
+        error=math.hypot(state['x']-2.,state['y']-3.)
+        assert statuses[-1]['reason']=='goal_reached',(state,statuses[-3:])
+        assert error<=.15 and state['yaw']>math.pi/3
+        assert guarded and all(v==0 and w==0 for v,w in guarded)
+        assert fixture.count_publishers('/cmd_vel')==0
+        report=dict(result='passed',native_ros2=True,synthetic=True,physical_robot=False,
+            goal_xy_m=[2.,3.],error_m=error,final_heading_deg=math.degrees(state['yaw']),
+            source_capture_tf_delay_sec=.09,planning_only_gate_stays_zero=True,no_global_cmd_vel=True)
+        (out/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
+        raise SystemExit(0)
     spin(1.5);goal(4.);spin(2.)
     assert dispatch.client is None and vision.route is None
     assert vision.assume_near_field_clear is assume_near

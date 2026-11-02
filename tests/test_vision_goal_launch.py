@@ -201,6 +201,16 @@ class VisionLaunchTests(unittest.TestCase):
         self.context['guidance_mode']='image_only'
         with self.assertRaisesRegex(ValueError,'supervised_trial'):self.nodes()
 
+    def test_turning_budget_reaches_both_controller_and_trial_filter(self):
+        from husky_link_core.supervised_trial import TURN_GOAL_LIMITS,MODE
+        self.profile.update(operation_mode=MODE,trial_limits=TURN_GOAL_LIMITS)
+        Path(self.context['profile']).write_text(json.dumps(self.profile))
+        self.context.update(guidance_mode='image_only',supervised_trial='true')
+        nodes=self.nodes()
+        for name in ('vision_goal_controller','laser_safety'):
+            self.assertTrue(nodes[name].parameters[-1]['trial_turning_session'])
+            self.assertTrue(nodes[name].parameters[-1]['trial_extended_session'])
+
 
 
 if __name__=="__main__":

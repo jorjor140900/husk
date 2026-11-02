@@ -1,0 +1,30 @@
+[
+  {
+    "turn": "left",
+    "goal_xy_m": [
+      2.0,
+      3.0
+    ],
+    "error_m": 0.14400903155655767,
+    "final_heading_deg": 97.66877278934146,
+    "cumulative_rotation_rad": 1.7046416615562545,
+    "junction_arc_frames": 185,
+    "steps": 283,
+    "synthetic": true,
+    "physical_robot": false
+  },
+  {
+    "turn": "right",
+    "goal_xy_m": [
+      2.0,
+      -3.0
+    ],
+    "error_m": 0.13963781481138082,
+    "final_heading_deg": -97.16097425443233,
+    "cumulative_rotation_rad": 1.695778905185287,
+    "junction_arc_frames": 187,
+    "steps": 283,
+    "synthetic": true,
+    "physical_robot": false
+  }
+]

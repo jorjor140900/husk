@@ -37,7 +37,7 @@ class VisionGoalNode(Node):
         defaults=dict(camera_calibration="",camera_mount="",base_frame="base_link",odom_frame="odom",
             image_topic="/camera/image_raw",half_width_m=.33,side_margin_m=.08,
             front_m=.5,rear_m=.56,margin_m=.15,lidar_min_range_m=.4,guidance_mode="global_route",assume_near_field_clear=False,
-            supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.)
+            supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,trial_turning_session=False)
         for key,value in defaults.items():
             self.declare_parameter(key,value)
         value=lambda key:self.get_parameter(key).value
@@ -56,7 +56,8 @@ class VisionGoalNode(Node):
         from husky_link_core.supervised_trial import selected_limits
         self.trial_extended_session=value("trial_extended_session")
         self.trial_extended_duration_sec=value("trial_extended_duration_sec")
-        limits=selected_limits(self.trial_goal_session,self.trial_extended_session,self.trial_extended_duration_sec)
+        limits=selected_limits(self.trial_goal_session,self.trial_extended_session,self.trial_extended_duration_sec,
+            turning=value("trial_turning_session"))
         if self.trial_extended_session and not self.supervised_trial:
             raise ValueError("extended session requires explicit supervised_trial")
         self.camera=CameraCalibration.load(value("camera_calibration"))
@@ -314,7 +315,7 @@ class VisionGoalNode(Node):
                     lidar_footprint_model="sampled_rectangles_in_scan_plane",lidar_height_coverage_validated=False,
                     near_field_evidence="finite_scan_plane_rays_and_measured_robot_hull")
             elif getattr(self,"image_only",False):
-                target=local_goal_target(goal)
+                target=local_goal_target(goal,allow_side_goal=True)
                 reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config,goal_priority=True)
                 local_detail=dict(global_plan_required=False,lidar_reference_footprint_checked=False,
                     lidar_stop_sweep_required=False,near_field_evidence="operator_supervised_image_only")
@@ -413,8 +414,12 @@ class VisionGoalNode(Node):
         if demand.reason!="tracking":
             return demand
         delta=goal-self.pose[0][:2];yaw=self.pose[0][2]
-        if float(delta@[math.cos(yaw),math.sin(yaw)])<=0:
+        if not getattr(self,"image_only",False) and float(delta@[math.cos(yaw),math.sin(yaw)])<=0:
             return Demand(reason="goal_not_ahead")
+        if getattr(self,"image_only",False):
+            rotation=np.array([[math.cos(yaw),-math.sin(yaw)],[math.sin(yaw),math.cos(yaw)]])
+            try:local_goal_target(delta@rotation,allow_side_goal=True)
+            except ValueError:return Demand(reason="goal_requires_reorientation")
         speed=min(demand.linear,math.sqrt(2*self.controller.max_deceleration_mps2*max(distance-.15,0)))
         scale=speed/max(demand.linear,1e-9)
         if getattr(self,"local_fusion",False):

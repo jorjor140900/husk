@@ -1,5 +1,7 @@
 # โหมดเดินตามเส้นจากภาพและ AI โดยไม่ใช้ LiDAR หยุดสิ่งกีดขวาง
 
+สำหรับเลี้ยวแยกซ้าย/ขวาตาม goal และเปลี่ยนเพดานหมุน 20° เดิม ใช้[คู่มือ junction turn](ros2-junction-turn.md)
+
 เพิ่ม `guidance_mode:=image_only` บน branch `experiment/local-ai-lidar`
 ใช้ได้เมื่อเลือก `supervised_trial:=true` และ profile supervised ที่ตรงกันเท่านั้น
 เลือกโหมดนี้ตอนเปิด launch; ไม่เปลี่ยนโหมดกลาง session

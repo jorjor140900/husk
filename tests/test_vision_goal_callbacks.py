@@ -251,6 +251,18 @@ class VisionGoalCallbackTests(unittest.TestCase):
         n.tick();self.assertEqual(n.command_pub.publish.call_args.args[0].twist.linear.x,0.)
         self.assertEqual(json.loads(n.status_pub.publish.call_args.args[0].data)['reason'],'image_reference_stale')
 
+    def test_image_only_steers_toward_side_goal_at_junction(self):
+        n=self.node;n.image_only=True;n.local_fusion=False;n.supervised_trial=True
+        n.route=None;n.start_x=.8;n.config=VisionReferenceConfig()
+        n.goal.pose.position.x=0.;n.goal.pose.position.y=3.
+        n.pending=(10*10**9,np.ones((480,640),np.uint8),time.monotonic())
+        with mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*_:np.ones(len(p),np.uint8)):
+            n.retry()
+        self.assertIsNotNone(n.reference)
+        self.assertEqual(n.detail['reference_kind'],'junction_arc')
+        demand=n.demand()
+        self.assertEqual(demand.reason,'tracking');self.assertGreater(demand.angular,0.)
+
     def test_new_near_obstacle_stops_an_existing_local_reference_immediately(self):
         n=self.prepare_local();n.reference=np.column_stack([np.linspace(1,3,41),np.zeros(41)])
         n.tick();self.assertGreater(n.command_pub.publish.call_args.args[0].twist.linear.x,0.)

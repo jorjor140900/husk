@@ -9,18 +9,22 @@ GOAL_LIMITS = dict(LIMITS, max_linear_mps=.05, max_distance_m=3., max_duration_s
 
 EXTENDED_GOAL_LIMITS = dict(GOAL_LIMITS,max_linear_mps=.15,max_distance_m=100.,max_duration_sec=300.)
 LONG_GOAL_LIMITS = dict(EXTENDED_GOAL_LIMITS,max_duration_sec=900.)
+TURN_GOAL_LIMITS = dict(LONG_GOAL_LIMITS,max_rotation_rad=2*math.pi)
 
 
-def selected_limits(goal=False,extended=False,duration=300.):
+def selected_limits(goal=False,extended=False,duration=300.,*,turning=False):
     if type(goal) is not bool or type(extended) is not bool or extended and not goal:
         raise ValueError('extended session requires explicit goal session')
     if type(duration) not in (int,float) or duration not in (300.,900.):
         raise ValueError('extended session duration must be 300 or 900 seconds')
+    if type(turning) is not bool or turning and not (goal and extended and duration==900.):
+        raise ValueError('turning session requires extended goal and 900 seconds')
+    if turning:return TURN_GOAL_LIMITS.copy()
     return (LONG_GOAL_LIMITS if duration==900. else EXTENDED_GOAL_LIMITS).copy() if extended else (GOAL_LIMITS if goal else LIMITS).copy()
 
 
 def checked_limits(value):
-    if not isinstance(value,dict) or value not in (LIMITS,GOAL_LIMITS,EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS):
+    if not isinstance(value,dict) or value not in (LIMITS,GOAL_LIMITS,EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS,TURN_GOAL_LIMITS):
         raise ValueError('supervised trial limits must match a fixed bounded configuration')
     return value.copy()
 

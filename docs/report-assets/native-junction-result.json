@@ -1,0 +1,15 @@
+{
+  "result": "passed",
+  "native_ros2": true,
+  "synthetic": true,
+  "physical_robot": false,
+  "goal_xy_m": [
+    2.0,
+    3.0
+  ],
+  "error_m": 0.14468399021355063,
+  "final_heading_deg": 98.79038221315729,
+  "source_capture_tf_delay_sec": 0.09,
+  "planning_only_gate_stays_zero": true,
+  "no_global_cmd_vel": true
+}

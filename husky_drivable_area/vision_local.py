@@ -52,11 +52,12 @@ def transform_xy(points,matrix):
     return np.asarray(points,float)@m[:2,:2].T+m[:2,3]
 
 
-def local_goal_target(goal,lookahead=2.5):
+def local_goal_target(goal,lookahead=2.5,*,allow_side_goal=False):
     goal=np.asarray(goal,float)
-    if goal.shape!=(2,) or not np.isfinite(goal).all() or goal[0]<=.05:
+    if goal.shape!=(2,) or not np.isfinite(goal).all() or np.linalg.norm(goal)<.05:
         raise ValueError("local_goal_not_ahead")
-    if abs(math.atan2(goal[1],goal[0]))>math.radians(65):
+    if not allow_side_goal and goal[0]<=.05:raise ValueError("local_goal_not_ahead")
+    if abs(math.atan2(goal[1],goal[0]))>math.radians(110 if allow_side_goal else 65):
         raise ValueError("local_goal_requires_reorientation")
     return goal*min(1.,lookahead/np.linalg.norm(goal))
 

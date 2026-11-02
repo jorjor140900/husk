@@ -13,6 +13,15 @@ from test_ground_geometry import camera_mapping, mount_mapping
 
 
 class OperatorProfileTests(unittest.TestCase):
+    def test_turning_profile_is_the_same_on_both_sides_without_overwriting_source(self):
+        from husky_link_core.supervised_trial import TURN_GOAL_LIMITS
+        before=self.source.read_bytes()
+        prepare_operator_profile(self.source,self.output,self.robot_output,
+            supervised_extended_goal=True,extended_session_sec=900.,turning_session=True)
+        self.assertEqual(json.loads(self.output.read_text())['trial_limits'],TURN_GOAL_LIMITS)
+        self.assertEqual(json.loads(self.robot_output.read_text())['trial_limits'],TURN_GOAL_LIMITS)
+        self.assertEqual(self.source.read_bytes(),before)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
