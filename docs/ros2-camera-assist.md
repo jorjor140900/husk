@@ -31,7 +31,7 @@ ros2 launch husky_vision camera_assist.launch.py \
   allow_motion:=true
 ```
 
-ไม่ใส่ `map`, `waypoint_mode` หรือ goal หากต้องการดูภาพอย่างเดียว ใช้ `allow_motion:=false` ภาพเผยแพร่ที่ `/husky_assist/overlay/compressed` ใช้ image viewer เดิมเลือก topic นี้ได้:
+ไม่ใส่ `map`, `waypoint_mode` หรือ goal หากยังไม่เชื่อมหุ่น ใช้ `allow_motion:=false` จะเปิดเฉพาะกล้อง, AI และตัวสร้างภาพ ไม่เปิด bridge/permission/filter และไม่ต้องมี TF/odometry เส้น preview คำนวณจากภาพปัจจุบันและไม่ถูกนำไปส่งคำสั่งมอเตอร์ ภาพเผยแพร่ที่ `/husky_assist/overlay/compressed` ใช้ image viewer เดิมเลือก topic นี้ได้:
 
 ```bash
 ros2 run rqt_image_view rqt_image_view /husky_assist/overlay
@@ -189,3 +189,13 @@ ros2 run husky_vision camera_assist_teleop
 โฟกัส terminal นี้แล้วกด i/w/Up ค้าง เมื่อทางโค้งระบบปรับ angular ให้เอง ใช้ k/Space หยุดทันที ปล่อยปุ่มหมดอายุภายในประมาณ .6 s; ไม่มีการวิ่งหาโกลเองหลังปล่อย
 
 เมื่อจะจบ ให้กด k/Space ที่ terminal 7 แล้ว Space ที่ terminal 3 จากนั้น Ctrl+C ที่ launch/bridge/tunnel ได้ ถ้าต้อง reset fault ใหม่ ต้อง STOP ที่ terminal 3 ก่อน แล้วทำ reset/enable ตาม terminal 6 อีกครั้ง
+
+## ทดสอบกล้องบนคอมโดยไม่เชื่อมหุ่น
+
+```bash
+ros2 launch husky_vision camera_assist.launch.py \
+  profile:="$HOME/husky_vision_ws/robot/robot-nojoy-junction.json" \
+  allow_motion:=false
+```
+
+เปิด rqt_image_view แล้วเลือก `/husky_assist/overlay/compressed` ได้โดยไม่ต้อง tunnel หรือเปิดหุ่น แม้เลือก allow_motion:=true แต่ไม่มีหุ่น ภาพยังแสดงเป็น preview ได้ ส่วน reference ควบคุมยังต้องรอ TF/odometry จริง ไม่มีการสร้าง TF สมมติแทนหุ่น

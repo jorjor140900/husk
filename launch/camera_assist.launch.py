@@ -42,7 +42,7 @@ def _nodes(context):
         camera_calibration=camera['calibration_path'],camera_mount=camera['mount_path'],
         config_file=str(share/'config/outdoor-supported-green-stable.json'),
         show_nav2_path='false',async_reference_preview='false',max_frame_age_sec='0.5')
-    return [SetEnvironmentVariable('RMW_IMPLEMENTATION','rmw_cyclonedds_cpp'),
+    nodes=[SetEnvironmentVariable('RMW_IMPLEMENTATION','rmw_cyclonedds_cpp'),
         Node(package='husky_drivable_area',executable='webcam_node',output='screen',parameters=[dict(
             camera_index=int(match.group(1)),width=camera['width'],height=camera['height'],fps=camera['fps'],
             frame_id=mount.camera_frame,image_topic='/camera/image_raw')]),
@@ -69,6 +69,10 @@ def _nodes(context):
                 ('odom','/husky_link/odom'),('control/requested_cmd_vel','/husky_assist/guarded_request'),
                 ('control/cmd_vel','/husky_assist/filtered_cmd_vel'),('control/cmd_vel_stamped','/husky_assist/filtered_cmd_vel_stamped'),
                 ('/husky_nav/control_status','/husky_assist/gate_status'),('/husky_nav/reset_trial','/husky_assist/reset_trial')])]
+    if not allow:
+        # A laptop-only preview needs neither a robot connection nor fake TF.
+        nodes=[nodes[0],nodes[1],nodes[2],nodes[6]]
+    return nodes
 
 
 def generate_launch_description():

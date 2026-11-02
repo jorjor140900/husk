@@ -59,7 +59,7 @@ class CameraAssistNode(Node):
         self.buffer=Buffer();self.listener=TransformListener(self.buffer,self)
         self.teleop=None;self.pose=None;self.pending=None;self.reference=None
         self.source_ns=0;self.source_received=float('-inf');self.reason='waiting_for_image'
-        self.detail={};self.images=OrderedDict();self.display=None
+        self.detail={};self.images=OrderedDict();self.display=None;self.capture_plans=OrderedDict()
         sensor=QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT)
         self.output=self.create_publisher(Twist,'/husky_assist/guarded_request',1)
         self.status=self.create_publisher(String,'/husky_assist/status',1)
@@ -132,10 +132,23 @@ class CameraAssistNode(Node):
                 if not self.fresh_reference():self.clear('stale_segmentation')
                 return
             if ns<=self.source_ns:return
+            path,reason,_=self.plan_capture(ns,labels)
+            caption=('preview only' if not self.allow_motion else 'preview; robot TF required') if len(path) else reason
+            self.display=(ns,labels,path,caption)
+            if not self.allow_motion:
+                self.render();self.reason='preview_only';return
             if self.pending is None or not fresh_stamp(self.pending[0],self.pending[2],
                     self.get_clock().now().nanoseconds,now,.5):self.pending=(ns,labels,now)
             self.retry()
         except (ValueError,TypeError,KeyError,OverflowError,cv2.error):self.clear('invalid_segmentation_packet')
+
+    def plan_capture(self,ns,labels):
+        if not hasattr(self,'capture_plans'):self.capture_plans=OrderedDict()
+        if ns not in self.capture_plans:
+            sample=lambda points:sample_ground_labels(points,labels,self.camera,self.mount)
+            self.capture_plans[ns]=plan_area_reference(sample,self.start_x,config=self.config)
+            while len(self.capture_plans)>12:self.capture_plans.popitem(last=False)
+        return self.capture_plans[ns]
 
     def retry(self):
         if self.pending is None:return
@@ -147,7 +160,7 @@ class CameraAssistNode(Node):
         try:
             matrix=self.tf_matrix(ns)
             sample=lambda points:sample_ground_labels(points,labels,self.camera,self.mount)
-            path,reason,detail=plan_area_reference(sample,self.start_x,config=self.config)
+            path,reason,detail=self.plan_capture(ns,labels)
             if self.fresh_reference():
                 old=(self.reference-matrix[:2,3])@matrix[:2,:2]
                 previous=reusable_reference(old,sample,self.start_x,self.config.half_width_m+self.config.side_margin_m)
@@ -163,6 +176,7 @@ class CameraAssistNode(Node):
             self.source_ns=ns;self.source_received=received;self.reason='tracking';self.detail=detail
             self.display=(ns,labels,path,'ready; hold forward in teleop');self.render()
         except TransformException:
+            self.render()
             if not self.fresh_reference():self.reason='waiting_for_capture_tf'
         except (ValueError,TypeError,KeyError,OverflowError,cv2.error):self.clear('invalid_image_geometry')
 

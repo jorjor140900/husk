@@ -39,13 +39,8 @@ class CameraAssistLaunchTests(unittest.TestCase):
     def test_camera_only_graph_has_no_map_goal_rviz_nav2_or_scan_consumer(self):
         rows=self.module._nodes(self.context)
         nodes={n.executable:n for n in rows if hasattr(n,'executable')}
-        self.assertEqual(set(nodes),{'webcam_node','robot_bridge','static_transform_publisher','field_permission','camera_assist','laser_safety'})
+        self.assertEqual(set(nodes),{'webcam_node','camera_assist'})
         self.assertFalse(nodes['camera_assist'].parameters[0]['allow_motion'])
-        self.assertFalse(nodes['robot_bridge'].parameters[0]['forward_commands'])
-        self.assertFalse(nodes['laser_safety'].parameters[-1]['subscribe_scan'])
-        self.assertTrue(nodes['laser_safety'].parameters[-1]['pause_on_vision_gap'])
-        self.assertIn(('/husky_nav/control_status','/husky_assist/gate_status'),nodes['laser_safety'].remappings)
-        self.assertFalse(any('scan' in str(pair) for pair in nodes['laser_safety'].remappings))
         perception=next(n for n in rows if hasattr(n,'source'))
         self.assertIn('drivable_area.launch.py',perception.source)
         self.assertEqual(perception.arguments['show_nav2_path'],'false')

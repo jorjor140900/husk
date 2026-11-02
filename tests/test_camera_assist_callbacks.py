@@ -94,6 +94,22 @@ class AssistCallbacksTests(unittest.TestCase):
             n.retry()
         self.assertIsNone(n.reference);self.assertEqual(n.output.publish.call_args.args[0].linear.x,0.)
 
+    def test_preview_without_robot_renders_but_never_fabricates_control_tf(self):
+        for allow in (False,True):
+            with self.subTest(allow_motion=allow):
+                self.setUp();n=self.node;n.allow_motion=allow;n.reference=None;n.pose=None;n.source_ns=0
+                n.tf_matrix.side_effect=RuntimeError('no robot TF')
+                labels=np.ones((480,640),np.uint8)
+                packet=dict(source_header=dict(frame_id='camera',stamp=dict(sec=10,nanosec=100_000_000)),raw_shape_hw=[480,640])
+                with mock.patch.object(self.module,'decode_segmentation',return_value=(packet,labels)), \
+                     mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*_:np.ones(len(p),np.uint8)):
+                    n.segmentation(NS(data='{}'))
+                n.render.assert_called()
+                self.assertGreater(len(n.display[2]),2)
+                self.assertIsNone(n.reference)
+                self.assertEqual(n.demand().linear,0.)
+                if not allow:n.tf_matrix.assert_not_called()
+
     def test_malformed_packet_never_holds_last_path(self):
         self.node.segmentation(NS(data='not json'))
         self.assertIsNone(self.node.reference)
