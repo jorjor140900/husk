@@ -7,7 +7,7 @@ from .ground_overlay import robot_axis_pixels
 from .nav2_camera_path import project_nav2_path
 
 
-def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,local_fusion=False,assume_near_field_clear=False,image_only=False,edges=None):
+def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,local_fusion=False,assume_near_field_clear=False,image_only=False,edges=None,assisted=False):
     image=frame.copy()
     mask=cv2.resize((labels==1).astype(np.uint8),(frame.shape[1],frame.shape[0]),interpolation=cv2.INTER_NEAREST)>0
     green=np.full_like(frame,(0,200,0))
@@ -33,8 +33,9 @@ def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_
                 cv2.polylines(image,[np.rint(points[start:end]).astype(np.int32)],False,colour,width,cv2.LINE_AA)
     cv2.rectangle(image,(0,0),(image.shape[1],65),(20,20,20),-1)
     title="IMAGE AI ONLY: " if image_only else "LOCAL AI + LiDAR: " if local_fusion else "IMAGE + AI: "
+    if assisted:title="CAMERA STEERING ASSIST: "
     for y,text in ((18,title+reason),(38,"Yellow=controller reference  Blue=robot Y=0"),
-                   (58,"Red=mask edge fits | Goal selects direction")):
+                   (58,"Green=AI area | Yellow=assist path | Hold forward" if assisted else "Red=mask edge fits | Goal selects direction")):
         cv2.putText(image,text,(7,y),cv2.FONT_HERSHEY_SIMPLEX,.42,(255,255,255),1)
     if supervised_trial:
         cv2.rectangle(image,(0,65),(image.shape[1],87),(0,70,110),-1)

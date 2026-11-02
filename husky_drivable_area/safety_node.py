@@ -31,7 +31,7 @@ class LaserSafetyNode(Node):
     def __init__(self, **kwargs):
         super().__init__("laser_safety", **kwargs)
         for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link", "supervised_trial": False, "trial_goal_session": False, "trial_extended_session": False, "trial_extended_duration_sec": 300.,
-                            "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,"trial_turning_session":False,'pause_on_vision_gap':False,
+                            "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,"trial_turning_session":False,'pause_on_vision_gap':False,'subscribe_scan':True,
                             "request_timeout_sec": 0.3, "permission_timeout_sec": 0.3,
                             "release_hold_sec": 0.5, "output_acceleration_mps2": 0.25,
                             "output_angular_acceleration_rps2": 0.8}.items():
@@ -78,7 +78,10 @@ class LaserSafetyNode(Node):
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
-        self.scan_sub = self.create_subscription(LaserScan, "scan", self._scan, qos)
+        subscribe_scan=value('subscribe_scan')
+        if type(subscribe_scan) is not bool or not subscribe_scan and not self.supervised_trial:
+            raise ValueError('disabling scan subscription requires supervised_trial')
+        self.scan_sub = self.create_subscription(LaserScan, "scan", self._scan, qos) if subscribe_scan else None
         self.odom_sub = self.create_subscription(Odometry, "odom", self._odom, qos)
         self.request_sub = self.create_subscription(Twist, "control/requested_cmd_vel", self._request, 1)
         self.permission_sub = self.create_subscription(Bool, "motion_permitted", self._permission, 1)

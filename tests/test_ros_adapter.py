@@ -266,6 +266,17 @@ class CallbackTests(unittest.TestCase):
         self.assertFalse(self.status()["valid_image_path"])
         self.assertEqual(self.node._reference_pub.publish.call_args.args[0].polygon.points, [])
 
+    def test_transient_late_frame_preserves_recent_detector_history_without_publishing_it_fresh(self):
+        self.node._last_detector_header=header(sec=9,nanosec=400_000_000)
+        self.node._detector.reset=mock.Mock()
+        self.node._invalidate('stale_result',header(sec=9,nanosec=400_000_000),.6)
+        self.node._detector.reset.assert_not_called()
+        self.assertEqual(self.status()['reason'],'stale_result')
+        self.assertFalse(self.status()['valid_image_path'])
+        self.node._last_detector_header=header(sec=8)
+        self.node._invalidate('stale_result',header(sec=8),2.)
+        self.node._detector.reset.assert_called_once()
+
     def test_camera_silence_invalidates_reference_and_resets_history(self):
         self.node._latest.put(image_message())
         self.node._process_latest()

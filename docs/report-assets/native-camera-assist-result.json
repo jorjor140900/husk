@@ -1,0 +1,15 @@
+{
+  "result": "passed",
+  "native_ros2": true,
+  "synthetic": true,
+  "physical_robot": false,
+  "held_forward_required": true,
+  "release_stops": true,
+  "left_right_curves_steered": true,
+  "missing_image_expires": true,
+  "new_veto_stops": true,
+  "recovery_without_latched_fault": true,
+  "session_budget_not_reset": true,
+  "no_goal_map_lidar_or_global_cmd_vel": true,
+  "simulated_distance_x_m": 0.5493072157290175
+}

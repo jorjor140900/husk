@@ -12,5 +12,6 @@
   "vegetation_excess_green_min": 0.08,
   "vegetation_dilation_px": 2,
   "vegetation_support_radius_px": 3,
-  "vegetation_support_fraction": 0.5
+  "vegetation_support_fraction": 0.5,
+  "probability_release_threshold": 0.54
 }

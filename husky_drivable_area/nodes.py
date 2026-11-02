@@ -375,10 +375,15 @@ class DrivableAreaNode(Node):
             good_age=(self.get_clock().now().nanoseconds-stamp)/1e9
             incoming=header.stamp.sec*10**9+header.stamp.nanosec if header is not None else stamp
             if incoming!=stamp and stamp>0 and -.05<=good_age<=min(self._max_age,.5):
-                if reason=='stale_result':self._detector.reset()
                 self.get_logger().warning('Dropping late capture; keeping last fresh source within original deadline',throttle_duration_sec=2.)
                 return
-        self._detector.reset()
+        history=getattr(self,'_last_detector_header',None)
+        history_age=(self.get_clock().now().nanoseconds-(history.stamp.sec*10**9+history.stamp.nanosec))/1e9 if history is not None else float('inf')
+        keep_history=(reason in ('stale_input','stale_result','stale_output') and
+            history is not None and header is not None and history.frame_id==header.frame_id and 0<=history_age<=1.)
+        if not keep_history:
+            self._detector.reset()
+            self._last_detector_header=None
         if getattr(self,"_reference_worker",None) is not None:
             self._reference_worker.reset()
         _, _, skipped = self._latest.state()
@@ -420,11 +425,12 @@ class DrivableAreaNode(Node):
             if age > self._max_age:
                 self._invalidate("stale_input", header, age, timings)
                 return
-            previous = self._last_processed_header
+            previous = getattr(self,"_last_detector_header",None) or self._last_processed_header
             # New camera/frame or backward replay timestamps start new history.
             if previous is not None and (
                 header.frame_id != previous.frame_id or
-                (header.stamp.sec, header.stamp.nanosec) < (previous.stamp.sec, previous.stamp.nanosec)
+                (header.stamp.sec, header.stamp.nanosec) < (previous.stamp.sec, previous.stamp.nanosec) or
+                ((header.stamp.sec-previous.stamp.sec)+(header.stamp.nanosec-previous.stamp.nanosec)/1e9)>1.
             ):
                 self._detector.reset()
                 if getattr(self,"_reference_worker",None) is not None:
@@ -437,6 +443,7 @@ class DrivableAreaNode(Node):
             inference_finished = time.perf_counter()
             timings["inference_ms"] = (inference_finished - started) * 1000
             result = self._detector.process(frame, drivable_probability=probability)
+            self._last_detector_header=header
             result.backend = "segformer"
             processed_at = time.perf_counter()
             result.processing_ms = (processed_at - started) * 1000

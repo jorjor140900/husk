@@ -32,6 +32,7 @@ class DetectorConfig:
     edge_high_threshold: int = 80
     region_step: int = 6
     probability_threshold: float = 0.62
+    probability_release_threshold: float = 0.62
     current_probability_floor: float = 0.50
     temporal_alpha: float = 0.65
     temporal_flow_width: int = 0
@@ -95,6 +96,8 @@ class DetectorConfig:
             raise ValueError("region_step must be in 1..40")
         if not 0 < self.current_probability_floor <= self.probability_threshold < 1:
             raise ValueError("require 0 < current_probability_floor <= probability_threshold < 1")
+        if not self.current_probability_floor <= self.probability_release_threshold <= self.probability_threshold:
+            raise ValueError('probability_release_threshold must be within current floor..entry threshold')
         if not 0 < self.temporal_alpha <= 1:
             raise ValueError("temporal_alpha must be in (0, 1]")
         if self.clearance_px < 0 or not 1 <= self.max_lateral_step <= 10:
@@ -164,6 +167,8 @@ class RoadDetector:
         self._previous_gray = None
         self._previous_probability = None
         self._previous_path = None
+        self._previous_mask = None
+        self._aligned_previous_mask = None
 
     def _appearance_probability(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
@@ -242,6 +247,7 @@ class RoadDetector:
 
     def _filter_history(self, probability: np.ndarray, gray: np.ndarray):
         preferred = None
+        self._aligned_previous_mask = None
         cfg = self.config
         if not cfg.use_temporal or self._previous_gray is None or self._previous_gray.shape != gray.shape:
             return probability.copy(), preferred
@@ -272,6 +278,9 @@ class RoadDetector:
         )
         # Current negative evidence wins immediately; old masks cannot reopen it.
         filtered[probability < cfg.current_probability_floor] = probability[probability < cfg.current_probability_floor]
+        if self._previous_mask is not None:
+            self._aligned_previous_mask = cv2.remap(self._previous_mask,mx,my,cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)>0
+            self._aligned_previous_mask[~consistent] = False
         if self._previous_path is not None:
             preferred = cv2.remap(self._previous_path, mx, my, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
             preferred[~consistent] = 0
@@ -337,7 +346,14 @@ class RoadDetector:
         probability[:y_top] = 0
         probability[blocked] = 0
         candidate = (probability >= self.config.probability_threshold) & (current >= self.config.current_probability_floor)
+        # Hysteresis applies only to a motion-aligned, previously accepted road
+        # pixel. Strong current negatives, vegetation and explicit vetoes win.
+        if self._aligned_previous_mask is not None:
+            candidate |= (self._aligned_previous_mask &
+                (probability >= self.config.probability_release_threshold) &
+                (current >= self.config.current_probability_floor))
         raw_mask = candidate.astype(np.uint8) * 255
+        self._previous_mask = raw_mask.copy()
         if not self.config.generate_reference_path:
             # Nav2 consumes the full segmentation, not this diagnostic pixel
             # path. Skip DP, curve search, distance transforms and boundary fits.

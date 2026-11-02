@@ -288,3 +288,7 @@ python RoadDetection.py --camera 2 --show --config config.example.json --model m
 จอ webcam เพิ่ม `Compute` เป็นเวลา model+mask/path, `proc FPS` เป็น 1000/Compute ซึ่งไม่รวม I/O และ `host age` เป็นเวลาตั้งแต่อ่านเฟรมนั้นสำเร็จจน model/path เสร็จ ก่อนวาด/เขียนไฟล์ ไม่ใช่เวลาจาก sensor ถึงหน้าจอจริง ใน `frames.jsonl` มี `capture_frame_index`, `camera_frames_skipped`, `host_frame_age_ms` เพิ่มเพื่อดูช่วงเฟรมที่ข้ามเมื่อโปรแกรมช้ากว่ากล้อง
 
 ทดสอบส่วนโมเดลด้วย environment ที่ติดตั้ง optional dependencies แล้ว: `python -m unittest discover -s tests -v` การทดสอบใช้ checkpoint ขนาดเล็กที่สร้างใน temporary directory สำหรับตรวจ forward/backward, การรักษา label, save/load และ CLI ไม่ใช่น้ำหนักสำหรับใช้งานจริง การรัน notebook บน Colab และการ fine-tune pretrained model กับข้อมูลจริงต้องตรวจแยกจาก tests เหล่านี้
+
+### Camera steering assist with keyboard teleop
+
+For held-forward assistance without goals, map, LiDAR or RViz, see [camera assist](docs/ros2-camera-assist.md). Teleop must publish to the private assist input; the controller selects steering from the green segmentation mask.

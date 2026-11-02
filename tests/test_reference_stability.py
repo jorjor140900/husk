@@ -29,6 +29,18 @@ class ReferenceStabilityTests(unittest.TestCase):
         self.assertEqual(process(.2).raw_mask[200,160],0)
         for _ in range(10):result=process(.58)
         self.assertEqual(result.raw_mask[200,160],0)
+    def test_mask_hysteresis_keeps_weak_road_but_never_reopens_negative_or_new_weak_area(self):
+        detector=RoadDetector(DetectorConfig(max_width=320,analysis_width=320,use_temporal=True,
+            temporal_flow_width=160,temporal_alpha=.35,probability_release_threshold=.54,generate_reference_path=False))
+        frame=np.full((240,320,3),100,np.uint8)
+        def process(p):return detector.process(frame,drivable_probability=np.full((240,320),p,np.float32))
+        self.assertGreater(process(.8).raw_mask[200,160],0)
+        for _ in range(20):result=process(.58)
+        self.assertGreater(result.raw_mask[200,160],0)
+        self.assertEqual(process(.2).raw_mask[200,160],0)
+        for _ in range(20):result=process(.58)
+        self.assertEqual(result.raw_mask[200,160],0)
+
     def test_previous_geometry_is_kept_only_when_new_capture_supports_whole_width(self):
         path=np.column_stack([np.linspace(.9,2.5,65),np.zeros(65)])
         sample=lambda p:np.ones(len(p),np.uint8)
