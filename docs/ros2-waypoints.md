@@ -1,5 +1,29 @@
 # คิว waypoint สำหรับทางรูป U
 
+## ลดเส้นกระพริบ
+
+field launch ใช้ `stabilize_mask:=true` เป็นค่าเริ่มต้นสำหรับ navigation:
+กรอง probability ข้ามภาพโดย optical flow ก่อน blend (current weight 0.35)
+หลักฐานปัจจุบันที่ต่ำกว่า probability floor และ colour veto ยังชนะทันที
+ไม่ได้เติม binary non-drivable ทั้งหมดให้เป็น free และไม่ยืด source timestamp
+
+เมื่อเส้นเดิมยังสด ตัวคอนโทรลแปลงเส้นเดิมจาก odom กลับเข้าภาพใหม่
+ตรวจแถบทั้งความกว้างด้วย mask ปัจจุบันก่อน reuse geometry พร้อม hysteresis
+ถ้าค้น candidate ใหม่ไม่สำเร็จแต่เส้นเดิมผ่านการตรวจภาพใหม่ ก็ใช้เส้นที่ตรวจใหม่นี้ได้
+ถ้าไม่มีภาพใหม่/TF ใช้ reference ได้ภายใน deadline เดิม 0.5 s เท่านั้น
+ภาพใหม่ที่มี veto/unknown บนแถบไม่สามารถทำให้ reference เก่าผ่านการ revalidation
+status มี `reference_reused_after_current_mask_check` เพื่อระบุการใช้ geometry เดิม
+
+เส้นแดงใช้ EMA เฉพาะขอบที่ fit ได้ในภาพปัจจุบัน ไม่มีขอบใหม่จะไม่วาดขอบเก่าค้าง
+การกรองขอบเป็นงานแสดงผล ไม่เปลี่ยน mask หรือ reference ควบคุม
+
+`waiting_for_goal_guide` ของรุ่นก่อน หรือ `waiting_for_waypoint_or_start` ของรุ่นใหม่
+หมายถึงไม่มี goal ที่คอนโทรลใช้อยู่ ต้องตรวจคิวและสั่ง start เมื่อมีจุดแต่ยังไม่ได้เริ่ม
+ไม่ใช้เส้นจาก goal ก่อนหน้าเดินต่อหลัง cancel/clear/เปลี่ยน goal
+
+probability smoothing เพิ่มงาน CPU; ถ้าต้องเปรียบเทียบกับชุด fast เดิม ใช้
+`stabilize_mask:=false` ตอนเปิด launch ส่วนการ revalidate reference และกรองเส้นแดงยังมีผล
+
 เปิด `waypoint_mode:=true` ร่วมกับ `guidance_mode:=image_only` หรือ local_fusion
 เมื่อเลือกโหมดคิว การคลิก 2D Goal Pose ใน RViz เป็นการเพิ่มจุดลงคิว ไม่สั่งหุ่นวิ่งทันที
 กดจุดเรียงตามทาง U ตั้งแต่ก่อนเข้าโค้ง ผ่านแต่ละโค้ง จนถึงปลายทาง

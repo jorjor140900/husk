@@ -18,6 +18,7 @@ from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from road_navigation.detector import DetectorConfig
+from road_navigation.reference_geometry import estimate_boundaries
 from .control import ControllerConfig, CommandLimiter, Demand, fresh_stamp, pursuit, quaternion_matrix, validate_path
 from .controller_node import stamp_ns
 from .ground_geometry import CameraCalibration, CameraMount, project_path
@@ -27,6 +28,7 @@ from .vision_grid import decode_segmentation
 from .vision_goal import (VisionReferenceConfig, sample_ground_labels, route_direction,
     plan_vision_reference,validate_guidance_mode)
 from .vision_goal_overlay import draw_vision_reference
+from .reference_stability import reusable_reference,choose_stable_reference,EdgeSmoother
 from .vision_local import (LocalFusionConfig, LocalLidarGrid, local_goal_target, fused_sampler,
     validate_local_scan,validate_near_field_assumption)
 
@@ -83,6 +85,7 @@ class VisionGoalNode(Node):
         self.reason="waiting_for_goal";self.detail={};self.images=OrderedDict()
         self.last_tick=time.monotonic();self.last_overlay_stamp=0
         self.last_seg_ns=0;self.last_display=None;self.overlay_pending=None
+        self.edge_smoother=EdgeSmoother()
         qos=QoSProfile(depth=1,reliability=ReliabilityPolicy.RELIABLE,durability=DurabilityPolicy.TRANSIENT_LOCAL)
         sensor=QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT)
         self.path_pub=self.create_publisher(Path,"/husky_nav/vision_reference",1)
@@ -278,7 +281,7 @@ class VisionGoalNode(Node):
             self.pending=None;self.clear("goal_reached")
             self.overlay(ns,labels,[],self.reason);return
         if self.goal is None or (not self.direct_goal and self.route is None):
-            self.pending=None;self.clear("waiting_for_goal_guide")
+            self.pending=None;self.clear("waiting_for_waypoint_or_start" if self.direct_goal else "waiting_for_goal_guide")
             self.overlay(ns,labels,[],self.reason);return
         try:
             if not self.direct_goal:
@@ -318,6 +321,24 @@ class VisionGoalNode(Node):
             elif getattr(self,"image_only",False):
                 target=local_goal_target(goal,allow_side_goal=True)
                 reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config,goal_priority=True)
+                previous=None
+                if self.reference is not None and fresh_stamp(self.source_ns,self.source_received,
+                        self.get_clock().now().nanoseconds,time.monotonic(),.5):
+                    ground_from_odom=np.linalg.inv(odom_from_ground)
+                    old=self.reference@ground_from_odom[:2,:2].T+ground_from_odom[:2,3]
+                    previous=reusable_reference(old,sample,self.start_x,self.config.half_width_m+self.config.side_margin_m)
+                reference,reused=choose_stable_reference(reference,previous,target,
+                    slack=.02 if np.linalg.norm(target)<1.75 else .10)
+                if reused:
+                    detail=dict(reference_start_m=float(reference[0,0]),
+                        observed_reference_length_m=float(np.linalg.norm(np.diff(reference,axis=0),axis=1).sum()),
+                        reference_forward_span_m=float(reference[-1,0]-reference[0,0]),
+                        reference_max_lateral_m=float(np.abs(reference[:,1]).max()),reference_kind='revalidated_reference',
+                        guide_target_ground_xy=target.tolist(),reference_end_ground_xy=reference[-1].tolist(),
+                        reference_end_to_target_m=float(np.linalg.norm(reference[-1]-target)),goal_priority=True,
+                        reserved_width_m=2*(self.config.half_width_m+self.config.side_margin_m),footprint_checked=False)
+                    reason='ok'
+                detail['reference_reused_after_current_mask_check']=reused
                 local_detail=dict(global_plan_required=False,lidar_reference_footprint_checked=False,
                     lidar_stop_sweep_required=False,near_field_evidence="operator_supervised_image_only")
             else:
@@ -370,6 +391,9 @@ class VisionGoalNode(Node):
             if message.header.frame_id!=self.mount.camera_frame:
                 return
             frame=image_to_bgr(message)
+            mask=cv2.resize((labels==1).astype(np.uint8),(frame.shape[1],frame.shape[0]),interpolation=cv2.INTER_NEAREST)
+            edges=estimate_boundaries(mask)
+            if hasattr(self,'edge_smoother'):edges=self.edge_smoother.update(edges,ns,frame.shape[:2])
             image=draw_vision_reference(frame,labels,reference,self.camera,self.mount,reason,
                 supervised_trial=getattr(self,"supervised_trial",False),
                 trial_goal_session=getattr(self,"trial_goal_session",False),
@@ -377,6 +401,7 @@ class VisionGoalNode(Node):
                 trial_extended_duration_sec=getattr(self,"trial_extended_duration_sec",300.),
                 local_fusion=getattr(self,"local_fusion",False),
                 image_only=getattr(self,"image_only",False),
+                edges=edges,
                 assume_near_field_clear=getattr(self,"assume_near_field_clear",False))
             result=fill_compressed_image(CompressedImage(),image,message.header,80)
             self.overlay_pub.publish(result);self.last_overlay_stamp=ns

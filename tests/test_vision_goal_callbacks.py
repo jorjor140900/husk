@@ -251,6 +251,29 @@ class VisionGoalCallbackTests(unittest.TestCase):
         n.tick();self.assertEqual(n.command_pub.publish.call_args.args[0].twist.linear.x,0.)
         self.assertEqual(json.loads(n.status_pub.publish.call_args.args[0].data)['reason'],'image_reference_stale')
 
+    def test_current_mask_can_revalidate_a_fresh_reference_when_candidate_search_fails(self):
+        n=self.node;n.local_fusion=False;n.image_only=True;n.supervised_trial=True
+        n.route=None;n.start_x=1.;n.config=VisionReferenceConfig()
+        n.reference=np.column_stack([np.linspace(1,2.5,61),np.zeros(61)])
+        n.pending=(10_050_000_000,np.ones((480,640),np.uint8),time.monotonic())
+        with mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*_:np.ones(len(p),np.uint8)), \
+             mock.patch.object(self.module,'plan_vision_reference',return_value=(np.empty((0,2)),'no_observed_image_corridor',{})):
+            n.retry()
+        self.assertIsNotNone(n.reference);self.assertEqual(n.source_ns,10_050_000_000)
+        self.assertTrue(n.detail['reference_reused_after_current_mask_check'])
+        n.tick();self.assertTrue(json.loads(n.status_pub.publish.call_args.args[0].data)['valid'])
+        n.pending=(10_060_000_000,np.ones((480,640),np.uint8),time.monotonic())
+        with mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*_:np.zeros(len(p),np.uint8)), \
+             mock.patch.object(self.module,'plan_vision_reference',return_value=(np.empty((0,2)),'no_observed_image_corridor',{})):
+            n.retry()
+        self.assertIsNone(n.reference)
+
+    def test_no_goal_cannot_reuse_reference_or_invent_a_route(self):
+        n=self.node;n.image_only=True;n.goal=None
+        n.pending=(10_050_000_000,np.ones((480,640),np.uint8),time.monotonic())
+        n.retry()
+        self.assertIsNone(n.reference);self.assertEqual(n.reason,'waiting_for_waypoint_or_start')
+
     def test_image_only_steers_toward_side_goal_at_junction(self):
         n=self.node;n.image_only=True;n.local_fusion=False;n.supervised_trial=True
         n.route=None;n.start_x=.8;n.config=VisionReferenceConfig()

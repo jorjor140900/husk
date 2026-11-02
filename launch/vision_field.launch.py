@@ -41,7 +41,8 @@ def _nodes(context):
         model_path=str(expanded_path(camera["model_path"])), model_width="256", model_height="160", cpu_threads="2",
         camera_calibration=str(expanded_path(camera["calibration_path"])),
         camera_mount=str(expanded_path(camera["mount_path"])),
-        config_file=str(share/"config/outdoor-supported-green-preview.json"),
+        config_file=str(share/"config"/("outdoor-supported-green-preview.json" if camera_only or
+            value('stabilize_mask').lower()!='true' else "outdoor-supported-green-stable.json")),
         show_nav2_path="false", async_reference_preview="true" if camera_only else "false",
         reference_preview_fps="10.0", max_frame_age_sec="0.5")
     def include(name, arguments):
@@ -62,6 +63,7 @@ def generate_launch_description():
         DeclareLaunchArgument("profile", description="Measured no-joystick profile"),
         DeclareLaunchArgument("map", default_value="", description="Saved site map; required unless camera_only=true"),
         DeclareLaunchArgument("camera_only", default_value="false", description="Image-only yellow/red preview without robot, map or controller"),
+        DeclareLaunchArgument('stabilize_mask',default_value='true',description='Motion-aligned probability smoothing; strong current vetoes still win'),
         DeclareLaunchArgument("camera_device", default_value="/dev/v4l/by-id/usb-Generic_Web_Camera_200901010001-video-index0"),
         DeclareLaunchArgument("allow_motion", default_value="false"),
         DeclareLaunchArgument('waypoint_mode',default_value='false'),

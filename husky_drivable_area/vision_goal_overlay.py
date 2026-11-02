@@ -7,7 +7,7 @@ from .ground_overlay import robot_axis_pixels
 from .nav2_camera_path import project_nav2_path
 
 
-def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,local_fusion=False,assume_near_field_clear=False,image_only=False):
+def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_trial=False,trial_goal_session=False,trial_extended_session=False,trial_extended_duration_sec=300.,local_fusion=False,assume_near_field_clear=False,image_only=False,edges=None):
     image=frame.copy()
     mask=cv2.resize((labels==1).astype(np.uint8),(frame.shape[1],frame.shape[0]),interpolation=cv2.INTER_NEAREST)>0
     green=np.full_like(frame,(0,200,0))
@@ -16,7 +16,7 @@ def draw_vision_reference(frame,labels,reference,camera,mount,reason,supervised_
     cv2.drawContours(image,contours,-1,(255,220,0),1)
     # These are supported outer-mask fits for display only. Unknown/image-cut
     # sides remain absent; they never alter labels or the controller reference.
-    for edge in estimate_boundaries(mask.astype(np.uint8)):
+    for edge in estimate_boundaries(mask.astype(np.uint8)) if edges is None else edges:
         if edge is not None:
             first=(int(round(edge.x_at(edge.y_top))),edge.y_top)
             last=(int(round(edge.x_at(edge.y_bottom))),edge.y_bottom)

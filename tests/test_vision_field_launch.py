@@ -39,7 +39,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         with mock.patch.dict("sys.modules",modules): spec.loader.exec_module(self.module)
         self.context = dict(profile=str(self.profile),map="/site/map.yaml",camera_device=str(self.device),
-                            allow_motion="false",supervised_trial="false",rviz="true",camera_only="false",guidance_mode="global_route",waypoint_mode="false",assume_near_field_clear="false")
+                            allow_motion="false",supervised_trial="false",rviz="true",camera_only="false",stabilize_mask='true',guidance_mode="global_route",waypoint_mode="false",assume_near_field_clear="false")
 
     def test_pipeline_has_one_camera_correct_frame_cuda_and_actual_controller_overlay_mode(self):
         nodes = self.module._nodes(self.context)
@@ -91,3 +91,8 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(arguments['guidance_mode'],'image_only')
         self.assertEqual(arguments['supervised_trial'],'true')
         self.assertEqual(arguments['assume_near_field_clear'],'false')
+
+    def test_stable_mask_is_used_for_navigation_and_can_be_disabled(self):
+        self.assertTrue(self.module._nodes(self.context)[2].arguments['config_file'].endswith('outdoor-supported-green-stable.json'))
+        self.context['stabilize_mask']='false'
+        self.assertTrue(self.module._nodes(self.context)[2].arguments['config_file'].endswith('outdoor-supported-green-preview.json'))
