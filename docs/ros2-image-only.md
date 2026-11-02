@@ -9,6 +9,10 @@
 - รับ goal จาก RViz โดยตรง ไม่รอ global route และไม่เปิด global planner/costmap
 - สร้าง metric reference จาก segmentation ของกล้อง ทิศ goal และ calibration/mount
 - ใช้ Pure Pursuit คอนโทรลตาม reference เดียวกับเส้นเหลืองบนภาพ
+- เลือก candidate ที่ปลายเส้นเข้าใกล้ local goal มากที่สุดก่อน แล้วใช้ความอยู่กลางทาง/ความโค้งตัดสินกรณีระยะเท่ากัน
+  ไม่ให้การอยู่กลางกลุ่มสีเขียวชนะทิศ goal เหมือนคะแนนเดิม
+- เมื่อ goal อยู่ในช่วงที่สร้าง reference ได้ จำกัดปลาย X ไม่ให้เลย goal
+  เส้นยังเป็น reference ระยะใกล้และไม่ลากผ่าน mask ที่ไม่รองรับเพื่อเชื่อมถึง goal
 - vision controller ไม่ subscribe LaserScan ไม่ fuse จุด LiDAR ไม่ตรวจ LiDAR footprint หรือ stop sweep
 - ชั้น supervised ปลายทางใช้ trial/permission gate เดิม ไม่เรียก LiDAR collision filter
 - จุดสิ่งกีดขวาง ระยะใกล้ `+inf` หรือ scan ขาด ไม่ถูกใช้ตัดสินใจหยุดในตัวคอนโทรลภาพ
@@ -116,6 +120,11 @@ ros2 topic echo /husky_nav/vision_control_status --once --full-length
 
 บางฟิลด์รายละเอียดจะเกิดหลังสร้าง reference สำเร็จ ส่วน guidance_mode และ lidar_obstacle_checks_enabled
 มีตั้งแต่ status ปกติ การเห็นเส้นเหลืองยังแยกจากการเริ่ม permission session
+
+รุ่นที่เลือก goal ก่อนรายงาน `goal_priority=true`, `guide_target_ground_xy`,
+`reference_end_ground_xy` และ `reference_end_to_target_m` เพื่อเทียบเป้าท้องถิ่นกับปลาย reference
+พิกัดเหล่านี้อยู่ในกรอบพื้น ณ เวลา capture ไม่ใช่พิกัด map ใน RViz
+goal ที่ไกลกว่า lookahead จะให้ทิศทางสำหรับ reference ระยะใกล้ ไม่จำเป็นต้องเห็นปลายเส้นถึง goal ไกลในภาพเดียว
 
 ## ขอบเขตผลทดสอบ
 

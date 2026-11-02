@@ -89,7 +89,7 @@ def route_direction(route_ground, goal_ground, lookahead=2.5):
     return target
 
 
-def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(),candidate_check=None):
+def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(),candidate_check=None,*,goal_priority=False):
     """Smooth bounded candidates scored by corridor clearance and goal direction.
 
     The reference starts on the measured robot axis at the calibrated near
@@ -109,7 +109,11 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
     if not np.all(sample(seed)==1):
         return empty,"start_blocked_narrow_or_unobserved",{}
     # A compact bird's-eye sampling grid supplies a corridor-centering cost.
-    xs=np.arange(start_x,config.max_forward_m+config.step_m/2,config.step_m)
+    forward=config.max_forward_m
+    if goal_priority and target[0]>=start_x+config.min_length_m:
+        forward=min(forward,float(target[0]))
+    xs=np.arange(start_x,forward+config.step_m/2,config.step_m)
+    if goal_priority:xs=xs[xs<=forward+1e-9]
     ys=np.arange(-config.max_lateral_m,config.max_lateral_m+config.step_m/2,config.step_m)
     xx,yy=np.meshgrid(xs,ys,indexing="ij")
     observed=sample(np.column_stack([xx.ravel(),yy.ravel()])).reshape(xx.shape)==1
@@ -135,10 +139,18 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
         end=xs[end_index]
         if end-start_x<config.min_length_m:
             break
+        # No candidate at this or a shorter X can improve the goal distance
+        # already achieved. Avoid evaluating every short prefix each frame.
+        if goal_priority and best is not None and abs(target[0]-end)>best[0][0]+1e-9:
+            break
         x=xs[:end_index+1]
         t=(x-start_x)/(end-start_x)
         blend=3*t*t-2*t*t*t
-        for y_end in ends:
+        candidates=ends
+        if goal_priority:
+            candidates=np.unique(np.r_[ends,np.clip(target[1]/target[0]*end,
+                -config.max_lateral_m+half,config.max_lateral_m-half)])
+        for y_end in candidates:
             y=y_end*blend
             dy=y_end*6*t*(1-t)/(end-start_x)
             ddy=y_end*(6-12*t)/(end-start_x)**2
@@ -160,6 +172,12 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
             # Corridor centering dominates small guidance deviations; route
             # direction chooses branches, not a metric global path to copy.
             score=centre+.65*abs(angle-goal_angle)+.03*float(np.mean(curvature**2))
+            goal_error=float(np.linalg.norm(points[-1]-target))
+            if goal_priority:
+                # First approach the clicked goal; centering/smoothness only
+                # resolve equally good endpoints. All mask/curve checks above
+                # remain mandatory, including for a straight-to-goal candidate.
+                score=(goal_error,centre+.03*float(np.mean(curvature**2)))
             if best is None or score<best[0]:
                 best=(score,points,dict(reference_start_m=float(start_x),
                     observed_reference_length_m=float(np.linalg.norm(np.diff(points,axis=0),axis=1).sum()),
@@ -167,7 +185,10 @@ def plan_vision_reference(sample, start_x, target, config=VisionReferenceConfig(
                     reserved_width_m=float(2*half),
                     max_curvature=float(np.max(np.abs(curvature))),
                     guide_target_ground_xy=target.tolist(),footprint_checked=False,
+                    goal_priority=goal_priority,reference_end_ground_xy=points[-1].tolist(),
+                    reference_end_to_target_m=goal_error,
                     unseen_near_field_m=float(start_x)))
-        if best is not None:
+        if best is not None and not goal_priority:
             return best[1],"ok",best[2]
+    if best is not None:return best[1],"ok",best[2]
     return empty,"no_observed_image_corridor",{}

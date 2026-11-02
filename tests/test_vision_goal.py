@@ -14,6 +14,35 @@ def lane(points,centre=0.,half=.6):
 
 
 class VisionGoalTests(unittest.TestCase):
+    def test_goal_priority_does_not_follow_an_offset_corridor_centre_away_from_a_clear_goal(self):
+        sample=lambda p:lane(p,centre=.3,half=.8)
+        legacy,_,_=plan_vision_reference(sample,.8,[2.5,0.])
+        path,reason,detail=plan_vision_reference(sample,.8,[2.5,0.],goal_priority=True)
+        self.assertEqual(reason,'ok');self.assertTrue(detail['goal_priority'])
+        self.assertGreater(legacy[-1,1],.05)
+        np.testing.assert_allclose(path[-1],[2.5,0.],atol=1e-8)
+        self.assertLess(np.abs(path[:,1]).max(),1e-8)
+
+    def test_goal_priority_reaches_near_goal_endpoint_and_responds_to_left_right_goals(self):
+        for y in (-.3,.3):
+            target=np.array([2.4,y])
+            path,reason,detail=plan_vision_reference(lambda p:lane(p,half=1.2),.8,target,goal_priority=True)
+            self.assertEqual(reason,'ok')
+            np.testing.assert_allclose(path[-1],target,atol=1e-8)
+            self.assertLess(detail['reference_end_to_target_m'],1e-8)
+            self.assertLessEqual(path[:,0].max(),target[0]+1e-9)
+
+    def test_goal_priority_preserves_veto_unknown_and_start_width_constraints(self):
+        for label in (0,255):
+            def sample(p):
+                values=lane(p,half=1.2)
+                values[(p[:,0]>1.2)&(p[:,0]<1.4)]=label
+                return values
+            path,_,_=plan_vision_reference(sample,1.,[2.5,0.],goal_priority=True)
+            self.assertEqual(len(path),0)
+        path,_,_=plan_vision_reference(lambda p:lane(p,half=.35),1.,[2.5,0.],goal_priority=True)
+        self.assertEqual(len(path),0)
+
     def test_image_only_requires_explicit_supervision_and_vision_steering(self):
         with self.assertRaisesRegex(ValueError,'supervised_trial'):
             validate_guidance_mode('image_only')

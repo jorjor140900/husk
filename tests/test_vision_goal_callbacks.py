@@ -222,8 +222,10 @@ class VisionGoalCallbackTests(unittest.TestCase):
         n.pending=(10*10**9,np.ones((480,640),np.uint8),time.monotonic())
         n.live_local_scan=mock.Mock(side_effect=AssertionError('image_only must not request LiDAR'))
         n.local_command_reason=mock.Mock(side_effect=AssertionError('image_only must not check a scan sweep'))
-        with mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*_:np.ones(len(p),np.uint8)):
+        with mock.patch.object(self.module,'sample_ground_labels',side_effect=lambda p,*_:np.ones(len(p),np.uint8)), \
+             mock.patch.object(self.module,'plan_vision_reference',wraps=self.module.plan_vision_reference) as planner:
             n.retry()
+        self.assertTrue(planner.call_args.kwargs['goal_priority'])
         self.assertIsNotNone(n.reference)
         reference=n.reference
         n.new_route(NS(poses=[]));n.laser_scan(object())

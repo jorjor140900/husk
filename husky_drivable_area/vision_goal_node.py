@@ -315,7 +315,7 @@ class VisionGoalNode(Node):
                     near_field_evidence="finite_scan_plane_rays_and_measured_robot_hull")
             elif getattr(self,"image_only",False):
                 target=local_goal_target(goal)
-                reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config)
+                reference,reason,detail=plan_vision_reference(sample,self.start_x,target,self.config,goal_priority=True)
                 local_detail=dict(global_plan_required=False,lidar_reference_footprint_checked=False,
                     lidar_stop_sweep_required=False,near_field_evidence="operator_supervised_image_only")
             else:

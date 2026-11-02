@@ -15,7 +15,7 @@
   "synthetic_goal_distance_m": 2.0,
   "synthetic_sensor_min_range_m": 0.4,
   "near_field_assumption_enabled": false,
-  "goal_error_m": 0.14802252864439902,
+  "goal_error_m": 0.13812143050196468,
   "planning_only_gate_stays_zero": true,
   "no_global_cmd_vel": true,
   "note": "Ideal synthetic snapshot scan rays, image labels, odometry and TF. No physical/terrain/height validation.",
