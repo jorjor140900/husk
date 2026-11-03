@@ -52,7 +52,7 @@ def _nodes(context):
         Node(package='husky_drivable_area',executable='robot_bridge',namespace='husky_link',output='screen',parameters=[dict(
             bridge_url=bridge['url'],forward_commands=allow,base_frame=base,
             expected_output_topic=bridge.get('expected_output_topic') or '',
-            command_topic='/husky_assist/filtered_cmd_vel_stamped',trial_camera_assist=limits==CAMERA_ASSIST_LIMITS,**common)]),
+            command_topic='/husky_assist/filtered_cmd_vel_stamped',idle_zero_heartbeat=True,trial_camera_assist=limits==CAMERA_ASSIST_LIMITS,**common)]),
         Node(package='tf2_ros',executable='static_transform_publisher',name='assist_ground_alias',arguments=[
             '--x','0','--y','0','--z','0','--roll','0','--pitch','0','--yaw','0',
             '--frame-id',parent,'--child-frame-id',mount.ground_frame]),

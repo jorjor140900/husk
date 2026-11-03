@@ -305,3 +305,12 @@ reset/enable, กด g และ teleop ตามขั้นตอนด้า�
 status เพิ่ม trial_active, trial_fault, trial_elapsed_sec, trial_remaining_sec และ vision_paused เพื่อแยกการพักจาก fault ที่ล็อก session การกดหยุด/permission หาย, request watchdog, odometry, transport และเพดานเวลา/ระยะ/มุมยังทำงานเดิม จึงไม่ได้รับประกันว่าจะ armed ครบ 900 s ทุกสถานการณ์ หาก /husky_link/status ระบุ receiver_disarmed_or_lease_changed ต้องดูเหตุผลจาก gateway เพิ่มเติม ไม่ auto re-arm ข้าม fault นั้น
 
 หลังอัปเดต หากมี fault ค้างจากเวอร์ชันเก่า ให้ STOP แล้ว reset/enable เริ่ม session ใหม่ครั้งเดียวตามขั้นตอนเดิม การแก้ชุดนี้ตรวจทานโค้ด ไม่รันทดสอบตามคำขอผู้ใช้
+
+
+## Gateway command_timeout ระหว่างรอคำสั่ง
+
+หาก /husky_link/status แสดง disable_reason=receiver_disarmed_or_lease_changed:command_timeout หมายถึง gateway เคยขาดคำสั่งเกิน .25 s แม้ภาพจะกลับมาแล้วก็ไม่ใช่ vision pause บนคอม ส่วน receiver.reason เป็นสถานะล่าสุดและอาจเปลี่ยนเป็น local_permission_lost ภายหลัง
+
+camera_assist เปิด idle_zero_heartbeat ที่ ROS2 bridge: transport thread ส่ง zero command ใหม่เมื่อยังไม่มีคำสั่งจาก safety หรือคำสั่งอายุเกิน .10 s โดยเผื่อเวลาส่งก่อน watchdog .25 s ฝั่งหุ่น timestamp ใหม่ใช้กับความเร็วศูนย์เท่านั้น ไม่เปลี่ยน timestamp ของคำสั่งเดินเก่า หลังส่งศูนย์ต้องรอคำสั่งสดที่ stamp ใหม่กว่าศูนย์นั้นก่อนส่งความเร็วอีกครั้ง status เพิ่ม idle_zero_heartbeat_enabled และ command_wait_reason
+
+heartbeat ศูนย์ช่วยคง session เดิมขณะ upstream พัก ไม่ reset budget ไม่ re-arm และไม่ทำงานเมื่อ bridge disabled หรือ receiver ไม่ armed/ข้อมูล receiver ไม่สด Gateway ยังคงหยุดเมื่อ network ขาด, permission หาย หรือครบขีดจำกัดเดิม คำสั่งผิดรูปแบบหรือ telemetry decode ผิดยังไม่ถูกซ่อนเป็น heartbeat การแก้ครั้งนี้อยู่ฝั่ง ROS2 ไม่ต้องเปลี่ยน watchdog บนหุ่น ไม่ได้รันทดสอบตามคำขอผู้ใช้

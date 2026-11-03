@@ -39,7 +39,7 @@ def ros2_fields(value):
 class RobotBridgeNode(Node):
     def __init__(self):
         super().__init__("robot_bridge")
-        defaults = {"bridge_url": "ws://127.0.0.1:9090", "ros1_prefix": "/husky_vision", "forward_commands": False, "supervised_trial": False, "trial_extended_session": False, "trial_camera_assist": False,
+        defaults = {"bridge_url": "ws://127.0.0.1:9090", "ros1_prefix": "/husky_vision", "forward_commands": False, "supervised_trial": False, "trial_extended_session": False, "trial_camera_assist": False, "idle_zero_heartbeat": False,
                     "base_frame": "", "expected_output_topic": "", "command_topic": "/husky_control/control/cmd_vel_stamped",
                     "expected_camera_width": 0, "expected_camera_height": 0}
         for name, value in defaults.items():
@@ -64,6 +64,10 @@ class RobotBridgeNode(Node):
         if type(camera_assist) is not bool or camera_assist and not extended:
             raise ValueError("camera assist speed requires supervised extended session")
         self.command_max_linear=.18 if camera_assist else (.15 if extended else .10)
+        self.idle_zero_heartbeat=value("idle_zero_heartbeat")
+        if type(self.idle_zero_heartbeat) is not bool or self.idle_zero_heartbeat and value("supervised_trial") is not True:
+            raise ValueError("idle zero heartbeat requires supervised_trial")
+        self.zero_heartbeat_stamp=0;self.command_wait_reason=None
         self.command_lock, self.last_command = threading.Lock(), None
         self.decode_errors = {}
         self.image_decode_ms = None
@@ -81,21 +85,42 @@ class RobotBridgeNode(Node):
         with self.command_lock:
             self.last_command = (message, time.monotonic())
 
+    def _waiting_zero(self, reason, now_ns):
+        # Called under command_lock, from the transport thread. This is a NEW
+        # zero command, never a re-stamped old velocity. Receiver permission,
+        # lease, network watchdog and the original trial budget still apply.
+        self.command_wait_reason=reason
+        if not self.idle_zero_heartbeat or now_ns<=0:return None
+        self.zero_heartbeat_stamp=now_ns
+        return {"source_ns":now_ns,"linear_x":0.,"angular_z":0.}
+
     def _motion(self, receiver):
         with self.command_lock:
-            if self.last_command is None or self.decode_errors:
-                return None
+            now_ns=self.get_clock().now().nanoseconds
+            if self.decode_errors:
+                self.command_wait_reason='telemetry_decode_error';return None
+            if self.last_command is None:
+                return self._waiting_zero('waiting_for_filtered_command',now_ns)
             message, received = self.last_command
             source = message.header.stamp.sec*1_000_000_000+message.header.stamp.nanosec
-            age = (self.get_clock().now().nanoseconds-source)/1e9
+            age = (now_ns-source)/1e9
             twist = message.twist
             v, w = twist.linear.x, twist.angular.z
-            if (source <= 0 or not -0.05 <= age <= 0.20 or time.monotonic()-received > 0.20 or
+            if (source <= 0 or age < -.05 or
                     frame_id(message.header.frame_id) != self.link.base_frame or
                     any(x != 0 for x in (twist.linear.y, twist.linear.z, twist.angular.x, twist.angular.y)) or
                     not finite(v) or not finite(w) or not 0 <= v <= min(getattr(self,"command_max_linear",.10), receiver["max_linear_mps"]) or
                     abs(w) > min(0.30, receiver["max_angular_rps"])):
-                return None
+                self.command_wait_reason='invalid_filtered_command';return None
+            # Leave transport margin before the robot's 0.25 s watchdog.
+            max_age=.10 if self.idle_zero_heartbeat else .20
+            if age>max_age or time.monotonic()-received>max_age:
+                return self._waiting_zero('filtered_command_stale',now_ns)
+            # A fresh transport zero may be newer than an in-flight upstream
+            # command. Do not send an older stamp or replay motion after STOP.
+            if source<=self.zero_heartbeat_stamp:
+                return self._waiting_zero('waiting_for_command_after_zero',now_ns)
+            self.command_wait_reason=None
             return {"source_ns": source, "linear_x": v, "angular_z": w}
 
     def _enable(self, request, response):
@@ -164,6 +189,9 @@ class RobotBridgeNode(Node):
                 with self.command_lock:
                     self.decode_errors[kind] = str(exc)[:160]
         status = self.link.snapshot()
+        with self.command_lock:
+            status.update(idle_zero_heartbeat_enabled=self.idle_zero_heartbeat,
+                          command_wait_reason=self.command_wait_reason)
         status["camera_transport"]["decode_publish_ms"] = self.image_decode_ms
         with self.command_lock:
             status["decode_errors"] = dict(self.decode_errors)
