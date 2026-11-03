@@ -1,4 +1,5 @@
 """Hold-forward teleoperation with camera-area steering; no goals or map."""
+from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 import json
 import math
@@ -57,6 +58,8 @@ class CameraAssistNode(Node):
         self.controller=ControllerConfig(cruise_speed_mps=speed,max_angular_speed_rps=angular,
             max_path_offset_m=1.5,lookahead_m=.5)
         self.buffer=Buffer();self.listener=TransformListener(self.buffer,self)
+        self.planner=ThreadPoolExecutor(max_workers=1,thread_name_prefix="assist_planner")
+        self.planning=None;self.next_capture=None;self.plan_generation=0
         self.teleop=None;self.pose=None;self.pending=None;self.reference=None
         self.source_ns=0;self.source_received=float('-inf');self.reason='waiting_for_image'
         self.detail={};self.images=OrderedDict();self.display=None;self.capture_plans=OrderedDict()
@@ -70,7 +73,7 @@ class CameraAssistNode(Node):
             self.create_subscription(Odometry,'/husky_link/odom',self.odometry,sensor),
             self.create_subscription(Image,value('image_topic'),self.image,sensor)]
         self.service=self.create_service(SetBool,'/husky_assist/set_enabled',self.enable)
-        self.retry_timer=self.create_timer(.02,self.retry)
+        self.retry_timer=self.create_timer(.02,self.process_planning)
         self.timer=self.create_timer(.05,self.tick)
         cv2.setNumThreads(1)
 
@@ -102,6 +105,7 @@ class CameraAssistNode(Node):
             self.get_clock().now().nanoseconds,time.monotonic(),self.hold)
 
     def clear(self,reason):
+        self.plan_generation+=1;self.next_capture=None
         self.reference=None;self.pending=None;self.reason=reason;self.detail={}
         self.output.publish(Twist())
 
@@ -132,21 +136,48 @@ class CameraAssistNode(Node):
                 if not self.fresh_reference():self.clear('stale_segmentation')
                 return
             if ns<=self.source_ns:return
-            path,reason,_=self.plan_capture(ns,labels)
-            caption=('preview only' if not self.allow_motion else 'preview; robot TF required') if len(path) else reason
-            self.display=(ns,labels,path,caption)
-            if not self.allow_motion:
-                self.render();self.reason='preview_only';return
-            if self.pending is None or not fresh_stamp(self.pending[0],self.pending[2],
-                    self.get_clock().now().nanoseconds,now,.5):self.pending=(ns,labels,now)
-            self.retry()
+            # Latest-only queue: callbacks for teleop/odom and the 20 Hz
+            # output timer must not wait for graph search and smoothing.
+            self.next_capture=(ns,labels,now)
+
         except (ValueError,TypeError,KeyError,OverflowError,cv2.error):self.clear('invalid_segmentation_packet')
 
-    def plan_capture(self,ns,labels):
+    def process_planning(self):
+        if self.planning is not None and self.planning[0].done():
+            future,capture,generation=self.planning;self.planning=None
+            ns,labels,received=capture
+            try:
+                result=future.result()
+                if (generation==self.plan_generation and ns>self.source_ns and
+                        fresh_stamp(ns,received,self.get_clock().now().nanoseconds,time.monotonic(),.5)):
+                    path,reason,_=self.plan_capture(ns,labels,result)
+                    caption=('preview only' if not self.allow_motion else 'preview; robot TF required') if len(path) else reason
+                    self.display=(ns,labels,path,caption)
+                    if not self.allow_motion:
+                        self.render();self.reason='preview_only'
+                    elif self.pending is None or not fresh_stamp(self.pending[0],self.pending[2],
+                            self.get_clock().now().nanoseconds,time.monotonic(),.5):
+                        self.pending=capture
+            except (ValueError,TypeError,KeyError,OverflowError,cv2.error):
+                self.clear('invalid_image_geometry')
+        self.retry()
+        if self.planning is None and self.next_capture is not None:
+            capture=self.next_capture;self.next_capture=None
+            ns,labels,received=capture
+            if fresh_stamp(ns,received,self.get_clock().now().nanoseconds,time.monotonic(),.5):
+                sample=lambda points:sample_ground_labels(points,labels,self.camera,self.mount)
+                future=self.planner.submit(plan_area_reference,sample,self.start_x,self.config)
+                self.planning=(future,capture,self.plan_generation)
+
+    def destroy_node(self):
+        self.planner.shutdown(wait=True,cancel_futures=True)
+        return super().destroy_node()
+
+    def plan_capture(self,ns,labels,result=None):
         if not hasattr(self,'capture_plans'):self.capture_plans=OrderedDict()
         if ns not in self.capture_plans:
             sample=lambda points:sample_ground_labels(points,labels,self.camera,self.mount)
-            result=plan_area_reference(sample,self.start_x,config=self.config)
+            if result is None:raise ValueError("capture plan not ready")
             # Preview has no odometry: reuse only geometry fully revalidated in
             # this capture. Live reuse happens below after capture-TF alignment.
             if not self.allow_motion and self.capture_plans:
@@ -154,7 +185,7 @@ class CameraAssistNode(Node):
                 old_path,_,old_detail=self.capture_plans[old_ns]
                 if 0<ns-old_ns<=500_000_000:
                     previous=reusable_reference(old_path,sample,self.start_x,
-                        self.config.half_width_m+self.config.side_margin_m)
+                        self.config.half_width_m+self.config.side_margin_m,truncate_invalid=True)
                     if self.prefer_previous(previous,result[0]):
                         result=(previous,'ok',dict(old_detail,reference_reused_after_current_mask_check=True))
             self.capture_plans[ns]=result
@@ -191,7 +222,7 @@ class CameraAssistNode(Node):
             old=None
             if self.fresh_reference():
                 old=(self.reference-matrix[:2,3])@matrix[:2,:2]
-                previous=reusable_reference(old,sample,self.start_x,self.config.half_width_m+self.config.side_margin_m)
+                previous=reusable_reference(old,sample,self.start_x,self.config.half_width_m+self.config.side_margin_m,truncate_invalid=True)
                 if self.prefer_previous(previous,path):
                     path=previous;reason='ok';detail={**self.detail,'reference_reused_after_current_mask_check':True}
             self.pending=None
@@ -251,7 +282,7 @@ class CameraAssistNode(Node):
         age=(self.get_clock().now().nanoseconds-self.source_ns)/1e6 if self.source_ns else None
         self.status.publish(String(data=json.dumps(dict(self.detail,mode='camera_steering_assist',reason=demand.reason,
             enabled=self.enabled,allow_motion=self.allow_motion,linear_x=demand.linear,angular_z=demand.angular,
-            perception_reason=self.reason,
+            perception_reason=self.reason,planner_busy=self.planning is not None,
             teleop_age_ms=(time.monotonic()-self.teleop[1])*1000 if self.teleop else None,
             teleop_requested_linear_x=float(self.teleop[0].linear.x) if self.teleop and math.isfinite(self.teleop[0].linear.x) else None,
             source_stamp_ns=self.source_ns,reference_age_ms=age,reference_valid=self.fresh_reference(),using_held_reference=self.fresh_reference() and (bool(self.detail.get('control_reference_held')) or age is not None and age>500),

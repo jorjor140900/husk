@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 
-def reusable_reference(points,sample,start_x,half_width,step=.025,*,allow_unknown=False):
+def reusable_reference(points,sample,start_x,half_width,step=.025,*,allow_unknown=False,truncate_invalid=False):
     points=np.asarray(points,float)
     if points.ndim!=2 or points.shape[1]!=2 or len(points)<2 or not np.isfinite(points).all():return None
     visible=np.flatnonzero(points[:,0]>=start_x)
@@ -20,6 +20,17 @@ def reusable_reference(points,sample,start_x,half_width,step=.025,*,allow_unknow
     offsets=np.linspace(-half_width,half_width,int(math.ceil(2*half_width/step))+1)
     strip=(path[:,None,:]+normals[:,None,:]*offsets[None,:,None]).reshape(-1,2)
     labels=sample(strip)
+    if truncate_invalid and not allow_unknown:
+        # Keep only the contiguous, currently observed prefix. Never skip a
+        # bad section to join a later green section or relabel a veto.
+        valid=(labels.reshape(len(path),len(offsets))==1).all(axis=1)
+        failed=np.flatnonzero(~valid)
+        if len(failed):
+            end=int(failed[0])-1  # leave one sample before the failing strip
+            prefix=path[:max(0,end)]
+            if len(prefix)<2 or np.linalg.norm(np.diff(prefix,axis=0),axis=1).sum()<.5:return None
+            # Trimming changes the endpoint normal: check it again.
+            return reusable_reference(prefix,sample,start_x,half_width,step)
     if allow_unknown:
         if not np.isin(labels,[1,255]).all():return None
     elif not np.all(labels==1):return None
