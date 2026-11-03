@@ -184,7 +184,6 @@ class CameraAssistNode(Node):
                 return
             self.reference=path@matrix[:2,:2].T+matrix[:2,3]
             self.source_ns=ns;self.source_received=received;self.reason='tracking';self.detail={**detail,'control_reference_held':False}
-            self.last_good_world=self.reference.copy();self.last_good_world_stamp=ns
             self.display=(ns,labels,path,'ready; hold forward in teleop');self.render()
         except TransformException:
             self.render()
@@ -224,6 +223,9 @@ class CameraAssistNode(Node):
         age=(self.get_clock().now().nanoseconds-self.source_ns)/1e6 if self.source_ns else None
         self.status.publish(String(data=json.dumps(dict(self.detail,mode='camera_steering_assist',reason=demand.reason,
             enabled=self.enabled,allow_motion=self.allow_motion,linear_x=demand.linear,angular_z=demand.angular,
+            perception_reason=self.reason,
+            teleop_age_ms=(time.monotonic()-self.teleop[1])*1000 if self.teleop else None,
+            teleop_requested_linear_x=float(self.teleop[0].linear.x) if self.teleop and math.isfinite(self.teleop[0].linear.x) else None,
             source_stamp_ns=self.source_ns,reference_age_ms=age,reference_valid=self.fresh_reference(),using_held_reference=self.fresh_reference() and (bool(self.detail.get('control_reference_held')) or age is not None and age>500),
             reference_hold_sec=self.hold,goal_required=False,lidar_required=False,map_required=False,
             red_edges_used_for_planning=False),allow_nan=False)))
@@ -240,18 +242,17 @@ class CameraAssistNode(Node):
         ns,labels,path,reason=self.display;message=self.images.get(ns)
         if message is None:return
         try:
-            if len(path)>=2 and not reason.startswith('HELD'):
-                self.last_good_overlay=(ns,np.array(path,copy=True))
-            elif len(path)<2 and getattr(self,'last_good_overlay',None) is not None:
-                held_ns,path=self.last_good_overlay
-                path=path.copy()
-                if getattr(self,'last_good_world_stamp',None)==held_ns:
+            if self.allow_motion:
+                # Live yellow is the actual usable control reference, never a
+                # decorative last-good path or an unaccepted preview candidate.
+                path=np.empty((0,2))
+                if self.fresh_reference():
                     try:
                         matrix=self.tf_matrix(ns)
-                        path=(self.last_good_world-matrix[:2,3])@matrix[:2,:2]
-                    except (TransformException,ValueError,TypeError):pass
-                age=max(0.,(ns-held_ns)/1e9)
-                reason=f'HELD DISPLAY ONLY {age:.1f}s | STOP: '+reason
+                        path=(self.reference-matrix[:2,3])@matrix[:2,:2]
+                    except TransformException:reason='waiting_for_capture_tf'
+                else:
+                    reason=self.reason if self.reference is None else 'image_reference_stale'
             frame=draw_vision_reference(image_to_bgr(message),labels,path,self.camera,self.mount,reason,
                 edges=[],assisted=True)
             self.overlay_pub.publish(fill_compressed_image(CompressedImage(),frame,message.header,80))

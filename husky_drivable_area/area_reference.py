@@ -48,7 +48,9 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
         ix,iy=np.meshgrid(np.linspace(calibrated_start,candidate+ingress,
             int(math.ceil((advance+ingress)/config.step_m))+1),offsets,indexing='ij')
         entry=sample(np.column_stack([ix.ravel(),iy.ravel()])).reshape(ix.shape)
-        ingress_detail=dict(start_veto_samples=int((entry==0).sum()),start_unknown_samples=int((entry==255).sum()))
+        ingress_detail=dict(start_veto_samples=int((entry==0).sum()),start_unknown_samples=int((entry==255).sum()),
+            start_total_samples=int(entry.size),reserved_width_m=2*half,
+            start_veto_ground_xy=np.column_stack([ix[entry==0],iy[entry==0]]).round(3).tolist())
         if np.any(entry==0):
             return empty,'start_blocked_narrow_or_unobserved',ingress_detail
         if np.all(entry[ix[:,0]>=candidate-1e-8]==1):
