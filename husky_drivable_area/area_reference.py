@@ -111,7 +111,6 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     if start is None:return empty,'start_blocked_narrow_or_unobserved',dict(ingress_detail,start_lateral_width_rejected=True)
     start_y=float(ys[start[1]])
     distance=np.full(free.shape,np.inf);distance[start]=0.
-    travel=np.zeros(free.shape)
     parents={};queue=[(0.,start)]
     moves=[(i,j,math.hypot(i,j)*step) for i in (-1,0,1) for j in (-1,0,1) if i or j]
     while queue:
@@ -123,7 +122,7 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
             if di and dj and not (free[i,nj] and free[ni,j]):continue
             new=cost+length*(1.+4.*centre_error[ni,nj]+.12/max(float(clearance[ni,nj])-half,.05))
             if new<distance[ni,nj]:
-                distance[ni,nj]=new;travel[ni,nj]=travel[i,j]+length
+                distance[ni,nj]=new
                 parents[(ni,nj)]=(i,j);heapq.heappush(queue,(new,(ni,nj)))
     reachable=np.isfinite(distance)
     # Seek a long, central continuation of the visible green corridor.
@@ -131,17 +130,23 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     eligible=reachable&(np.hypot(xx-start_x,yy-start_y)>=config.min_length_m)
     if not eligible.any():return empty,'no_observed_image_corridor',{}
     score=np.full(free.shape,np.inf)
-    score[reachable]=-travel[reachable]+.45/np.maximum(clearance[reachable]-half,.08)+4.*centre_error[reachable]
-    # A grid route can fail the finer normal-strip check even though another
-    # reachable route fits. Keep spatially distinct alternatives instead of
-    # treating failure of the single top-scoring endpoint as an empty corridor.
-    endpoints=[]
-    for flat in np.argsort(np.where(eligible,score,np.inf),axis=None):
-        endpoint=np.unravel_index(flat,free.shape)
-        if not eligible[endpoint]:break
+    score[reachable]=.45/np.maximum(clearance[reachable]-half,.08)+4.*centre_error[reachable]
+    # Prefer continuing forward before optimising centring/clearance. A wide
+    # pocket in front of an obstacle must not outrank a usable bypass merely
+    # because that bypass is narrower. Quantise progress to avoid chasing tiny
+    # changes at the far image boundary.
+    progress=np.floor((xx-start_x+1e-8)/.20)
+    ranked=sorted(zip(*np.nonzero(eligible)),key=lambda e:(-progress[e],score[e],distance[e]))
+    # Reserve alternatives on both sides; eight near-identical endpoints on
+    # one side can all fail normal-strip checks and hide the other bypass.
+    endpoints=[];counts={-1:0,0:0,1:0}
+    for endpoint in ranked:
+        lateral=yy[endpoint]-start_y
+        side=1 if lateral>.15 else (-1 if lateral<-.15 else 0)
+        if counts[side]>=3:continue
         if all(math.hypot(xx[endpoint]-xx[e],yy[endpoint]-yy[e])>=.20 for e in endpoints):
-            endpoints.append(endpoint)
-        if len(endpoints)>=8:break
+            endpoints.append(endpoint);counts[side]+=1
+        if len(endpoints)>=9:break
     offsets=np.linspace(-half,half,int(math.ceil(2*half/config.step_m))+1)
     def checked(points):
         delta=np.gradient(points,axis=0);norm=np.linalg.norm(delta,axis=1)
@@ -154,8 +159,8 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
         unit=delta/norm[:,None]
         curvature=np.linalg.norm(np.gradient(unit,axis=0),axis=1)/norm
         return float(curvature.max())
-    # First try the actual cross-section midpoints. Graph paths are fallbacks
-    # when the centreline bends too sharply or its full strip does not fit.
+    # Keep a centreline candidate, but do not accept a short centreline before
+    # examining longer graph continuations around a blocked region.
     middle=[[start_x,start_y]]
     for i in range(start[0]+1,len(xs)):
         if xs[i]>config.max_forward_m:break
@@ -175,6 +180,9 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
         cells=[endpoint]
         while cells[-1]!=start:cells.append(parents[cells[-1]])
         paths.append(np.array([[xs[i],ys[j]] for i,j in reversed(cells)]))
+    # In the same forward-progress band, keep the centreline first (stable
+    # sorting). Across bands, try the longer continuation before the short stub.
+    paths.sort(key=lambda route:-math.floor((route[-1,0]-start_x+1e-8)/.20))
     best=None;attempts=0
     for route in paths:
         attempts+=1
@@ -208,10 +216,13 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
                     best=(curvature,points);break
             if best is not None:break
     if best is None:
-        return empty,'no_observed_image_corridor',dict(area_candidate_routes_checked=attempts)
+        return empty,'no_observed_image_corridor',dict(area_candidate_routes_checked=attempts,
+            area_reachable_forward_span_m=float(xx[reachable].max()-start_x))
     curvature,path=best
     return path,'ok',dict(reference_kind='green_area_assist',reference_alignment='observed_green_span_centre',robot_axis_attraction=False,reference_start_m=float(path[0,0]),reference_start_lateral_m=float(path[0,1]),
         area_candidate_routes_checked=attempts,
+        reference_selection='forward_continuation_then_green_centre',
+        area_reachable_forward_span_m=float(xx[reachable].max()-start_x),
         observed_reference_length_m=float(np.linalg.norm(np.diff(path,axis=0),axis=1).sum()),
         reference_forward_span_m=float(path[-1,0]-path[0,0]),reference_max_lateral_m=float(abs(path[:,1]).max()),
         reserved_width_m=2*half,max_curvature=curvature,

@@ -56,7 +56,7 @@ class CameraAssistNode(Node):
         if len(points)<2 or not .05<points[0,0]<=1.5:raise ValueError('camera near field not calibrated: '+reason)
         self.start_x=float(points[0,0])
         self.controller=ControllerConfig(cruise_speed_mps=speed,max_angular_speed_rps=angular,
-            max_path_offset_m=1.5,lookahead_m=.5)
+            max_path_offset_m=1.5,lookahead_m=.35)
         self.buffer=Buffer();self.listener=TransformListener(self.buffer,self)
         self.planner=ThreadPoolExecutor(max_workers=1,thread_name_prefix="assist_planner")
         self.planning=None;self.next_capture=None;self.plan_generation=0
@@ -200,6 +200,9 @@ class CameraAssistNode(Node):
         # Do not preserve an old axis-biased path when the observed centre
         # moves. Compare geometry over the shared horizon, not just length.
         if len(new):
+            # Do not keep approaching the end of a short old reference when a
+            # newly observed route continues farther around the obstruction.
+            if float(new[-1,0]-previous[-1,0])>.15:return False
             shared=previous[(previous[:,0]>=new[:,0].min())&(previous[:,0]<=new[:,0].max())]
             if not len(shared):return False
             separation=np.linalg.norm(shared[:,None,:]-new[None,:,:],axis=2).min(axis=1)
@@ -266,8 +269,37 @@ class CameraAssistNode(Node):
         if demand.reason=='goal_reached':return Demand(reason='reference_exhausted')
         if demand.reason!='tracking':return demand
         speed=min(t.linear.x,demand.linear,self.controller.max_angular_speed_rps/max(float(self.detail.get('max_curvature',0)),1e-9))
-        if self.detail.get('control_reference_held') or (ns-self.source_ns)/1e9>.5:speed=min(speed,.05)
-        return Demand(speed,demand.angular*speed/max(demand.linear,1e-9),'tracking')
+        held=bool(self.detail.get('control_reference_held')) or (ns-self.source_ns)/1e9>.5
+        if held:
+            speed=min(speed,.05)
+            # Do not amplify steering against old visual evidence.
+            angular=demand.angular*speed/max(demand.linear,1e-9)
+            self.detail.update(steering_mode='held_reference',alignment_heading_error_rad=None)
+        else:
+            # Pursuit alone sees a distant target because the camera's near
+            # field is blind. Add path-heading feedback so a diagonal centreline
+            # is followed before the robot reaches the obstruction ahead.
+            target=np.asarray(demand.target_robot_xy)
+            bearing=math.atan2(float(target[1]),float(target[0]))
+            yaw=float(self.pose[0][2]);c,s=math.cos(yaw),math.sin(yaw)
+            local=(self.reference-self.pose[0][:2])@np.array([[c,-s],[s,c]])
+            index=int(np.argmin(np.linalg.norm(local-target,axis=1)))
+            # A 30 cm chord is less sensitive to single-point tangent noise.
+            radius=max(1,int(round(.15/self.config.step_m)))
+            chord=local[min(len(local)-1,index+radius)]-local[max(0,index-radius)]
+            heading=math.atan2(float(chord[1]),float(chord[0]))
+            if abs(heading)>math.pi/2:
+                return Demand(reason='target_not_ahead')
+            # Reduce forward advance while aligning; do not attenuate the
+            # heading correction by that same reduction a second time.
+            speed/=1.+2.*abs(bearing)+abs(heading)
+            angular=(demand.angular*speed/max(demand.linear,1e-9)
+                     +.60*bearing+.35*heading)
+            angular_limit=min(self.controller.max_angular_speed_rps,4.*speed)
+            angular=float(np.clip(angular,-angular_limit,angular_limit))
+            self.detail.update(steering_mode='heading_and_pursuit',
+                alignment_heading_error_rad=heading,alignment_target_bearing_rad=bearing)
+        return Demand(speed,angular,'tracking')
 
     def tick(self):
         try:demand=self.demand()
