@@ -166,6 +166,13 @@ class CameraAssistNode(Node):
         if previous is None:return False
         old_length=float(np.linalg.norm(np.diff(previous,axis=0),axis=1).sum())
         new_length=float(np.linalg.norm(np.diff(new,axis=0),axis=1).sum()) if len(new) else 0.
+        # Do not preserve an old axis-biased path when the observed centre
+        # moves. Compare geometry over the shared horizon, not just length.
+        if len(new):
+            shared=previous[(previous[:,0]>=new[:,0].min())&(previous[:,0]<=new[:,0].max())]
+            if not len(shared):return False
+            separation=np.linalg.norm(shared[:,None,:]-new[None,:,:],axis=2).min(axis=1)
+            if float(separation.max())>.10:return False
         # Refresh a consumed horizon; otherwise keep a currently green route
         # unless replanning offers a materially longer continuation.
         return (not len(new)) or (old_length>=.5 and new_length<=old_length+.25)

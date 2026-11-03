@@ -22,6 +22,21 @@ def _resample(path, step):
     return np.column_stack([np.interp(s,arc,path[:,i]) for i in (0,1)])
 
 
+def _green_runs(row):
+    """Contiguous observed spans; never join across unknown or veto pixels."""
+    changes=np.diff(np.r_[False,row,False].astype(np.int8))
+    return zip(np.flatnonzero(changes==1),np.flatnonzero(changes==-1))
+
+
+def _centre_error(labels,ys):
+    error=np.full(labels.shape,np.inf)
+    for i,row in enumerate(labels==1):
+        for lo,hi in _green_runs(row):
+            centre=(ys[lo]+ys[hi-1])/2
+            error[i,lo:hi]=abs(ys[lo:hi]-centre)
+    return error
+
+
 def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     """Dijkstra search + collision-checked smoothing on the green-area grid.
 
@@ -39,18 +54,28 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     ingress=.1
     calibrated_start=start_x
     offsets=np.linspace(-half,half,int(math.ceil(2*half/config.step_m))+1)
-    # Search a bounded lateral start within the currently observed corridor.
-    # Reject every candidate whose full ingress strip contains a veto. The
-    # axis itself need not be the centre of the drivable corridor.
+    # Seed the middle of observed green spans, independently of robot Y=0.
     ingress_detail={};seed_candidates=[]
-    lateral_offsets=[0.,.05,-.05,.10,-.10,.15,-.15,.20,-.20]
+    extent=max(config.max_lateral_m,2.)
+    probe_y=np.arange(-extent-half-.1,extent+half+.1,step)
     for advance in np.arange(0.,.301,.05):
         candidate=calibrated_start+advance
+        probe_x=np.linspace(candidate,candidate+ingress,int(math.ceil(ingress/config.step_m))+1)
+        px,py=np.meshgrid(probe_x,probe_y,indexing='ij')
+        green=sample(np.column_stack([px.ravel(),py.ravel()])).reshape(px.shape)==1
+        spans=[]
+        for lo,hi in _green_runs(green.all(axis=0)):
+            width=probe_y[hi-1]-probe_y[lo]
+            centre=float((probe_y[lo]+probe_y[hi-1])/2)
+            if width>=2*half and abs(centre)<=extent:spans.append((width,centre))
+        # Prefer the widest observed corridor, not the closest to the blue axis.
+        lateral_offsets=[centre+shift for _,centre in sorted(spans,reverse=True)
+                         for shift in (0.,.05,-.05,.10,-.10)]
         for lateral in lateral_offsets:
             ix,iy=np.meshgrid(np.linspace(calibrated_start,candidate+ingress,
                 int(math.ceil((advance+ingress)/config.step_m))+1),offsets+lateral,indexing='ij')
             entry=sample(np.column_stack([ix.ravel(),iy.ravel()])).reshape(ix.shape)
-            if advance==0 and lateral==0:
+            if not ingress_detail:
                 ingress_detail=dict(start_veto_samples=int((entry==0).sum()),start_unknown_samples=int((entry==255).sum()),
                     start_total_samples=int(entry.size),reserved_width_m=2*half,
                     start_veto_ground_xy=np.column_stack([ix[entry==0],iy[entry==0]]).round(3).tolist())
@@ -78,6 +103,7 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     lateral_clear=cv2.erode((labels==1).astype(np.uint8),np.ones((1,2*radius+1),np.uint8),
         borderType=cv2.BORDER_CONSTANT,borderValue=0)>0
     free=lateral_clear&(xx>=start_x-1e-8)&(xx<=config.max_forward_m+1e-8)&(abs(yy)<=extent)&(labels==1)
+    centre_error=_centre_error(labels,ys)
     start=None
     for lateral in seed_candidates:
         index=(int(np.argmin(abs(xs-start_x))),int(np.argmin(abs(ys-lateral))))
@@ -95,17 +121,17 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
             ni,nj=i+di,j+dj
             if not (0<=ni<len(xs) and 0<=nj<len(ys) and free[ni,nj]):continue
             if di and dj and not (free[i,nj] and free[ni,j]):continue
-            new=cost+length*(1.+.12/max(float(clearance[ni,nj])-half,.05))
+            new=cost+length*(1.+4.*centre_error[ni,nj]+.12/max(float(clearance[ni,nj])-half,.05))
             if new<distance[ni,nj]:
                 distance[ni,nj]=new;travel[ni,nj]=travel[i,j]+length
                 parents[(ni,nj)]=(i,j);heapq.heappush(queue,(new,(ni,nj)))
     reachable=np.isfinite(distance)
     # Seek a long, central continuation of the visible green corridor.
-    # Straight branches win ties; there is no external destination.
+    # Centre proximity is relative to green spans, never to robot Y=0.
     eligible=reachable&(np.hypot(xx-start_x,yy-start_y)>=config.min_length_m)
     if not eligible.any():return empty,'no_observed_image_corridor',{}
     score=np.full(free.shape,np.inf)
-    score[reachable]=-travel[reachable]+.45/np.maximum(clearance[reachable]-half,.08)+.55*abs(yy[reachable])
+    score[reachable]=-travel[reachable]+.45/np.maximum(clearance[reachable]-half,.08)+4.*centre_error[reachable]
     # A grid route can fail the finer normal-strip check even though another
     # reachable route fits. Keep spatially distinct alternatives instead of
     # treating failure of the single top-scoring endpoint as an empty corridor.
@@ -128,12 +154,31 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
         unit=delta/norm[:,None]
         curvature=np.linalg.norm(np.gradient(unit,axis=0),axis=1)/norm
         return float(curvature.max())
-    best=None;attempts=0
+    # First try the actual cross-section midpoints. Graph paths are fallbacks
+    # when the centreline bends too sharply or its full strip does not fit.
+    middle=[[start_x,start_y]]
+    for i in range(start[0]+1,len(xs)):
+        if xs[i]>config.max_forward_m:break
+        centres=[]
+        for lo,hi in _green_runs(labels[i]==1):
+            centre=float((ys[lo]+ys[hi-1])/2)
+            j=int(np.argmin(abs(ys-centre)))
+            if reachable[i,j]:centres.append(centre)
+        if not centres:break
+        centre=min(centres,key=lambda y:abs(y-middle[-1][1]))
+        if abs(centre-middle[-1][1])>.20:break
+        middle.append([float(xs[i]),centre])
+    paths=[]
+    if len(middle)>1 and middle[-1][0]-middle[0][0]>=config.min_length_m:
+        paths.append(np.asarray(middle))
     for endpoint in endpoints:
-        attempts+=1
         cells=[endpoint]
         while cells[-1]!=start:cells.append(parents[cells[-1]])
-        path=_resample(np.array([[xs[i],ys[j]] for i,j in reversed(cells)]),config.step_m)
+        paths.append(np.array([[xs[i],ys[j]] for i,j in reversed(cells)]))
+    best=None;attempts=0
+    for route in paths:
+        attempts+=1
+        path=_resample(route,config.step_m)
         candidate_best=None
         for sigma_m in (.45,.30,.20,.10,.05,0.):
             points=path.copy()
@@ -154,6 +199,9 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     if best is None:
         for length in np.arange(config.max_forward_m-start_x,config.min_length_m-1e-8,-.10):
             for lateral in seed_candidates:
+                j=int(np.argmin(abs(ys-lateral)))
+                rows=(xs>=start_x-1e-8)&(xs<=start_x+length+1e-8)
+                if np.any(centre_error[rows,j]>.10):continue
                 points=_resample(np.array([[start_x,lateral],[start_x+length,lateral]]),config.step_m)
                 curvature=checked(points)
                 if curvature is not None:
@@ -162,7 +210,7 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     if best is None:
         return empty,'no_observed_image_corridor',dict(area_candidate_routes_checked=attempts)
     curvature,path=best
-    return path,'ok',dict(reference_kind='green_area_assist',reference_start_m=float(path[0,0]),reference_start_lateral_m=float(path[0,1]),
+    return path,'ok',dict(reference_kind='green_area_assist',reference_alignment='observed_green_span_centre',robot_axis_attraction=False,reference_start_m=float(path[0,0]),reference_start_lateral_m=float(path[0,1]),
         area_candidate_routes_checked=attempts,
         observed_reference_length_m=float(np.linalg.norm(np.diff(path,axis=0),axis=1).sum()),
         reference_forward_span_m=float(path[-1,0]-path[0,0]),reference_max_lateral_m=float(abs(path[:,1]).max()),
