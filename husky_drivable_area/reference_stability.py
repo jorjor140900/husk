@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 
-def reusable_reference(points,sample,start_x,half_width,step=.025):
+def reusable_reference(points,sample,start_x,half_width,step=.025,*,allow_unknown=False):
     points=np.asarray(points,float)
     if points.ndim!=2 or points.shape[1]!=2 or len(points)<2 or not np.isfinite(points).all():return None
     visible=np.flatnonzero(points[:,0]>=start_x)
@@ -19,7 +19,10 @@ def reusable_reference(points,sample,start_x,half_width,step=.025):
     normals=np.column_stack([-delta[:,1],delta[:,0]])/norm[:,None]
     offsets=np.linspace(-half_width,half_width,int(math.ceil(2*half_width/step))+1)
     strip=(path[:,None,:]+normals[:,None,:]*offsets[None,:,None]).reshape(-1,2)
-    if not np.all(sample(strip)==1):return None
+    labels=sample(strip)
+    if allow_unknown:
+        if not np.isin(labels,[1,255]).all():return None
+    elif not np.all(labels==1):return None
     return path
 
 

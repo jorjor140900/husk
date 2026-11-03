@@ -161,19 +161,30 @@ class CameraAssistNode(Node):
             matrix=self.tf_matrix(ns)
             sample=lambda points:sample_ground_labels(points,labels,self.camera,self.mount)
             path,reason,detail=self.plan_capture(ns,labels)
+            old=None
             if self.fresh_reference():
                 old=(self.reference-matrix[:2,3])@matrix[:2,:2]
                 previous=reusable_reference(old,sample,self.start_x,self.config.half_width_m+self.config.side_margin_m)
                 if previous is not None and (not len(path) or np.linalg.norm(previous[-1]-path[-1])<.15):
                     path=previous;reason='ok';detail={**self.detail,'reference_reused_after_current_mask_check':True}
             self.pending=None
+            if not len(path) and old is not None and self.fresh_reference():
+                # An unseen strip can temporarily retain the original odom
+                # reference. Known non-drivable pixels still reject it.
+                held=reusable_reference(old,sample,self.start_x,
+                    self.config.half_width_m+self.config.side_margin_m,allow_unknown=True)
+                if held is not None:
+                    self.detail.update(control_reference_held=True,holding_reference_reason=reason)
+                    self.display=(ns,labels,held,'HELD CONTROL; waiting for new reference')
+                    self.render();return  # Do not renew source_ns/source_received.
             if not len(path):
                 self.clear(reason);self.display=(ns,labels,np.empty((0,2)),reason);self.render();return
             if not fresh_stamp(ns,received,self.get_clock().now().nanoseconds,time.monotonic(),.5):
                 if not self.fresh_reference():self.clear('vision_planning_too_old')
                 return
             self.reference=path@matrix[:2,:2].T+matrix[:2,3]
-            self.source_ns=ns;self.source_received=received;self.reason='tracking';self.detail=detail
+            self.source_ns=ns;self.source_received=received;self.reason='tracking';self.detail={**detail,'control_reference_held':False}
+            self.last_good_world=self.reference.copy();self.last_good_world_stamp=ns
             self.display=(ns,labels,path,'ready; hold forward in teleop');self.render()
         except TransformException:
             self.render()
@@ -197,7 +208,7 @@ class CameraAssistNode(Node):
         if demand.reason=='goal_reached':return Demand(reason='reference_exhausted')
         if demand.reason!='tracking':return demand
         speed=min(t.linear.x,demand.linear,self.controller.max_angular_speed_rps/max(float(self.detail.get('max_curvature',0)),1e-9))
-        if (ns-self.source_ns)/1e9>.5:speed=min(speed,.05)
+        if self.detail.get('control_reference_held') or (ns-self.source_ns)/1e9>.5:speed=min(speed,.05)
         return Demand(speed,demand.angular*speed/max(demand.linear,1e-9),'tracking')
 
     def tick(self):
@@ -213,7 +224,7 @@ class CameraAssistNode(Node):
         age=(self.get_clock().now().nanoseconds-self.source_ns)/1e6 if self.source_ns else None
         self.status.publish(String(data=json.dumps(dict(self.detail,mode='camera_steering_assist',reason=demand.reason,
             enabled=self.enabled,allow_motion=self.allow_motion,linear_x=demand.linear,angular_z=demand.angular,
-            source_stamp_ns=self.source_ns,reference_age_ms=age,reference_valid=self.fresh_reference(),using_held_reference=self.fresh_reference() and age is not None and age>500,
+            source_stamp_ns=self.source_ns,reference_age_ms=age,reference_valid=self.fresh_reference(),using_held_reference=self.fresh_reference() and (bool(self.detail.get('control_reference_held')) or age is not None and age>500),
             reference_hold_sec=self.hold,goal_required=False,lidar_required=False,map_required=False,
             red_edges_used_for_planning=False),allow_nan=False)))
 
@@ -229,6 +240,18 @@ class CameraAssistNode(Node):
         ns,labels,path,reason=self.display;message=self.images.get(ns)
         if message is None:return
         try:
+            if len(path)>=2 and not reason.startswith('HELD'):
+                self.last_good_overlay=(ns,np.array(path,copy=True))
+            elif len(path)<2 and getattr(self,'last_good_overlay',None) is not None:
+                held_ns,path=self.last_good_overlay
+                path=path.copy()
+                if getattr(self,'last_good_world_stamp',None)==held_ns:
+                    try:
+                        matrix=self.tf_matrix(ns)
+                        path=(self.last_good_world-matrix[:2,3])@matrix[:2,:2]
+                    except (TransformException,ValueError,TypeError):pass
+                age=max(0.,(ns-held_ns)/1e9)
+                reason=f'HELD DISPLAY ONLY {age:.1f}s | STOP: '+reason
             frame=draw_vision_reference(image_to_bgr(message),labels,path,self.camera,self.mount,reason,
                 edges=[],assisted=True)
             self.overlay_pub.publish(fill_compressed_image(CompressedImage(),frame,message.header,80))
