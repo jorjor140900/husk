@@ -36,7 +36,7 @@ class CameraAssistNode(Node):
     def __init__(self):
         super().__init__('camera_assist')
         defaults=dict(camera_calibration='',camera_mount='',base_frame='base_link',odom_frame='odom',
-            image_topic='/camera/image_raw',allow_motion=False,speed_mps=.15,max_angular_rps=.15,
+            image_topic='/camera/image_raw',allow_motion=False,speed_mps=.18,max_angular_rps=.15,
             half_width_m=.33,side_margin_m=.08,reference_hold_sec=2.)
         for key,value in defaults.items():self.declare_parameter(key,value)
         value=lambda key:self.get_parameter(key).value
@@ -44,7 +44,7 @@ class CameraAssistNode(Node):
         self.hold=value('reference_hold_sec')
         if not .5<=self.hold<=2.:raise ValueError('reference_hold_sec must be within 0.5..2 seconds')
         speed,angular=value('speed_mps'),value('max_angular_rps')
-        if not 0<speed<=.15 or not 0<angular<=.15:raise ValueError('assist speed limits exceed supervised preset')
+        if not 0<speed<=.18 or not 0<angular<=.15:raise ValueError('assist speed limits exceed supervised preset')
         self.camera=CameraCalibration.load(value('camera_calibration'))
         self.mount=CameraMount.load(value('camera_mount'))
         self.base,self.odom_frame=value('base_frame'),value('odom_frame')

@@ -9,7 +9,7 @@ from husky_link_core.operator_permission import PERMISSION_TOPIC, operator_setti
 from .robot_profile import load_robot_profile
 
 
-def prepare_operator_profile(source, output, robot_output, motion=False, supervised_trial=False, supervised_goal=False, supervised_extended_goal=False, extended_session_sec=300.,turning_session=False):
+def prepare_operator_profile(source, output, robot_output, motion=False, supervised_trial=False, supervised_goal=False, supervised_extended_goal=False, extended_session_sec=300.,turning_session=False,camera_assist=False):
     from husky_link_core.supervised_trial import MODE, selected_limits
     if supervised_extended_goal and (supervised_goal or supervised_trial):
         raise ValueError("choose only one supervised preset")
@@ -19,7 +19,7 @@ def prepare_operator_profile(source, output, robot_output, motion=False, supervi
         raise ValueError("choose supervised trial or supervised goal")
     goal_session=supervised_goal or supervised_extended_goal
     supervised_trial=supervised_trial or goal_session
-    limits=selected_limits(goal_session,supervised_extended_goal,extended_session_sec,turning=turning_session)
+    limits=selected_limits(goal_session,supervised_extended_goal,extended_session_sec,turning=turning_session,camera_assist=camera_assist)
     if motion and supervised_trial:
         raise ValueError("choose normal motion or supervised trial")
     source, output, robot_output = [Path(path).expanduser().resolve() for path in (source, output, robot_output)]
@@ -85,9 +85,10 @@ def main(argv=None):
     parser.add_argument("--supervised-extended-goal",action="store_true",help="attended 0.15 m/s preset, backup 100 m; LiDAR NOT checked")
     parser.add_argument("--extended-session-sec",type=float,choices=(300.,900.),default=300.)
     parser.add_argument("--turning-session",action="store_true",help="extended 900s goal preset allowing 2*pi cumulative rotation for junction turns")
+    parser.add_argument("--camera-assist",action="store_true",help="0.18 m/s camera assist preset; requires extended 900s turning session")
     args = parser.parse_args(argv)
     try:
-        report = prepare_operator_profile(args.profile, args.output, args.robot_output, args.motion, args.supervised_trial, args.supervised_goal, args.supervised_extended_goal, args.extended_session_sec,args.turning_session)
+        report = prepare_operator_profile(args.profile, args.output, args.robot_output, args.motion, args.supervised_trial, args.supervised_goal, args.supervised_extended_goal, args.extended_session_sec,args.turning_session,args.camera_assist)
     except (ValueError, KeyError, OSError, TypeError) as exc:
         parser.exit(2, str(exc)+"\n")
     print(json.dumps(report, indent=2))

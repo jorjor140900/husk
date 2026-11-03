@@ -244,3 +244,55 @@ waiting_for_capture_tf แยกจากการสร้างเส้นไ
 ระหว่างรอใช้ reference ล่าสุดใน odom คำนวณ pursuit ใหม่ตามตำแหน่งหุ่น ไม่ replay Twist เก่า หาก mask ใหม่ปฏิเสธเฉพาะปลายเส้น สามารถใช้ส่วนต้นที่ต่อเนื่องและตรวจครบความกว้างแล้วได้ เมื่อยาวอย่างน้อย .5 m โดยตัดก่อนจุดที่ไม่ผ่านและตรวจ normal ของปลายเส้นซ้ำ ไม่ข้ามส่วนที่ถูกปฏิเสธไปต่อส่วนเขียวด้านหลัง
 
 การ hold ขณะยังไม่มีหลักฐานใหม่ยังจำกัด 2 s จาก capture เดิม และลดความเร็วไม่เกิน .05 m/s หลัง .5 s ไม่ใช่การค้างคำสั่งแบบไม่สิ้นสุด ปล่อยปุ่ม/permission หาย/odometry เก่า/เส้นหมดอายุยังหยุดตามเดิม การแก้ครั้งนี้ไม่ได้รันทดสอบตามคำขอผู้ใช้
+
+
+## ลายพื้นและความเร็วเดินหน้า 0.18 m/s
+
+camera_assist ใช้ config/camera-assist-floor.json ซึ่งต่อยอด temporal filter เดิม เพิ่มการเชื่อมช่อง threshold ขนาดไม่เกิน 128 พิกเซลและรัศมีความหนาไม่เกิน 2 พิกเซล ที่ถูกล้อมด้วยพื้นที่ drivable เท่านั้น ทุกพิกเซลในช่องต้องมี current และ filtered probability อย่างน้อย .50 และไม่ติด vegetation/explicit veto ไม่เติมพื้นที่ที่โมเดลให้คะแนนต่ำกว่า .50 ไม่ใช่การเทรนน้ำหนักใหม่ จึงยังต้องตรวจภาพจริงว่ารอยเส้นในโจทย์อยู่ในเงื่อนไขนี้หรือไม่ ดู enclosed_uncertain_pixels ใน /drivable_area/status เพื่อแยกผลของตัวเชื่อมจากผลของโมเดล
+
+โปรไฟล์ camera assist ใหม่เพิ่มความเร็วเดินหน้าจาก .15 เป็น .18 m/s (20%) โดยคง angular limit .15 rad/s และขีดจำกัด session เดิม การเลี้ยว/hold reference ยังลดความเร็วตามเดิม โปรไฟล์ junction เดิมยังใช้ .15 m/s; ต้องอัปเดตทั้ง ROS2 และ ROS1 แล้วเลือกโปรไฟล์ใหม่จึงได้ความเร็วใหม่
+
+หยุดหุ่นและปิด launch/console/teleop ก่อนอัปเดต บนคอม:
+
+```bash
+cd ~/husk-live
+git pull --ff-only origin experiment/local-ai-lidar
+python3 tools/create_ros2_workspace.py --workspace "$HOME/husky_vision_ws" --update-code --update-detector
+cd ~/husky_vision_ws
+source /opt/ros/jazzy/setup.bash
+source .venv/bin/activate
+python /usr/bin/colcon build --symlink-install --packages-select husky_vision
+source install/local_setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 run husky_vision prepare_operator_profile   --profile "$HOME/husky_vision_ws/robot/robot-nojoy-junction.json"   --output "$HOME/husky_vision_ws/robot/robot-camera-assist-018.json"   --robot-output "$HOME/husky_vision_ws/robot/ros1-camera-assist-018.json"   --supervised-extended-goal --extended-session-sec 900 --turning-session --camera-assist
+scp -r "$HOME/husky_vision_ws/src/husky_vision/ros1/husky_vision_bridge" administrator@10.82.13.0:~/husky_ws/src/
+scp "$HOME/husky_vision_ws/robot/ros1-camera-assist-018.json" administrator@10.82.13.0:~/husky-camera-assist-018.json
+```
+
+คำสั่งสร้างโปรไฟล์ทำครั้งเดียว ไม่เขียนทับไฟล์เดิม flag extended-goal เป็นชื่อ preset session เดิม ไม่เปิดการวิ่งหา goal ในโหมด camera_assist
+
+บนหุ่น:
+
+```bash
+source /opt/ros/noetic/setup.bash
+cd ~/husky_ws
+catkin_make --pkg husky_vision_bridge
+source devel/setup.bash
+roslaunch husky_vision_bridge bridge.launch   profile_path:="$HOME/husky-camera-assist-018.json"   odom_topic:=/odometry/filtered base_frame:=base_link   allow_robot_output:=true supervised_trial:=true
+```
+
+อีก terminal บนหุ่น:
+
+```bash
+source /opt/ros/noetic/setup.bash
+source ~/husky_ws/devel/setup.bash
+rosrun husky_vision_bridge operator_console.py   _profile_path:="$HOME/husky-camera-assist-018.json"   _allow_robot_output:=true _supervised_trial:=true _session_sec:=900.0
+```
+
+คง STOPPED ก่อน reset/enable บนคอม เปิด tunnel คู่เดิม แล้ว launch:
+
+```bash
+ros2 launch husky_vision camera_assist.launch.py   profile:="$HOME/husky_vision_ws/robot/robot-camera-assist-018.json" allow_motion:=true
+```
+
+reset/enable, กด g และ teleop ตามขั้นตอนด้านบน ใช้ camera_assist_teleop ที่ build ใหม่ ค่าเริ่มต้น .18 m/s; การปล่อยปุ่ม/Space และ watchdog ยังทำงานเหมือนเดิม ไม่มีการรันทดสอบการแก้ชุดนี้ตามคำขอผู้ใช้

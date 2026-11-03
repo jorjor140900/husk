@@ -31,7 +31,7 @@ class LaserSafetyNode(Node):
     def __init__(self, **kwargs):
         super().__init__("laser_safety", **kwargs)
         for name, value in {**asdict(CollisionConfig()), "odom_frame": "odom", "base_frame": "base_link", "supervised_trial": False, "trial_goal_session": False, "trial_extended_session": False, "trial_extended_duration_sec": 300.,
-                            "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,"trial_turning_session":False,'pause_on_vision_gap':False,'subscribe_scan':True,
+                            "scan_timeout_sec": 0.3, "odom_timeout_sec": 0.3,"trial_turning_session":False,"trial_camera_assist":False,'pause_on_vision_gap':False,'subscribe_scan':True,
                             "request_timeout_sec": 0.3, "permission_timeout_sec": 0.3,
                             "release_hold_sec": 0.5, "output_acceleration_mps2": 0.25,
                             "output_angular_acceleration_rps2": 0.8}.items():
@@ -45,7 +45,7 @@ class LaserSafetyNode(Node):
         goal_session=value("trial_goal_session")
         if type(goal_session) is not bool or goal_session and not self.supervised_trial:
             raise ValueError("trial_goal_session requires explicit supervised_trial")
-        self.trial_limits=selected_limits(goal_session,value("trial_extended_session"),value("trial_extended_duration_sec"),turning=value("trial_turning_session"))
+        self.trial_limits=selected_limits(goal_session,value("trial_extended_session"),value("trial_extended_duration_sec"),turning=value("trial_turning_session"),camera_assist=value("trial_camera_assist"))
         configuration={name: value(name) for name in CollisionConfig.__dataclass_fields__}
         if self.supervised_trial:
             configuration.update(max_linear_mps=self.trial_limits['max_linear_mps'],max_angular_rps=self.trial_limits['max_angular_rps'])

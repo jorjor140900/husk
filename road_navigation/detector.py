@@ -34,6 +34,8 @@ class DetectorConfig:
     probability_threshold: float = 0.62
     probability_release_threshold: float = 0.62
     current_probability_floor: float = 0.50
+    enclosed_uncertain_max_pixels: int = 0
+    enclosed_uncertain_radius_px: int = 2
     temporal_alpha: float = 0.65
     temporal_flow_width: int = 0
     use_temporal: bool = True
@@ -58,6 +60,9 @@ class DetectorConfig:
         for name in ("max_width", "analysis_width", "clearance_px", "max_lateral_step", "edge_low_threshold", "edge_high_threshold", "region_step", "temporal_flow_width"):
             if type(getattr(self, name)) is not int:
                 raise ValueError(f"{name} must be an integer")
+        if (type(self.enclosed_uncertain_max_pixels) is not int or not 0<=self.enclosed_uncertain_max_pixels<=256 or
+                type(self.enclosed_uncertain_radius_px) is not int or not 1<=self.enclosed_uncertain_radius_px<=3):
+            raise ValueError("invalid enclosed uncertain-region limits")
         if type(self.use_temporal) is not bool:
             raise ValueError("use_temporal must be boolean")
         if self.temporal_flow_width!=0 and not 64<=self.temporal_flow_width<=self.max_width:
@@ -126,6 +131,8 @@ class DetectionResult:
     vegetation_support_radius_px: int = 0
     vegetation_support_fraction: float = 0.5
 
+    enclosed_uncertain_pixels: int = 0
+
     @property
     def valid_image_path(self) -> bool:
         return len(self.path) > 0
@@ -136,6 +143,7 @@ class DetectionResult:
             "drivable_pixels": int(np.count_nonzero(self.raw_mask)),
             "mask_pixels": int(self.raw_mask.size),
             "image_reference_enabled": self.reference_path_enabled,
+            "enclosed_uncertain_pixels": self.enclosed_uncertain_pixels,
             "reason": self.reason,
             "backend": self.backend,
             "quality_score": self.quality_score,
@@ -155,6 +163,36 @@ class DetectionResult:
                 "verified_grass_classification": False,
             },
         }
+
+
+def connect_enclosed_uncertainty(candidate,current,filtered,blocked,config):
+    """Connect only small enclosed threshold gaps still supported by the model.
+
+    Never override confident negatives, explicit vetoes, vegetation, large
+    holes, or regions connected to the image boundary. This is not a detector
+    of floor markings: training remains necessary for confident model errors.
+    """
+    if not config.enclosed_uncertain_max_pixels:return candidate,0
+    count,components,stats,_=cv2.connectedComponentsWithStats((~candidate).astype(np.uint8),connectivity=8)
+    result=candidate.copy();added=0
+    h,w=candidate.shape
+    for index in range(1,count):
+        x,y,width,height,area=stats[index]
+        if area>config.enclosed_uncertain_max_pixels or x==0 or y==0 or x+width>=w or y+height>=h:continue
+        # Work on a bounded crop: the accepted component must be entirely
+        # surrounded by drivable pixels, not just adjacent to a green patch.
+        region=components[y-1:y+height+1,x-1:x+width+1]==index
+        pad=cv2.dilate(region.astype(np.uint8),np.ones((3,3),np.uint8))>0
+        ring=pad&~region
+        sl=np.s_[y-1:y+height+1,x-1:x+width+1]
+        if not candidate[sl][ring].all():continue
+        if blocked[sl][region].any():continue
+        if np.any(current[sl][region]<config.current_probability_floor):continue
+        if np.any(filtered[sl][region]<config.current_probability_floor):continue
+        thickness=cv2.distanceTransform(region.astype(np.uint8),cv2.DIST_L2,cv2.DIST_MASK_PRECISE)
+        if float(thickness.max())>config.enclosed_uncertain_radius_px:continue
+        result[sl]|=region;added+=int(area)
+    return result,added
 
 
 class RoadDetector:
@@ -352,6 +390,7 @@ class RoadDetector:
             candidate |= (self._aligned_previous_mask &
                 (probability >= self.config.probability_release_threshold) &
                 (current >= self.config.current_probability_floor))
+        candidate,recovered=connect_enclosed_uncertainty(candidate,current,probability,blocked,self.config)
         raw_mask = candidate.astype(np.uint8) * 255
         self._previous_mask = raw_mask.copy()
         if not self.config.generate_reference_path:
@@ -370,7 +409,7 @@ class RoadDetector:
                 empty, 0., "nav2_segmentation_only", backend, (time.perf_counter()-start)*1000.,
                 original_shape, reference, vegetation.astype(np.uint8)*255,
                 self.config.reject_green_vegetation, False,
-                self.config.vegetation_support_radius_px, self.config.vegetation_support_fraction)
+                self.config.vegetation_support_radius_px, self.config.vegetation_support_fraction, recovered)
         sx = int(round((w - 1) * self.config.seed_x_fraction))
         sy = int(round((h - 1) * self.config.seed_y_fraction))
         road_mask = np.zeros((h, w), dtype=np.uint8)
@@ -408,5 +447,5 @@ class RoadDetector:
             plan.points, quality, plan.reason, backend,
             (time.perf_counter() - start) * 1000.0, original_shape, reference,
             vegetation.astype(np.uint8)*255, self.config.reject_green_vegetation,
-            True, self.config.vegetation_support_radius_px, self.config.vegetation_support_fraction,
+            True, self.config.vegetation_support_radius_px, self.config.vegetation_support_fraction, recovered,
         )

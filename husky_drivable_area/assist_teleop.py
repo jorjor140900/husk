@@ -27,9 +27,9 @@ class HeldForward:
 def main(args=None):
     rclpy.init(args=args)
     node=Node('camera_assist_teleop')
-    node.declare_parameter('speed',.15);node.declare_parameter('key_timeout',.6)
+    node.declare_parameter('speed',.18);node.declare_parameter('key_timeout',.6)
     speed=node.get_parameter('speed').value
-    if not math.isfinite(speed) or not 0<speed<=.15:raise ValueError('speed must be within 0..0.15 m/s')
+    if not math.isfinite(speed) or not 0<speed<=.18:raise ValueError('speed must be within 0..0.18 m/s')
     held=HeldForward(node.get_parameter('key_timeout').value)
     output=node.create_publisher(Twist,'/husky_assist/teleop_cmd_vel',1)
     settings=None
