@@ -106,11 +106,16 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     if not eligible.any():return empty,'no_observed_image_corridor',{}
     score=np.full(free.shape,np.inf)
     score[reachable]=-travel[reachable]+.45/np.maximum(clearance[reachable]-half,.08)+.55*abs(yy[reachable])
-    endpoint=np.unravel_index(np.argmin(np.where(eligible,score,np.inf)),free.shape)
-    cells=[endpoint]
-    while cells[-1]!=start:cells.append(parents[cells[-1]])
-    path=np.array([[xs[i],ys[j]] for i,j in reversed(cells)])
-    path=_resample(path,config.step_m)
+    # A grid route can fail the finer normal-strip check even though another
+    # reachable route fits. Keep spatially distinct alternatives instead of
+    # treating failure of the single top-scoring endpoint as an empty corridor.
+    endpoints=[]
+    for flat in np.argsort(np.where(eligible,score,np.inf),axis=None):
+        endpoint=np.unravel_index(flat,free.shape)
+        if not eligible[endpoint]:break
+        if all(math.hypot(xx[endpoint]-xx[e],yy[endpoint]-yy[e])>=.20 for e in endpoints):
+            endpoints.append(endpoint)
+        if len(endpoints)>=8:break
     offsets=np.linspace(-half,half,int(math.ceil(2*half/config.step_m))+1)
     def checked(points):
         delta=np.gradient(points,axis=0);norm=np.linalg.norm(delta,axis=1)
@@ -123,24 +128,42 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
         unit=delta/norm[:,None]
         curvature=np.linalg.norm(np.gradient(unit,axis=0),axis=1)/norm
         return float(curvature.max())
-    best=None
-    for sigma_m in (.45,.30,.20,.10,.05,0.):
-        points=path.copy()
-        if sigma_m:
-            pad=int(math.ceil(3*sigma_m/config.step_m))
-            padded=np.pad(path,((pad,pad),(0,0)),mode='edge')
-            points=cv2.GaussianBlur(padded,(1,0),sigmaX=0,sigmaY=sigma_m/config.step_m)[pad:-pad]
-            points[0]=path[0];points[-1]=path[-1]
-            points=_resample(points,config.step_m)
-        curvature=checked(points)
-        if curvature is None:continue
-        if best is None or curvature<best[0]:best=(curvature,points)
-    if best is None:return empty,'no_observed_image_corridor',{}
+    best=None;attempts=0
+    for endpoint in endpoints:
+        attempts+=1
+        cells=[endpoint]
+        while cells[-1]!=start:cells.append(parents[cells[-1]])
+        path=_resample(np.array([[xs[i],ys[j]] for i,j in reversed(cells)]),config.step_m)
+        candidate_best=None
+        for sigma_m in (.45,.30,.20,.10,.05,0.):
+            points=path.copy()
+            if sigma_m:
+                pad=int(math.ceil(3*sigma_m/config.step_m))
+                padded=np.pad(path,((pad,pad),(0,0)),mode='edge')
+                points=cv2.GaussianBlur(padded,(1,0),sigmaX=0,sigmaY=sigma_m/config.step_m)[pad:-pad]
+                points[0]=path[0];points[-1]=path[-1]
+                points=_resample(points,config.step_m)
+            curvature=checked(points)
+            if curvature is None or curvature>4.:continue
+            if candidate_best is None or curvature<candidate_best[0]:candidate_best=(curvature,points)
+        if candidate_best is not None:
+            best=candidate_best;break
+    # A turning route can lose its outer strip at the image boundary. A fully
+    # observed straight horizon is still a useful control reference. Check all
+    # seed strips, from longest to shortest, with the SAME exact width check.
+    if best is None:
+        for length in np.arange(config.max_forward_m-start_x,config.min_length_m-1e-8,-.10):
+            for lateral in seed_candidates:
+                points=_resample(np.array([[start_x,lateral],[start_x+length,lateral]]),config.step_m)
+                curvature=checked(points)
+                if curvature is not None:
+                    best=(curvature,points);break
+            if best is not None:break
+    if best is None:
+        return empty,'no_observed_image_corridor',dict(area_candidate_routes_checked=attempts)
     curvature,path=best
-    # Pursuit reduces speed for the turn; a large heading discontinuity is not
-    # passed through as a nominal-speed polyline.
-    if curvature>4.:return empty,'area_turn_too_sharp',{}
-    return path,'ok',dict(reference_kind='green_area_assist',reference_start_m=float(path[0,0]),reference_start_lateral_m=start_y,
+    return path,'ok',dict(reference_kind='green_area_assist',reference_start_m=float(path[0,0]),reference_start_lateral_m=float(path[0,1]),
+        area_candidate_routes_checked=attempts,
         observed_reference_length_m=float(np.linalg.norm(np.diff(path,axis=0),axis=1).sum()),
         reference_forward_span_m=float(path[-1,0]-path[0,0]),reference_max_lateral_m=float(abs(path[:,1]).max()),
         reserved_width_m=2*half,max_curvature=curvature,

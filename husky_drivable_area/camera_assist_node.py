@@ -146,9 +146,29 @@ class CameraAssistNode(Node):
         if not hasattr(self,'capture_plans'):self.capture_plans=OrderedDict()
         if ns not in self.capture_plans:
             sample=lambda points:sample_ground_labels(points,labels,self.camera,self.mount)
-            self.capture_plans[ns]=plan_area_reference(sample,self.start_x,config=self.config)
+            result=plan_area_reference(sample,self.start_x,config=self.config)
+            # Preview has no odometry: reuse only geometry fully revalidated in
+            # this capture. Live reuse happens below after capture-TF alignment.
+            if not self.allow_motion and self.capture_plans:
+                old_ns=next(reversed(self.capture_plans))
+                old_path,_,old_detail=self.capture_plans[old_ns]
+                if 0<ns-old_ns<=500_000_000:
+                    previous=reusable_reference(old_path,sample,self.start_x,
+                        self.config.half_width_m+self.config.side_margin_m)
+                    if self.prefer_previous(previous,result[0]):
+                        result=(previous,'ok',dict(old_detail,reference_reused_after_current_mask_check=True))
+            self.capture_plans[ns]=result
             while len(self.capture_plans)>12:self.capture_plans.popitem(last=False)
         return self.capture_plans[ns]
+
+    @staticmethod
+    def prefer_previous(previous,new):
+        if previous is None:return False
+        old_length=float(np.linalg.norm(np.diff(previous,axis=0),axis=1).sum())
+        new_length=float(np.linalg.norm(np.diff(new,axis=0),axis=1).sum()) if len(new) else 0.
+        # Refresh a consumed horizon; otherwise keep a currently green route
+        # unless replanning offers a materially longer continuation.
+        return (not len(new)) or (old_length>=.5 and new_length<=old_length+.25)
 
     def retry(self):
         if self.pending is None:return
@@ -165,7 +185,7 @@ class CameraAssistNode(Node):
             if self.fresh_reference():
                 old=(self.reference-matrix[:2,3])@matrix[:2,:2]
                 previous=reusable_reference(old,sample,self.start_x,self.config.half_width_m+self.config.side_margin_m)
-                if previous is not None and (not len(path) or np.linalg.norm(previous[-1]-path[-1])<.15):
+                if self.prefer_previous(previous,path):
                     path=previous;reason='ok';detail={**self.detail,'reference_reused_after_current_mask_check':True}
             self.pending=None
             if not len(path) and old is not None and self.fresh_reference():
