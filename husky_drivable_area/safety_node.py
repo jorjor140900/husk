@@ -262,6 +262,11 @@ class LaserSafetyNode(Node):
             "trial_limits": self.trial_limits if self.supervised_trial else None,
             "navigation_gate_reason": self.navigation_status[0].get("reason") if self.navigation_status else None,
             "trial_fault_context": self.trial_fault_context,
+            "trial_active": bool(self.trial and self.trial.active),
+            "trial_fault": self.trial.fault if self.trial else None,
+            "trial_elapsed_sec": max(0.,now-self.trial.started) if self.trial and self.trial.active else None,
+            "trial_remaining_sec": max(0.,self.trial.limits['max_duration_sec']-(now-self.trial.started)) if self.trial and self.trial.active else None,
+            "vision_paused": vision_paused,
             "pause_on_vision_gap":getattr(self,'pause_on_vision_gap',False),
             "vision_pause_reason":self.navigation_status[0].get('vision_reason') if vision_paused else None,
             "physical_robot_validated": False})))

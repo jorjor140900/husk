@@ -276,7 +276,7 @@ class CameraAssistNode(Node):
         self.output.publish(command)
         idle=demand.reason in ('teleop_released_or_stale','invalid_teleop')
         gate_open=self.allow_motion and self.enabled and (demand.reason=='tracking' or idle)
-        self.gate.publish(String(data=json.dumps(dict(enabled=self.enabled,allow_motion=self.allow_motion,
+        self.gate.publish(String(data=json.dumps(dict(mode="camera_steering_assist",enabled=self.enabled,allow_motion=self.allow_motion,
             request_allowed=gate_open,reason='request_passed_to_collision_filter' if gate_open else 'vision_invalid',
             vision_reason=demand.reason))))
         age=(self.get_clock().now().nanoseconds-self.source_ns)/1e6 if self.source_ns else None

@@ -296,3 +296,12 @@ ros2 launch husky_vision camera_assist.launch.py   profile:="$HOME/husky_vision_
 ```
 
 reset/enable, กด g และ teleop ตามขั้นตอนด้านบน ใช้ camera_assist_teleop ที่ build ใหม่ ค่าเริ่มต้น .18 m/s; การปล่อยปุ่ม/Space และ watchdog ยังทำงานเหมือนเดิม ไม่มีการรันทดสอบการแก้ชุดนี้ตามคำขอผู้ใช้
+
+
+## เส้นหายให้พัก session ไม่ล็อก fault
+
+รายการ vision pause ครอบคลุม near_axis_not_observable และ too_far_from_path เพิ่มจากกรณีเส้นหมดอายุ/หาเส้นไม่ได้ ในโหมด camera_steering_assist ยังรวม packet หรือ geometry ของภาพที่ใช้ไม่ได้ และ gate heartbeat ขาดช่วงขณะที่ request, permission และ odometry ยังสด ทุกกรณีส่งความเร็วศูนย์เมื่อ reference ใช้ไม่ได้ แต่ไม่หยุด TrialBudget ไม่ reset เวลา/ระยะ/มุม และไม่ส่งคำสั่ง re-arm เมื่อข้อมูลใหม่ใช้ได้และยังกดเดินหน้า สามารถกลับมาเดินใน session เดิมได้หลัง clear hold เดิม
+
+status เพิ่ม trial_active, trial_fault, trial_elapsed_sec, trial_remaining_sec และ vision_paused เพื่อแยกการพักจาก fault ที่ล็อก session การกดหยุด/permission หาย, request watchdog, odometry, transport และเพดานเวลา/ระยะ/มุมยังทำงานเดิม จึงไม่ได้รับประกันว่าจะ armed ครบ 900 s ทุกสถานการณ์ หาก /husky_link/status ระบุ receiver_disarmed_or_lease_changed ต้องดูเหตุผลจาก gateway เพิ่มเติม ไม่ auto re-arm ข้าม fault นั้น
+
+หลังอัปเดต หากมี fault ค้างจากเวอร์ชันเก่า ให้ STOP แล้ว reset/enable เริ่ม session ใหม่ครั้งเดียวตามขั้นตอนเดิม การแก้ชุดนี้ตรวจทานโค้ด ไม่รันทดสอบตามคำขอผู้ใช้

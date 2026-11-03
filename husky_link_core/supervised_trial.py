@@ -13,15 +13,41 @@ TURN_GOAL_LIMITS = dict(LONG_GOAL_LIMITS,max_rotation_rad=2*math.pi)
 CAMERA_ASSIST_LIMITS = dict(TURN_GOAL_LIMITS,max_linear_mps=.18)
 
 
+# These conditions invalidate the reference, not the operator's session.
+# Keep the list explicit: permission, odometry, transport, and budget faults
+# must never be turned into automatic recovery by a broad "vision" match.
+VISION_PAUSE_REASONS = frozenset((
+    'start_blocked_narrow_or_unobserved', 'near_axis_not_observable',
+    'no_observed_image_corridor', 'area_turn_too_sharp', 'reference_exhausted',
+    'target_not_ahead', 'too_far_from_path', 'waiting_for_image',
+    'stale_segmentation', 'waiting_for_capture_tf', 'image_reference_stale',
+    'capture_expired_waiting_for_tf', 'vision_planning_too_old',
+    'camera_timeout', 'stale_input', 'stale_result', 'stale_output',
+    'stale_segmentation_before_preview',
+))
+CAMERA_PACKET_PAUSE_REASONS = frozenset((
+    'invalid_segmentation_packet', 'invalid_image_geometry', 'invalid_path',
+))
+
+
 def recoverable_vision_gap(enabled,reason,navigation):
     """Pause at zero, within an existing operator session; never re-arm."""
-    return (enabled is True and reason=='trial_navigation_gate_closed' and
-        isinstance(navigation,dict) and navigation.get('enabled') is True and
-        navigation.get('allow_motion') is True and navigation.get('reason') in ('vision_invalid','vision_stale') and
-        (navigation.get('reason')=='vision_stale' and navigation.get('vision_reason')=='tracking' or
-        navigation.get('vision_reason') in ('start_blocked_narrow_or_unobserved',
-            'no_observed_image_corridor','area_turn_too_sharp','reference_exhausted','target_not_ahead','waiting_for_image','stale_segmentation','waiting_for_capture_tf','image_reference_stale',
-            'capture_expired_waiting_for_tf','vision_planning_too_old','camera_timeout','stale_input','stale_result','stale_output','stale_segmentation_before_preview')))
+    if (enabled is not True or not isinstance(navigation,dict) or
+            navigation.get('enabled') is not True or navigation.get('allow_motion') is not True):
+        return False
+    camera = navigation.get('mode') == 'camera_steering_assist'
+    # A missing gate heartbeat pauses camera assist while request/permission/
+    # odometry remain fresh (checked earlier by the caller). A lost control
+    # process still trips the separate request watchdog.
+    if reason == 'trial_navigation_gate_stale':return camera
+    if reason != 'trial_navigation_gate_closed':return False
+    gate_reason=navigation.get('reason')
+    vision_reason=navigation.get('vision_reason')
+    if not isinstance(vision_reason,str):return False
+    if gate_reason not in ('vision_invalid','vision_stale'):return False
+    return (vision_reason in VISION_PAUSE_REASONS or
+            camera and vision_reason in CAMERA_PACKET_PAUSE_REASONS or
+            gate_reason=='vision_stale' and vision_reason=='tracking')
 
 
 def selected_limits(goal=False,extended=False,duration=300.,*,turning=False,camera_assist=False):
