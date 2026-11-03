@@ -351,3 +351,28 @@ ros2 launch husky_vision camera_assist.launch.py   profile:="$HOME/husky_vision_
 ```
 
 reset/enable และกด g ตามเดิม ต้องใช้ teleop ที่อัปเดตใหม่ซึ่งขอ .234 m/s และตรวจ trial_limits.max_linear_mps กับ receiver.max_linear_mps ว่าเป็น .234 ทั้งคู่ ความเร็วจริงอาจต่ำกว่านี้ระหว่างเร่งหรือแก้ทิศ
+
+
+## ความเร็วปกติ 0.35 m/s และปรับช่วงชะลอ
+
+เพิ่ม preset CAMERA_ASSIST_035_LIMITS โดยคง angular .15 rad/s และ budget เดิม โปรไฟล์ .18/.234 ยังยอมรับและคงความเร็วเดิม ค่าเริ่มต้น teleop ใหม่ขอ .35 m/s แต่ launch/controller/gateway จำกัดตามโปรไฟล์จริง
+
+controller ไม่ใช้ max_curvature ที่สูงที่สุดของทั้ง reference กดความเร็วทุกช่วงอีกต่อไป ใช้ความเร็วที่ Pure Pursuit จำกัดจากโค้งที่สั่งจริงและระยะหยุดคงเหลือ ปรับตัวหารชะลอจาก 1+2|bearing|+|heading| เป็น 1+.75|bearing|+.35|heading| เมื่อคำสั่งเลี้ยวเกิน .15 rad/s ลด v และ omega ด้วยสัดส่วนเดียวกันเพื่อรักษาความโค้ง ไม่ตัด omega อย่างเดียวแล้วปล่อยหุ่นไหลออกนอกทาง จึงยังชะลอได้มากในโค้งแคบ ไม่มีการบังคับความเร็วขั้นต่ำข้ามข้อจำกัดเลี้ยว
+
+ช่วง hold reference เก่าปรับเพดาน .05 เป็น .08 m/s ยังใช้ timestamp เดิมและหมดอายุสูงสุด 2 s ปล่อยปุ่ม/permission/ข้อมูลใช้ไม่ได้ยังหยุดตามเดิม การเปลี่ยนนี้ไม่ได้รันทดสอบตามคำขอผู้ใช้
+
+หลัง pull/export/build บนคอม สร้างโปรไฟล์ใหม่ครั้งเดียว:
+
+```bash
+ros2 run husky_vision prepare_operator_profile   --profile "$HOME/husky_vision_ws/robot/robot-camera-assist-018.json"   --output "$HOME/husky_vision_ws/robot/robot-camera-assist-035.json"   --robot-output "$HOME/husky_vision_ws/robot/ros1-camera-assist-035.json"   --supervised-extended-goal --extended-session-sec 900 --turning-session   --camera-assist --camera-assist-speed 0.35
+scp -r "$HOME/husky_vision_ws/src/husky_vision/ros1/husky_vision_bridge" administrator@10.82.13.0:~/husky_ws/src/
+scp "$HOME/husky_vision_ws/robot/ros1-camera-assist-035.json" administrator@10.82.13.0:~/husky-camera-assist-035.json
+```
+
+หยุด bridge/console บนหุ่นแล้ว source Noetic, cd ~/husky_ws, catkin_make --pkg husky_vision_bridge และ source devel/setup.bash เปิด bridge/console ใหม่ด้วย profile_path และ _profile_path เป็น $HOME/husky-camera-assist-035.json ทั้งคู่ บนคอม:
+
+```bash
+ros2 launch husky_vision camera_assist.launch.py   profile:="$HOME/husky_vision_ws/robot/robot-camera-assist-035.json" allow_motion:=true
+```
+
+reset/enable → g → teleop ใหม่ตามเดิม ดู trial_limits.max_linear_mps และ receiver.max_linear_mps ว่าเป็น .35 ทั้งสองฝั่ง

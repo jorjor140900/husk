@@ -86,7 +86,7 @@ def main(argv=None):
     parser.add_argument("--extended-session-sec",type=float,choices=(300.,900.),default=300.)
     parser.add_argument("--turning-session",action="store_true",help="extended 900s goal preset allowing 2*pi cumulative rotation for junction turns")
     parser.add_argument("--camera-assist",action="store_true",help="0.18 m/s camera assist preset; requires extended 900s turning session")
-    parser.add_argument("--camera-assist-speed",type=float,choices=(.18,.234),default=.18)
+    parser.add_argument("--camera-assist-speed",type=float,choices=(.18,.234,.35),default=.18)
     args = parser.parse_args(argv)
     try:
         report = prepare_operator_profile(args.profile, args.output, args.robot_output, args.motion, args.supervised_trial, args.supervised_goal, args.supervised_extended_goal, args.extended_session_sec,args.turning_session,args.camera_assist,args.camera_assist_speed)

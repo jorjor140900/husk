@@ -36,7 +36,7 @@ class CameraAssistNode(Node):
     def __init__(self):
         super().__init__('camera_assist')
         defaults=dict(camera_calibration='',camera_mount='',base_frame='base_link',odom_frame='odom',
-            image_topic='/camera/image_raw',allow_motion=False,speed_mps=.234,max_angular_rps=.15,
+            image_topic='/camera/image_raw',allow_motion=False,speed_mps=.35,max_angular_rps=.15,
             half_width_m=.33,side_margin_m=.08,reference_hold_sec=2.)
         for key,value in defaults.items():self.declare_parameter(key,value)
         value=lambda key:self.get_parameter(key).value
@@ -44,7 +44,7 @@ class CameraAssistNode(Node):
         self.hold=value('reference_hold_sec')
         if not .5<=self.hold<=2.:raise ValueError('reference_hold_sec must be within 0.5..2 seconds')
         speed,angular=value('speed_mps'),value('max_angular_rps')
-        if not 0<speed<=.234 or not 0<angular<=.15:raise ValueError('assist speed limits exceed supervised preset')
+        if not 0<speed<=.35 or not 0<angular<=.15:raise ValueError('assist speed limits exceed supervised preset')
         self.camera=CameraCalibration.load(value('camera_calibration'))
         self.mount=CameraMount.load(value('camera_mount'))
         self.base,self.odom_frame=value('base_frame'),value('odom_frame')
@@ -268,10 +268,13 @@ class CameraAssistNode(Node):
         demand=pursuit(self.reference,self.pose[0],self.controller)
         if demand.reason=='goal_reached':return Demand(reason='reference_exhausted')
         if demand.reason!='tracking':return demand
-        speed=min(t.linear.x,demand.linear,self.controller.max_angular_speed_rps/max(float(self.detail.get('max_curvature',0)),1e-9))
+        # Pursuit already bounds speed for the turn required NOW and remaining
+        # stopping distance. A maximum curvature spike anywhere on the visible
+        # path used to force the whole approach down to ~0.04 m/s.
+        speed=min(t.linear.x,demand.linear)
         held=bool(self.detail.get('control_reference_held')) or (ns-self.source_ns)/1e9>.5
         if held:
-            speed=min(speed,.05)
+            speed=min(speed,.08)
             # Do not amplify steering against old visual evidence.
             angular=demand.angular*speed/max(demand.linear,1e-9)
             self.detail.update(steering_mode='held_reference',alignment_heading_error_rad=None)
@@ -292,11 +295,14 @@ class CameraAssistNode(Node):
                 return Demand(reason='target_not_ahead')
             # Reduce forward advance while aligning; do not attenuate the
             # heading correction by that same reduction a second time.
-            speed/=1.+2.*abs(bearing)+abs(heading)
+            speed/=1.+.75*abs(bearing)+.35*abs(heading)
             angular=(demand.angular*speed/max(demand.linear,1e-9)
                      +.60*bearing+.35*heading)
-            angular_limit=min(self.controller.max_angular_speed_rps,4.*speed)
-            angular=float(np.clip(angular,-angular_limit,angular_limit))
+            angular=float(np.clip(angular,-4.*speed,4.*speed))
+            # If steering saturates, reduce both components to preserve the
+            # requested turn instead of carrying excess forward speed outward.
+            turn_scale=min(1.,self.controller.max_angular_speed_rps/max(abs(angular),1e-9))
+            speed*=turn_scale;angular*=turn_scale
             self.detail.update(steering_mode='heading_and_pursuit',
                 alignment_heading_error_rad=heading,alignment_target_bearing_rad=bearing)
         return Demand(speed,angular,'tracking')

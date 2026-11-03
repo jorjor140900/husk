@@ -64,7 +64,7 @@ class RobotBridgeNode(Node):
         if type(camera_assist) is not bool or camera_assist and not extended:
             raise ValueError("camera assist speed requires supervised extended session")
         assist_speed=value("trial_camera_assist_speed")
-        if (type(assist_speed) not in (int,float) or assist_speed not in (.18,.234)
+        if (type(assist_speed) not in (int,float) or assist_speed not in (.18,.234,.35)
                 or not camera_assist and assist_speed!=.18):
             raise ValueError("invalid camera assist speed preset")
         self.command_max_linear=assist_speed if camera_assist else (.15 if extended else .10)

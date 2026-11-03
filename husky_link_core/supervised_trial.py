@@ -12,6 +12,7 @@ LONG_GOAL_LIMITS = dict(EXTENDED_GOAL_LIMITS,max_duration_sec=900.)
 TURN_GOAL_LIMITS = dict(LONG_GOAL_LIMITS,max_rotation_rad=2*math.pi)
 CAMERA_ASSIST_LIMITS = dict(TURN_GOAL_LIMITS,max_linear_mps=.18)
 CAMERA_ASSIST_FAST_LIMITS = dict(CAMERA_ASSIST_LIMITS,max_linear_mps=.234)
+CAMERA_ASSIST_035_LIMITS = dict(CAMERA_ASSIST_LIMITS,max_linear_mps=.35)
 
 
 # These conditions invalidate the reference, not the operator's session.
@@ -60,16 +61,17 @@ def selected_limits(goal=False,extended=False,duration=300.,*,turning=False,came
         raise ValueError('turning session requires extended goal and 900 seconds')
     if type(camera_assist) is not bool or camera_assist and not turning:
         raise ValueError('camera assist preset requires turning session')
-    if (type(camera_assist_speed) not in (int,float) or camera_assist_speed not in (.18,.234)
+    if (type(camera_assist_speed) not in (int,float) or camera_assist_speed not in (.18,.234,.35)
             or not camera_assist and camera_assist_speed!=.18):
-        raise ValueError('camera assist speed requires the 0.18 or 0.234 preset')
-    if camera_assist:return (CAMERA_ASSIST_FAST_LIMITS if camera_assist_speed==.234 else CAMERA_ASSIST_LIMITS).copy()
+        raise ValueError('camera assist speed requires the 0.18, 0.234 or 0.35 preset')
+    if camera_assist:
+        return {.18:CAMERA_ASSIST_LIMITS,.234:CAMERA_ASSIST_FAST_LIMITS,.35:CAMERA_ASSIST_035_LIMITS}[camera_assist_speed].copy()
     if turning:return TURN_GOAL_LIMITS.copy()
     return (LONG_GOAL_LIMITS if duration==900. else EXTENDED_GOAL_LIMITS).copy() if extended else (GOAL_LIMITS if goal else LIMITS).copy()
 
 
 def checked_limits(value):
-    if not isinstance(value,dict) or value not in (LIMITS,GOAL_LIMITS,EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS,TURN_GOAL_LIMITS,CAMERA_ASSIST_LIMITS,CAMERA_ASSIST_FAST_LIMITS):
+    if not isinstance(value,dict) or value not in (LIMITS,GOAL_LIMITS,EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS,TURN_GOAL_LIMITS,CAMERA_ASSIST_LIMITS,CAMERA_ASSIST_FAST_LIMITS,CAMERA_ASSIST_035_LIMITS):
         raise ValueError('supervised trial limits must match a fixed bounded configuration')
     return value.copy()
 
