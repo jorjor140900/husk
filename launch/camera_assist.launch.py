@@ -14,14 +14,16 @@ from launch_ros.actions import Node
 def _nodes(context):
     from husky_drivable_area.ground_geometry import CameraMount
     from husky_drivable_area.robot_profile import expanded_path,load_robot_profile
-    from husky_link_core.supervised_trial import trial_mode,profile_trial_limits,GOAL_LIMITS,EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS,TURN_GOAL_LIMITS,CAMERA_ASSIST_LIMITS
+    from husky_link_core.supervised_trial import trial_mode,profile_trial_limits,GOAL_LIMITS,EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS,TURN_GOAL_LIMITS,CAMERA_ASSIST_LIMITS,CAMERA_ASSIST_FAST_LIMITS
     value=lambda key:LaunchConfiguration(key).perform(context)
     share=Path(get_package_share_directory('husky_drivable_area'))
     filename=expanded_path(value('profile'));profile=json.loads(filename.read_text())
     allow=value('allow_motion').lower()=='true'
     trial_mode(profile,True)
     limits=profile_trial_limits(profile)
-    extended=limits in (EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS,TURN_GOAL_LIMITS,CAMERA_ASSIST_LIMITS)
+    extended=limits in (EXTENDED_GOAL_LIMITS,LONG_GOAL_LIMITS,TURN_GOAL_LIMITS,CAMERA_ASSIST_LIMITS,CAMERA_ASSIST_FAST_LIMITS)
+    assist=limits in (CAMERA_ASSIST_LIMITS,CAMERA_ASSIST_FAST_LIMITS)
+    assist_speed=float(limits['max_linear_mps']) if assist else .18
     if allow:profile,mount=load_robot_profile(filename,allow_supervised_trial=True)
     else:mount=CameraMount.load(expanded_path(profile['camera']['mount_path']))
     camera,robot,bridge=profile['camera'],profile['robot'],profile['bridge']
@@ -36,8 +38,8 @@ def _nodes(context):
     common=dict(supervised_trial=True,trial_extended_session=extended)
     sessions=dict(trial_goal_session=limits==GOAL_LIMITS or extended,
         trial_extended_duration_sec=float(limits['max_duration_sec']) if extended else 300.,
-        trial_turning_session=limits in (TURN_GOAL_LIMITS,CAMERA_ASSIST_LIMITS),
-        trial_camera_assist=limits==CAMERA_ASSIST_LIMITS)
+        trial_turning_session=limits in (TURN_GOAL_LIMITS,CAMERA_ASSIST_LIMITS,CAMERA_ASSIST_FAST_LIMITS),
+        trial_camera_assist=assist,trial_camera_assist_speed=assist_speed)
     perception=dict(use_webcam='false',image_topic='/camera/image_raw',device='cuda',
         model_path=camera['model_path'],model_width='256',model_height='160',cpu_threads='2',
         camera_calibration=camera['calibration_path'],camera_mount=camera['mount_path'],
@@ -52,7 +54,7 @@ def _nodes(context):
         Node(package='husky_drivable_area',executable='robot_bridge',namespace='husky_link',output='screen',parameters=[dict(
             bridge_url=bridge['url'],forward_commands=allow,base_frame=base,
             expected_output_topic=bridge.get('expected_output_topic') or '',
-            command_topic='/husky_assist/filtered_cmd_vel_stamped',idle_zero_heartbeat=True,trial_camera_assist=limits==CAMERA_ASSIST_LIMITS,**common)]),
+            command_topic='/husky_assist/filtered_cmd_vel_stamped',idle_zero_heartbeat=True,trial_camera_assist=assist,trial_camera_assist_speed=assist_speed,**common)]),
         Node(package='tf2_ros',executable='static_transform_publisher',name='assist_ground_alias',arguments=[
             '--x','0','--y','0','--z','0','--roll','0','--pitch','0','--yaw','0',
             '--frame-id',parent,'--child-frame-id',mount.ground_frame]),
@@ -60,7 +62,7 @@ def _nodes(context):
             parameters=[dict(external_topic=robot['external_permission_topic'])]),
         Node(package='husky_drivable_area',executable='camera_assist',output='screen',parameters=[dict(
             allow_motion=allow,camera_calibration=camera['calibration_path'],camera_mount=camera['mount_path'],
-            base_frame=base,odom_frame=odom,speed_mps=min(.18,limits['max_linear_mps']),max_angular_rps=min(.15,limits['max_angular_rps']),
+            base_frame=base,odom_frame=odom,speed_mps=min(.234,limits['max_linear_mps']),max_angular_rps=min(.15,limits['max_angular_rps']),
             half_width_m=profile['footprint']['half_width_m'],
             side_margin_m=profile['footprint'].get('lateral_margin_m',profile['footprint']['margin_m']),
             reference_hold_sec=float(value('reference_hold_sec')))]),

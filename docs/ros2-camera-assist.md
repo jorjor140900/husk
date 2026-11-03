@@ -330,3 +330,24 @@ heartbeat ศูนย์ช่วยคง session เดิมขณะ upstre
 camera assist ลด pursuit lookahead จาก .50 เป็น .35 m และเพิ่ม feedback มุมไปหา target (.60 rad/s ต่อ rad) กับมุมแนวเส้นจาก chord ยาวประมาณ .30 m (.35 rad/s ต่อ rad) ในพิกัดหุ่น เมื่อยังเยื้องแนวจะลดความเร็วเดินหน้า โดยไม่ลด heading correction ตามความเร็วซ้ำอีกครั้ง คงเพดาน angular ของโปรไฟล์เดิม .15 rad/s และจำกัด curvature ของคำสั่งไม่เกิน 4 /m ไม่หมุนอยู่กับที่หรือถอย การถือ reference เก่ายังใช้คำสั่ง pursuit แบบเดิมที่ความเร็วไม่เกิน .05 m/s ไม่เร่ง heading feedback ด้วยภาพเก่า
 
 status มี steering_mode=heading_and_pursuit, alignment_heading_error_rad และ alignment_target_bearing_rad ส่วนเส้นน้ำเงินยังแสดงแกนหุ่นจริงและเส้นเหลืองยังเป็นกลางทาง ไม่ย้ายภาพเส้นแทนการควบคุม รุ่นนี้อัปเดต ROS2 ฝั่งคอมและเปิด launch ใหม่ได้ ไม่ต้องเพิ่ม angular limit ของ gateway บนหุ่น ไม่ได้รันทดสอบตามคำขอผู้ใช้ จึงยังต้องตรวจว่าการแก้ทิศไวขึ้นโดยไม่แกว่งกับหุ่นจริง
+
+
+## เพิ่มเดินตรงอีก 30%: 0.234 m/s
+
+เพิ่ม preset CAMERA_ASSIST_FAST_LIMITS ที่ .234 m/s (=.18×1.30) คง angular .15 rad/s, acceleration และการลดความเร็วเมื่อไม่ตรงแนว/กำลังเลี้ยว/ถือ reference เก่า โปรไฟล์ .18 เดิมยังใช้ได้และไม่เพิ่มความเร็วเอง ไม่ได้รันทดสอบตามคำขอผู้ใช้
+
+หลัง pull/export/build ฝั่งคอมตามขั้นตอนอัปเดตด้านบน ให้สร้างโปรไฟล์ใหม่หนึ่งครั้ง:
+
+```bash
+ros2 run husky_vision prepare_operator_profile   --profile "$HOME/husky_vision_ws/robot/robot-camera-assist-018.json"   --output "$HOME/husky_vision_ws/robot/robot-camera-assist-0234.json"   --robot-output "$HOME/husky_vision_ws/robot/ros1-camera-assist-0234.json"   --supervised-extended-goal --extended-session-sec 900 --turning-session   --camera-assist --camera-assist-speed 0.234
+scp -r "$HOME/husky_vision_ws/src/husky_vision/ros1/husky_vision_bridge" administrator@10.82.13.0:~/husky_ws/src/
+scp "$HOME/husky_vision_ws/robot/ros1-camera-assist-0234.json" administrator@10.82.13.0:~/husky-camera-assist-0234.json
+```
+
+บนหุ่นหยุด bridge/console เดิมและ build package ใหม่ (source Noetic, cd ~/husky_ws, catkin_make --pkg husky_vision_bridge, source devel/setup.bash) แล้วเปิด bridge กับ operator console โดยเปลี่ยน profile_path และ _profile_path ทั้งสองจุดเป็น $HOME/husky-camera-assist-0234.json บนคอมเปิด:
+
+```bash
+ros2 launch husky_vision camera_assist.launch.py   profile:="$HOME/husky_vision_ws/robot/robot-camera-assist-0234.json" allow_motion:=true
+```
+
+reset/enable และกด g ตามเดิม ต้องใช้ teleop ที่อัปเดตใหม่ซึ่งขอ .234 m/s และตรวจ trial_limits.max_linear_mps กับ receiver.max_linear_mps ว่าเป็น .234 ทั้งคู่ ความเร็วจริงอาจต่ำกว่านี้ระหว่างเร่งหรือแก้ทิศ
