@@ -39,21 +39,24 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     ingress=.1
     calibrated_start=start_x
     offsets=np.linspace(-half,half,int(math.ceil(2*half/config.step_m))+1)
-    # A camera mounted off centre may see the axis before it sees the entire
-    # robot-width strip. Move the start only across unseen samples, never a
-    # measured non-drivable patch, to the first fully observed ingress.
-    ingress_detail={}
+    # Search a bounded lateral start within the currently observed corridor.
+    # Reject every candidate whose full ingress strip contains a veto. The
+    # axis itself need not be the centre of the drivable corridor.
+    ingress_detail={};seed_candidates=[]
+    lateral_offsets=[0.,.05,-.05,.10,-.10,.15,-.15,.20,-.20]
     for advance in np.arange(0.,.301,.05):
         candidate=calibrated_start+advance
-        ix,iy=np.meshgrid(np.linspace(calibrated_start,candidate+ingress,
-            int(math.ceil((advance+ingress)/config.step_m))+1),offsets,indexing='ij')
-        entry=sample(np.column_stack([ix.ravel(),iy.ravel()])).reshape(ix.shape)
-        ingress_detail=dict(start_veto_samples=int((entry==0).sum()),start_unknown_samples=int((entry==255).sum()),
-            start_total_samples=int(entry.size),reserved_width_m=2*half,
-            start_veto_ground_xy=np.column_stack([ix[entry==0],iy[entry==0]]).round(3).tolist())
-        if np.any(entry==0):
-            return empty,'start_blocked_narrow_or_unobserved',ingress_detail
-        if np.all(entry[ix[:,0]>=candidate-1e-8]==1):
+        for lateral in lateral_offsets:
+            ix,iy=np.meshgrid(np.linspace(calibrated_start,candidate+ingress,
+                int(math.ceil((advance+ingress)/config.step_m))+1),offsets+lateral,indexing='ij')
+            entry=sample(np.column_stack([ix.ravel(),iy.ravel()])).reshape(ix.shape)
+            if advance==0 and lateral==0:
+                ingress_detail=dict(start_veto_samples=int((entry==0).sum()),start_unknown_samples=int((entry==255).sum()),
+                    start_total_samples=int(entry.size),reserved_width_m=2*half,
+                    start_veto_ground_xy=np.column_stack([ix[entry==0],iy[entry==0]]).round(3).tolist())
+            if not np.any(entry==0) and np.all(entry[ix[:,0]>=candidate-1e-8]==1):
+                seed_candidates.append(lateral)
+        if seed_candidates:
             start_x=candidate;break
     else:
         return empty,'start_blocked_narrow_or_unobserved',ingress_detail
@@ -75,8 +78,12 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     lateral_clear=cv2.erode((labels==1).astype(np.uint8),np.ones((1,2*radius+1),np.uint8),
         borderType=cv2.BORDER_CONSTANT,borderValue=0)>0
     free=lateral_clear&(xx>=start_x-1e-8)&(xx<=config.max_forward_m+1e-8)&(abs(yy)<=extent)&(labels==1)
-    start=(int(np.argmin(abs(xs-start_x))),len(ys)//2)
-    if not free[start]:return empty,'start_blocked_narrow_or_unobserved',dict(ingress_detail,start_lateral_width_rejected=True)
+    start=None
+    for lateral in seed_candidates:
+        index=(int(np.argmin(abs(xs-start_x))),int(np.argmin(abs(ys-lateral))))
+        if free[index]:start=index;break
+    if start is None:return empty,'start_blocked_narrow_or_unobserved',dict(ingress_detail,start_lateral_width_rejected=True)
+    start_y=float(ys[start[1]])
     distance=np.full(free.shape,np.inf);distance[start]=0.
     travel=np.zeros(free.shape)
     parents={};queue=[(0.,start)]
@@ -95,7 +102,7 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     reachable=np.isfinite(distance)
     # Seek a long, central continuation of the visible green corridor.
     # Straight branches win ties; there is no external destination.
-    eligible=reachable&(np.hypot(xx-start_x,yy)>=config.min_length_m)
+    eligible=reachable&(np.hypot(xx-start_x,yy-start_y)>=config.min_length_m)
     if not eligible.any():return empty,'no_observed_image_corridor',{}
     score=np.full(free.shape,np.inf)
     score[reachable]=-travel[reachable]+.45/np.maximum(clearance[reachable]-half,.08)+.55*abs(yy[reachable])
@@ -133,7 +140,7 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     # Pursuit reduces speed for the turn; a large heading discontinuity is not
     # passed through as a nominal-speed polyline.
     if curvature>4.:return empty,'area_turn_too_sharp',{}
-    return path,'ok',dict(reference_kind='green_area_assist',reference_start_m=float(path[0,0]),
+    return path,'ok',dict(reference_kind='green_area_assist',reference_start_m=float(path[0,0]),reference_start_lateral_m=start_y,
         observed_reference_length_m=float(np.linalg.norm(np.diff(path,axis=0),axis=1).sum()),
         reference_forward_span_m=float(path[-1,0]-path[0,0]),reference_max_lateral_m=float(abs(path[:,1]).max()),
         reserved_width_m=2*half,max_curvature=curvature,

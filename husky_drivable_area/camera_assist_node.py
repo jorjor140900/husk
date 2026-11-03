@@ -185,7 +185,8 @@ class CameraAssistNode(Node):
             self.reference=path@matrix[:2,:2].T+matrix[:2,3]
             self.source_ns=ns;self.source_received=received;self.reason='tracking';self.detail={**detail,'control_reference_held':False}
             self.display=(ns,labels,path,'ready; hold forward in teleop');self.render()
-        except TransformException:
+        except TransformException as exc:
+            self.detail.update(capture_tf_waiting=True,capture_tf_error=str(exc)[:240])
             self.render()
             if not self.fresh_reference():self.reason='waiting_for_capture_tf'
         except (ValueError,TypeError,KeyError,OverflowError,cv2.error):self.clear('invalid_image_geometry')
