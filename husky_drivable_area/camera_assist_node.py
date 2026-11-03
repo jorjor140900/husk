@@ -178,7 +178,7 @@ class CameraAssistNode(Node):
                     self.display=(ns,labels,held,'HELD CONTROL; waiting for new reference')
                     self.render();return  # Do not renew source_ns/source_received.
             if not len(path):
-                self.clear(reason);self.display=(ns,labels,np.empty((0,2)),reason);self.render();return
+                self.clear(reason);self.detail=detail;self.display=(ns,labels,np.empty((0,2)),reason);self.render();return
             if not fresh_stamp(ns,received,self.get_clock().now().nanoseconds,time.monotonic(),.5):
                 if not self.fresh_reference():self.clear('vision_planning_too_old')
                 return

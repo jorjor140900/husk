@@ -37,10 +37,24 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     # Leave a short observed straight ingress before lateral steering. At the
     # bottom image row a turn normal can otherwise leave the field of view.
     ingress=.1
-    ix,iy=np.meshgrid(np.linspace(start_x,start_x+ingress,5),
-        np.linspace(-half,half,int(math.ceil(2*half/config.step_m))+1),indexing='ij')
-    if not np.all(sample(np.column_stack([ix.ravel(),iy.ravel()]))==1):
-        return empty,'start_blocked_narrow_or_unobserved',{}
+    calibrated_start=start_x
+    offsets=np.linspace(-half,half,int(math.ceil(2*half/config.step_m))+1)
+    # A camera mounted off centre may see the axis before it sees the entire
+    # robot-width strip. Move the start only across unseen samples, never a
+    # measured non-drivable patch, to the first fully observed ingress.
+    ingress_detail={}
+    for advance in np.arange(0.,.301,.05):
+        candidate=calibrated_start+advance
+        ix,iy=np.meshgrid(np.linspace(calibrated_start,candidate+ingress,
+            int(math.ceil((advance+ingress)/config.step_m))+1),offsets,indexing='ij')
+        entry=sample(np.column_stack([ix.ravel(),iy.ravel()])).reshape(ix.shape)
+        ingress_detail=dict(start_veto_samples=int((entry==0).sum()),start_unknown_samples=int((entry==255).sum()))
+        if np.any(entry==0):
+            return empty,'start_blocked_narrow_or_unobserved',ingress_detail
+        if np.all(entry[ix[:,0]>=candidate-1e-8]==1):
+            start_x=candidate;break
+    else:
+        return empty,'start_blocked_narrow_or_unobserved',ingress_detail
     start_x+=ingress
     # Keep the calibrated start exactly on the grid, including non-round mounts.
     xs=start_x+np.arange(-math.ceil(start_x/step),math.ceil((config.max_forward_m+half+.1-start_x)/step)+1)*step
@@ -52,9 +66,15 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
     # the calibrated start supply clearance, but known image vetoes still win.
     observed=(labels==1)|((labels==255)&(xx<start_x))
     clearance=cv2.distanceTransform(np.pad(observed.astype(np.uint8),1),cv2.DIST_L2,cv2.DIST_MASK_PRECISE)[1:-1,1:-1]*step
-    free=(clearance>=half+step*.71)&(xx>=start_x-1e-8)&(xx<=config.max_forward_m+1e-8)&(abs(yy)<=extent)&(labels==1)
+    # Circular inflation previously rejected a green lateral strip because
+    # unseen pixels behind it lay inside the circle. Use width across the
+    # corridor here; the final path still checks its true normals in the mask.
+    radius=int(math.ceil(half/step))
+    lateral_clear=cv2.erode((labels==1).astype(np.uint8),np.ones((1,2*radius+1),np.uint8),
+        borderType=cv2.BORDER_CONSTANT,borderValue=0)>0
+    free=lateral_clear&(xx>=start_x-1e-8)&(xx<=config.max_forward_m+1e-8)&(abs(yy)<=extent)&(labels==1)
     start=(int(np.argmin(abs(xs-start_x))),len(ys)//2)
-    if not free[start]:return empty,'start_blocked_narrow_or_unobserved',{}
+    if not free[start]:return empty,'start_blocked_narrow_or_unobserved',dict(ingress_detail,start_lateral_width_rejected=True)
     distance=np.full(free.shape,np.inf);distance[start]=0.
     travel=np.zeros(free.shape)
     parents={};queue=[(0.,start)]
@@ -117,4 +137,4 @@ def plan_area_reference(sample,start_x,config=VisionReferenceConfig()):
         reserved_width_m=2*half,max_curvature=curvature,
         reference_end_ground_xy=path[-1].tolist(),goal_priority=False,
         footprint_checked=False,unseen_near_field_m=float(start_x),
-        red_edges_used_for_planning=False,observed_ingress_m=ingress,area_search_reachable_cells=int(reachable.sum()))
+        red_edges_used_for_planning=False,observed_ingress_m=ingress,calibrated_start_m=float(calibrated_start),start_advance_m=float(start_x-ingress-calibrated_start),area_search_reachable_cells=int(reachable.sum()))
