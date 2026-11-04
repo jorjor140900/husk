@@ -1,0 +1,12 @@
+# camera mount สำหรับตำแหน่งกล้องในงานนี้เท่านั้น
+
+{
+  "height_m": 0.99,
+  "pitch_down_deg": 12.81,
+  "roll_deg": -0.47,
+  "yaw_deg": 1.53,
+  "camera_x_m": -0.26,
+  "camera_y_m": 0.21,
+  "ground_frame": "vision_ground",
+  "camera_frame": "camera_optical_frame"
+}
