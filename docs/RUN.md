@@ -1,6 +1,5 @@
-# วิธีรันรุ่นส่งงาน: camera assist 0.35 m/s
+# วิธีรัน camera assist
 
-ใช้ workspace แยกสำหรับ branch นี้ เพื่อไม่เปลี่ยนชุดที่กำลังทดลองอยู่บนเครื่อง ตัวอย่างฝั่ง laptop เป็น Ubuntu 24.04 / ROS 2 Jazzy; ฝั่งหุ่นเป็น ROS 1 Noetic ไม่ต้องเปิด Nav2, mapping หรือ RViz
 
 ## 1. Clone และ export source บน laptop
 
@@ -49,7 +48,6 @@ cp ~/husky_vision_ws/robot/ros1-camera-assist-035.json ~/husky_submission_ws/rob
 
 การ copy profile ไม่ได้ copy weights/calibration ที่มันอ้างถึง ตรวจว่า absolute paths ใน profile ยังมีอยู่ ถ้าขนไปเครื่องใหม่ต้องนำไฟล์จริงไปด้วยและแก้ path ให้ถูกต้อง ตัวอย่าง `config/robot.example.json` และ `camera_mount.example.json` มีค่า `null` โดยตั้งใจ ต้องกรอกจากข้อมูลวัดจริงก่อนใช้ ไม่ใช้เป็น motion profile ทันที
 
-ถ้ามีเฉพาะโปรไฟล์ .18 เดิม หลัง build สามารถสร้าง .35 ใหม่ครั้งเดียว:
 
 ```bash
 ros2 run husky_vision prepare_operator_profile \
