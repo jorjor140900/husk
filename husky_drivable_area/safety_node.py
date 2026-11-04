@@ -24,7 +24,7 @@ from husky_link_core.supervised_trial import TrialBudget, selected_limits, bound
 
 from .collision import CollisionConfig, check_sweep, scan_points
 from .control import CommandLimiter, ControllerConfig, Demand, fresh_stamp, quaternion_matrix
-from .controller_node import stamp_ns
+from .timestamps import stamp_ns
 
 
 class LaserSafetyNode(Node):
@@ -38,6 +38,8 @@ class LaserSafetyNode(Node):
             self.declare_parameter(name, value)
         value = lambda name: self.get_parameter(name).value
         self.supervised_trial = value("supervised_trial")
+        if not self.supervised_trial or value("subscribe_scan"):
+            raise ValueError("This submission supports supervised camera assist with subscribe_scan=false only")
         if type(self.supervised_trial) is not bool:raise ValueError("supervised_trial must be bool")
         self.pause_on_vision_gap=value('pause_on_vision_gap')
         if type(self.pause_on_vision_gap) is not bool or self.pause_on_vision_gap and not self.supervised_trial:

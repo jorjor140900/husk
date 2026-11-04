@@ -1,7 +1,6 @@
-"""Reuse geometry only after validating its visible strip in the NEW capture."""
+"""Reuse geometry only after checking its visible strip in the current capture."""
 import math
 import numpy as np
-
 
 def reusable_reference(points,sample,start_x,half_width,step=.025,*,allow_unknown=False,truncate_invalid=False):
     points=np.asarray(points,float)
@@ -35,30 +34,3 @@ def reusable_reference(points,sample,start_x,half_width,step=.025,*,allow_unknow
         if not np.isin(labels,[1,255]).all():return None
     elif not np.all(labels==1):return None
     return path
-
-
-def choose_stable_reference(new,previous,target,slack=.10):
-    if previous is None:return new,False
-    if not len(new) or np.linalg.norm(previous[-1]-target)<=np.linalg.norm(new[-1]-target)+slack:
-        return previous,True
-    return new,False
-
-
-class EdgeSmoother:
-    """Display-only EMA of currently supported fits; absent fits stay absent."""
-    def __init__(self):self.previous=None;self.stamp=0;self.shape=None
-
-    def update(self,edges,stamp,shape):
-        from dataclasses import replace
-        if stamp==self.stamp and shape==self.shape:return self.previous
-        fresh=self.previous is not None and self.shape==shape and 0<stamp-self.stamp<=250_000_000
-        result=[]
-        for i,edge in enumerate(edges):
-            old=self.previous[i] if fresh else None
-            if edge is not None and old is not None:
-                rows=[edge.y_top,edge.y_bottom]
-                if max(abs(edge.x_at(y)-old.x_at(y)) for y in rows)<shape[1]*.06:
-                    edge=replace(edge,slope=.4*edge.slope+.6*old.slope,intercept=.4*edge.intercept+.6*old.intercept)
-            result.append(edge)
-        self.previous=result;self.stamp=stamp;self.shape=shape
-        return result

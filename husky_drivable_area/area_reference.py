@@ -10,7 +10,7 @@ import math
 import cv2
 import numpy as np
 
-from .vision_goal import VisionReferenceConfig
+from .assist_geometry import VisionReferenceConfig
 
 
 def _resample(path, step):

@@ -44,7 +44,7 @@ def _nodes(context):
         model_path=camera['model_path'],model_width='256',model_height='160',cpu_threads='2',
         camera_calibration=camera['calibration_path'],camera_mount=camera['mount_path'],
         config_file=str(share/'config/camera-assist-floor.json'),
-        show_nav2_path='false',async_reference_preview='false',max_frame_age_sec='0.5')
+        max_frame_age_sec='0.5')
     nodes=[SetEnvironmentVariable('RMW_IMPLEMENTATION','rmw_cyclonedds_cpp'),
         Node(package='husky_drivable_area',executable='webcam_node',output='screen',parameters=[dict(
             camera_index=int(match.group(1)),width=camera['width'],height=camera['height'],fps=camera['fps'],

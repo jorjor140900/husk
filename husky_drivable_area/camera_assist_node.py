@@ -21,13 +21,13 @@ from tf2_ros import Buffer,TransformListener,TransformException
 
 from .area_reference import plan_area_reference
 from .control import ControllerConfig,Demand,fresh_stamp,pursuit,quaternion_matrix
-from .controller_node import stamp_ns
+from .timestamps import stamp_ns
 from .ground_geometry import CameraCalibration,CameraMount,project_path
 from .ground_overlay import reference_seed
 from .reference_stability import reusable_reference
 from .transport import image_to_bgr,fill_compressed_image
-from .vision_goal import VisionReferenceConfig,sample_ground_labels
-from .vision_goal_overlay import draw_vision_reference
+from .assist_geometry import VisionReferenceConfig,sample_ground_labels
+from .assist_overlay import draw_assist_reference
 from .vision_grid import decode_segmentation
 from road_navigation.detector import DetectorConfig
 
@@ -350,8 +350,7 @@ class CameraAssistNode(Node):
                     except TransformException:reason='waiting_for_capture_tf'
                 else:
                     reason=self.reason if self.reference is None else 'image_reference_stale'
-            frame=draw_vision_reference(image_to_bgr(message),labels,path,self.camera,self.mount,reason,
-                edges=[],assisted=True)
+            frame=draw_assist_reference(image_to_bgr(message),labels,path,self.camera,self.mount,reason)
             self.overlay_pub.publish(fill_compressed_image(CompressedImage(),frame,message.header,80))
         except (ValueError,TypeError,cv2.error):pass
 

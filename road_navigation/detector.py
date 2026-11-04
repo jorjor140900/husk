@@ -1,7 +1,6 @@
-"""ROS-independent baseline with an optional external segmentation input.
+"""SegFormer probability filtering for camera steering assistance.
 
-RGB alone supplies appearance evidence. Similar-looking walls, curbs and ground
-can still be confused. This module does not certify a surface as safe to drive.
+RGB/model labels are appearance evidence, not verified physical traversability.
 """
 
 from dataclasses import asdict, dataclass
@@ -11,7 +10,6 @@ import time
 import cv2
 import numpy as np
 
-from .planner import plan_path
 from .reference_geometry import ReferenceGeometry, build_reference_geometry
 from .vegetation import green_vegetation_mask
 
@@ -39,7 +37,7 @@ class DetectorConfig:
     temporal_alpha: float = 0.65
     temporal_flow_width: int = 0
     use_temporal: bool = True
-    generate_reference_path: bool = True
+    generate_reference_path: bool = False
     clearance_px: int = 8
     max_lateral_step: int = 2
     min_path_height_fraction: float = 0.25
@@ -198,6 +196,8 @@ def connect_enclosed_uncertainty(candidate,current,filtered,blocked,config):
 class RoadDetector:
     def __init__(self, config: DetectorConfig | None = None):
         self.config = config or DetectorConfig()
+        if self.config.generate_reference_path:
+            raise ValueError("Use the metric camera-assist planner, not pixel path generation")
         self.reset()
 
     def reset(self):
@@ -207,81 +207,6 @@ class RoadDetector:
         self._previous_path = None
         self._previous_mask = None
         self._aligned_previous_mask = None
-
-    def _appearance_probability(self, frame: np.ndarray) -> np.ndarray:
-        h, w = frame.shape[:2]
-        scale = min(1.0, self.config.analysis_width / w)
-        small = cv2.resize(frame, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=cv2.INTER_AREA)
-        lab = cv2.cvtColor(cv2.bilateralFilter(small, 5, 30, 30), cv2.COLOR_BGR2LAB).astype(np.float32)
-        sh, sw = lab.shape[:2]
-        radius = max(1, round(sw * 0.025))
-        sy = int(round((sh - 1) * self.config.seed_y_fraction))
-        center = int(round((sw - 1) * self.config.seed_x_fraction))
-        refs = []
-        for dx in (0, -2 * radius, 2 * radius):
-            sx = int(np.clip(center + dx, 0, sw - 1))
-            patch = lab[max(0, sy - radius):min(sh, sy + radius + 1), max(0, sx - radius):min(sw, sx + radius + 1)]
-            ref = np.median(patch.reshape(-1, 3), axis=0)
-            # Do not automatically learn a different surface beside the center.
-            if not refs or np.linalg.norm(ref[1:] - refs[0][1:]) <= self.config.chroma_tolerance:
-                refs.append(ref)
-
-        best_distance = np.full((sh, sw), np.inf, dtype=np.float32)
-        for ref in refs:
-            chroma_distance = np.sum(((lab[:, :, 1:] - ref[1:]) / self.config.chroma_tolerance) ** 2, axis=2)
-            # A brightness change is weaker evidence than a material/color change.
-            # Structural edge vetoes are applied separately in region growth.
-            light_distance = np.maximum(np.abs(lab[:, :, 0] - ref[0]) - 40.0, 0.0) / 90.0
-            best_distance = np.minimum(best_distance, chroma_distance + light_distance ** 2)
-        probability = np.exp(-0.5 * best_distance)
-        return cv2.resize(probability, (w, h), interpolation=cv2.INTER_LINEAR)
-
-    def _region_probability(self, frame: np.ndarray) -> np.ndarray:
-        """Grow only from the near-ground seed, with explicit edge vetoes.
-
-        Color similarity alone cannot distinguish a white floor from a white
-        column. Preserve edge barriers throughout growth and temporal filtering;
-        never close/fill their holes afterward. This is conservative appearance
-        evidence, not semantic understanding of ground or obstacle height.
-        """
-        cfg = self.config
-        probability = self._appearance_probability(frame)
-        h, w = frame.shape[:2]
-        scale = min(1.0, cfg.analysis_width / w)
-        size = (max(1, round(w * scale)), max(1, round(h * scale)))
-        small = cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
-        small = cv2.GaussianBlur(small, (3, 3), 0)
-        sh, sw = small.shape[:2]
-        floor_score = cv2.resize(probability, size, interpolation=cv2.INTER_AREA)
-        blocked = floor_score < cfg.current_probability_floor
-        blocked[:int(sh * cfg.horizon_fraction)] = True
-        if cfg.use_edge_barrier:
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            gray = cv2.bilateralFilter(gray, 5, 40, 40)
-            edges = cv2.Canny(gray, cfg.edge_low_threshold, cfg.edge_high_threshold)
-            contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-            barrier = np.zeros_like(edges)
-            for contour in contours:
-                if cv2.arcLength(contour, False) >= max(10, sw * 0.045):
-                    cv2.drawContours(barrier, [contour], -1, 255, 1)
-            barrier = cv2.dilate(barrier, np.ones((3, 3), np.uint8))
-            blocked |= barrier > 0
-        ff_mask = np.zeros((sh + 2, sw + 2), np.uint8)
-        inner = ff_mask[1:-1, 1:-1]
-        inner[blocked] = 1
-        sx = int(round((sw - 1) * cfg.seed_x_fraction))
-        sy = int(round((sh - 1) * cfg.seed_y_fraction))
-        if not blocked[sy, sx]:
-            lab = cv2.cvtColor(cv2.medianBlur(small, 5), cv2.COLOR_BGR2LAB).astype(np.float32)
-            # Keep shadows primarily in the brightness channel; discontinuities
-            # in observed edges still veto growth even when colors are similar.
-            lab[:, :, 0] *= 0.05
-            difference = (cfg.region_step, max(2, round(cfg.region_step * .6)), max(2, round(cfg.region_step * .6)))
-            flags = 4 | cv2.FLOODFILL_MASK_ONLY | (255 << 8)
-            cv2.floodFill(lab, ff_mask, (sx, sy), 0, difference, difference, flags)
-        connected = cv2.resize((inner == 255).astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST)
-        probability[connected == 0] = 0
-        return probability
 
     def _filter_history(self, probability: np.ndarray, gray: np.ndarray):
         preferred = None
@@ -350,14 +275,12 @@ class RoadDetector:
         h, w = frame.shape[:2]
 
         if drivable_probability is None:
-            current = self._region_probability(frame)
-            backend = "edge_seeded_region"
-        else:
-            supplied = np.asarray(drivable_probability)
-            if supplied.shape != original_shape or not np.isfinite(supplied).all() or np.any((supplied < 0) | (supplied > 1)):
-                raise ValueError("drivable_probability must match original H,W and contain finite values in [0, 1]")
-            current = cv2.resize(supplied.astype(np.float32), size, interpolation=cv2.INTER_AREA)
-            backend = "external_probability"
+            raise ValueError("camera assist requires SegFormer probabilities")
+        supplied = np.asarray(drivable_probability)
+        if supplied.shape != original_shape or not np.isfinite(supplied).all() or np.any((supplied < 0) | (supplied > 1)):
+            raise ValueError("drivable_probability must match original H,W and contain finite values in [0, 1]")
+        current = cv2.resize(supplied.astype(np.float32), size, interpolation=cv2.INTER_AREA)
+        backend = "external_probability"
 
         vegetation = np.zeros((h, w), dtype=bool)
         if self.config.reject_green_vegetation:
@@ -394,8 +317,8 @@ class RoadDetector:
         raw_mask = candidate.astype(np.uint8) * 255
         self._previous_mask = raw_mask.copy()
         if not self.config.generate_reference_path:
-            # Nav2 consumes the full segmentation, not this diagnostic pixel
-            # path. Skip DP, curve search, distance transforms and boundary fits.
+            # Camera assist consumes the full segmentation mask. Pixel reference
+            # generation is not used in this branch.
             empty = np.empty((0, 2), dtype=np.int32)
             unknown_clearance = np.zeros((h, w), dtype=np.uint8)
             reference = build_reference_geometry(unknown_clearance, empty,
@@ -406,46 +329,7 @@ class RoadDetector:
             self._previous_probability = probability.copy()
             self._previous_path = None
             return DetectionResult(frame, probability, raw_mask, raw_mask.copy(), unknown_clearance,
-                empty, 0., "nav2_segmentation_only", backend, (time.perf_counter()-start)*1000.,
+                empty, 0., "segmentation_only", backend, (time.perf_counter()-start)*1000.,
                 original_shape, reference, vegetation.astype(np.uint8)*255,
                 self.config.reject_green_vegetation, False,
                 self.config.vegetation_support_radius_px, self.config.vegetation_support_fraction, recovered)
-        sx = int(round((w - 1) * self.config.seed_x_fraction))
-        sy = int(round((h - 1) * self.config.seed_y_fraction))
-        road_mask = np.zeros((h, w), dtype=np.uint8)
-        if candidate[sy, sx]:
-            _, components = cv2.connectedComponents(candidate.astype(np.uint8), connectivity=4)
-            road_mask[components == components[sy, sx]] = 255
-
-        cfg = self.config
-        plan = plan_path(
-            road_mask, probability,
-            seed_x=cfg.seed_x_fraction, seed_y=cfg.seed_y_fraction,
-            horizon=cfg.horizon_fraction, goal_x=cfg.goal_x_fraction,
-            clearance_px=cfg.clearance_px, max_lateral_step=cfg.max_lateral_step,
-            min_path_height=cfg.min_path_height_fraction, preferred_path=preferred,
-        )
-        quality = 0.0
-        if plan.valid:
-            px, py = plan.points.T
-            span = float(py[0] - py[-1]) / h
-            quality = float(probability[py, px].mean() * min(1.0, span / 0.5))
-        path_mask = np.zeros((h, w), dtype=np.uint8)
-        if plan.valid:
-            cv2.polylines(path_mask, [plan.points], False, 255, 3)
-        self._previous_gray = gray
-        self._previous_probability = probability.copy()
-        self._previous_path = path_mask
-        reference = build_reference_geometry(
-            road_mask, plan.points,
-            robot_center_x_fraction=cfg.robot_center_x_fraction,
-            lookahead_y_fraction=cfg.lookahead_y_fraction,
-            horizon_fraction=cfg.horizon_fraction,
-        )
-        return DetectionResult(
-            frame, probability, raw_mask, road_mask, plan.navigable_mask,
-            plan.points, quality, plan.reason, backend,
-            (time.perf_counter() - start) * 1000.0, original_shape, reference,
-            vegetation.astype(np.uint8)*255, self.config.reject_green_vegetation,
-            True, self.config.vegetation_support_radius_px, self.config.vegetation_support_fraction, recovered,
-        )

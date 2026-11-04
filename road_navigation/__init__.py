@@ -1,4 +1,4 @@
-"""Camera-only road appearance and image-space path planning, without ROS."""
+"""SegFormer drivable-area mask processing, independent of ROS."""
 
 from .detector import DetectionResult, DetectorConfig, RoadDetector
 
